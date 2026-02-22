@@ -1,0 +1,44 @@
+[package]
+name = "oclaws-gateway-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+oclaws-protocol.workspace = true
+oclaws-config.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+url.workspace = true
+regex.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+base64.workspace = true
+rand.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
+native-tls.workspace = true
+reqwest.workspace = true
+tower.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+tokio-tungstenite.workspace = true
+futures-channel.workspace = true
+axum.workspace = true
+tower-layer.workspace = true
+tower-service.workspace = true
+pem.workspace = true
+tokio-rustls.workspace = true
+tower-http.workspace = true

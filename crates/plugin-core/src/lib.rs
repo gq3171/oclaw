@@ -1,0 +1,44 @@
+pub mod plugin;
+pub mod loader;
+pub mod registry;
+pub mod manifest;
+
+pub use plugin::{Plugin, PluginState, PluginConfig};
+pub use loader::PluginLoader;
+pub use registry::PluginRegistry;
+pub use manifest::PluginManifest;
+
+pub type PluginResult<T> = Result<T, PluginError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum PluginError {
+    #[error("Load error: {0}")]
+    LoadError(String),
+    
+    #[error("Initialization error: {0}")]
+    InitError(String),
+    
+    #[error("Execution error: {0}")]
+    ExecutionError(String),
+    
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+    
+    #[error("Not found: {0}")]
+    NotFound(String),
+    
+    #[error("Dependency error: {0}")]
+    DependencyError(String),
+    
+    #[error("Version mismatch: {0}")]
+    VersionMismatch(String),
+}
+
+impl serde::Serialize for PluginError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}

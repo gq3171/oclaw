@@ -1,0 +1,16 @@
+[package]
+name = "oclaws-config"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+oclaws-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
+once_cell.workspace = true
+tracing.workspace = true

@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  oclaws:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    environment:
+      - RUST_LOG=info
+    restart: unless-stopped
+
+  # Optional: Chrome for browser automation
+  chrome:
+    image: browserless/chrome:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./chrome-data:/data
+    environment:
+      - CONNECTION_TIMEOUT=60000
+      - MAX_CONCURRENT_SESSIONS=10
+    restart: unless-stopped

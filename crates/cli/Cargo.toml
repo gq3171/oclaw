@@ -1,0 +1,24 @@
+[package]
+name = "oclaws"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "oclaws"
+path = "src/main.rs"
+
+[dependencies]
+oclaws-protocol.workspace = true
+oclaws-config.workspace = true
+oclaws-gateway-core.workspace = true
+oclaws-channel-core.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap = { version = "4.5", features = ["derive", "env"] }
+anyhow.workspace = true
+dirs.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

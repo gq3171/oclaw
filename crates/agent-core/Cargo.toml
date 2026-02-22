@@ -1,0 +1,21 @@
+[package]
+name = "oclaws-agent-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+oclaws-llm-core.workspace = true
+oclaws-protocol.workspace = true
+storage-core.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
