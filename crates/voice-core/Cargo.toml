@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-channel-core"
+name = "oclaws-voice-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -20,5 +20,5 @@ futures-util.workspace = true
 url.workspace = true
 reqwest.workspace = true
 uuid.workspace = true
-chrono.workspace = true
-regex.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true

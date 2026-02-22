@@ -1,8 +1,15 @@
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use crate::skill::{Skill, SkillDefinition, SkillInput, SkillOutput, SkillParameter, SkillReturnType, SkillExample};
 
 pub struct CalculatorSkill;
+
+impl Default for CalculatorSkill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl CalculatorSkill {
     pub fn new() -> Self {
@@ -80,7 +87,7 @@ fn evaluate_expression(expr: &str) -> Result<f64, String> {
     expr.parse::<f64>().map_err(|_| "Invalid number".to_string())
 }
 
-static SKILL_DEFINITION: SkillDefinition = SkillDefinition {
+static SKILL_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "calculator".to_string(),
     name: "Calculator".to_string(),
     description: "Perform mathematical calculations".to_string(),
@@ -109,9 +116,15 @@ static SKILL_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct TextTransformSkill;
+
+impl Default for TextTransformSkill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl TextTransformSkill {
     pub fn new() -> Self {
@@ -160,7 +173,7 @@ fn to_title_case(s: &str) -> String {
             let mut chars = word.chars();
             match chars.next() {
                 None => String::new(),
-                first => {
+                Some(first) => {
                     first.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect()
                 }
             }
@@ -169,7 +182,7 @@ fn to_title_case(s: &str) -> String {
         .join(" ")
 }
 
-static TEXT_TRANSFORM_DEFINITION: SkillDefinition = SkillDefinition {
+static TEXT_TRANSFORM_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "text_transform".to_string(),
     name: "Text Transform".to_string(),
     description: "Transform text with various operations".to_string(),
@@ -199,9 +212,15 @@ static TEXT_TRANSFORM_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct JsonFormatterSkill;
+
+impl Default for JsonFormatterSkill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl JsonFormatterSkill {
     pub fn new() -> Self {
@@ -243,7 +262,7 @@ impl Skill for JsonFormatterSkill {
     }
 }
 
-static JSON_FORMATTER_DEFINITION: SkillDefinition = SkillDefinition {
+static JSON_FORMATTER_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "json_formatter".to_string(),
     name: "JSON Formatter".to_string(),
     description: "Format and validate JSON".to_string(),
@@ -273,9 +292,15 @@ static JSON_FORMATTER_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct DateTimeSkill;
+
+impl Default for DateTimeSkill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl DateTimeSkill {
     pub fn new() -> Self {
@@ -334,7 +359,7 @@ impl Skill for DateTimeSkill {
     }
 }
 
-static DATETIME_DEFINITION: SkillDefinition = SkillDefinition {
+static DATETIME_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "datetime".to_string(),
     name: "DateTime".to_string(),
     description: "Date and time operations".to_string(),
@@ -357,9 +382,15 @@ static DATETIME_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct UrlParserSkill;
+
+impl Default for UrlParserSkill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl UrlParserSkill {
     pub fn new() -> Self {
@@ -390,7 +421,8 @@ impl Skill for UrlParserSkill {
             "fragment": url.fragment(),
         });
 
-        if let Some(username) = url.username() {
+        let username = url.username();
+        if !username.is_empty() {
             result["username"] = serde_json::json!(username);
         }
         if let Some(password) = url.password() {
@@ -407,7 +439,7 @@ impl Skill for UrlParserSkill {
     }
 }
 
-static URL_PARSER_DEFINITION: SkillDefinition = SkillDefinition {
+static URL_PARSER_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "url_parser".to_string(),
     name: "URL Parser".to_string(),
     description: "Parse and manipulate URLs".to_string(),
@@ -430,9 +462,15 @@ static URL_PARSER_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct HashSkill;
+
+impl Default for HashSkill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl HashSkill {
     pub fn new() -> Self {
@@ -481,7 +519,7 @@ impl Skill for HashSkill {
     }
 }
 
-static HASH_DEFINITION: SkillDefinition = SkillDefinition {
+static HASH_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "hash".to_string(),
     name: "Hash".to_string(),
     description: "Generate cryptographic hashes".to_string(),
@@ -511,9 +549,15 @@ static HASH_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct Base64Skill;
+
+impl Default for Base64Skill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Base64Skill {
     pub fn new() -> Self {
@@ -561,7 +605,7 @@ impl Skill for Base64Skill {
     }
 }
 
-static BASE64_DEFINITION: SkillDefinition = SkillDefinition {
+static BASE64_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "base64".to_string(),
     name: "Base64".to_string(),
     description: "Encode and decode Base64".to_string(),
@@ -591,9 +635,15 @@ static BASE64_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct RandomSkill;
+
+impl Default for RandomSkill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl RandomSkill {
     pub fn new() -> Self {
@@ -616,27 +666,34 @@ impl Skill for RandomSkill {
             "number" => {
                 let min = input.parameters.get("min").and_then(|v| v.as_i64()).unwrap_or(0);
                 let max = input.parameters.get("max").and_then(|v| v.as_i64()).unwrap_or(100);
-                rand::random::<i64>() % (max - min + 1) + min
+                let value = rand::random::<i64>() % (max - min + 1) + min;
+                serde_json::json!({ "result": value })
             }
-            "uuid" => uuid::Uuid::new_v4().to_string(),
+            "uuid" => {
+                serde_json::json!({ "result": uuid::Uuid::new_v4().to_string() })
+            }
             "string" => {
-                let length = input.parameters.get("length").and_then(|v| v.as_usize()).unwrap_or(16);
+                use rand::Rng;
+                let length = input.parameters.get("length").and_then(|v| v.as_u64()).unwrap_or(16) as usize;
+                let mut rng = rand::rng();
                 let chars: String = (0..length)
                     .map(|_| {
-                        let idx = rand::random::<usize>() % 62;
+                        let idx = rng.random_range(0..62);
                         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
                             .chars().nth(idx).unwrap()
                     })
                     .collect();
-                chars
+                serde_json::json!({ "result": chars })
             }
-            "bool" => rand::random::<bool>(),
+            "bool" => {
+                serde_json::json!({ "result": rand::random::<bool>() })
+            }
             _ => return Err(crate::SkillError::ValidationError(format!("Unknown operation: {}", operation))),
         };
 
         Ok(SkillOutput {
             success: true,
-            result: Some(serde_json::json!({ "result": result })),
+            result: Some(result),
             error: None,
             metadata: HashMap::new(),
             execution_time_ms: 0,
@@ -644,7 +701,7 @@ impl Skill for RandomSkill {
     }
 }
 
-static RANDOM_DEFINITION: SkillDefinition = SkillDefinition {
+static RANDOM_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "random".to_string(),
     name: "Random".to_string(),
     description: "Generate random values".to_string(),
@@ -667,7 +724,7 @@ static RANDOM_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct RegexSkill;
 
@@ -728,7 +785,7 @@ impl Skill for RegexSkill {
     }
 }
 
-static REGEX_DEFINITION: SkillDefinition = SkillDefinition {
+static REGEX_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "regex".to_string(),
     name: "Regex".to_string(),
     description: "Regular expression operations".to_string(),
@@ -765,7 +822,7 @@ static REGEX_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct FilePathSkill;
 
@@ -810,14 +867,14 @@ impl Skill for FilePathSkill {
                     .and_then(|v| v.as_array())
                     .ok_or_else(|| crate::SkillError::ValidationError("Missing 'parts' for join".to_string()))?;
                 
-                let joined: std::path::Buf = parts.iter()
+                let joined: std::path::PathBuf = parts.iter()
                     .filter_map(|p| p.as_str())
                     .collect();
                 
                 serde_json::json!({ "path": joined.to_string_lossy() })
             }
             "normalize" => {
-                let normalized = path_obj.normalize().to_string_lossy().to_string();
+                let normalized = path_obj.to_string_lossy().to_string();
                 serde_json::json!({ "path": normalized })
             }
             _ => return Err(crate::SkillError::ValidationError(format!("Unknown operation: {}", operation))),
@@ -833,7 +890,7 @@ impl Skill for FilePathSkill {
     }
 }
 
-static FILEPATH_DEFINITION: SkillDefinition = SkillDefinition {
+static FILEPATH_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "filepath".to_string(),
     name: "File Path".to_string(),
     description: "File path operations".to_string(),
@@ -863,7 +920,7 @@ static FILEPATH_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct UserAgentParserSkill;
 
@@ -926,7 +983,7 @@ impl Skill for UserAgentParserSkill {
     }
 }
 
-static USERAGENT_DEFINITION: SkillDefinition = SkillDefinition {
+static USERAGENT_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "useragent_parser".to_string(),
     name: "User Agent Parser".to_string(),
     description: "Parse user agent strings".to_string(),
@@ -949,7 +1006,7 @@ static USERAGENT_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct ColorConverterSkill;
 
@@ -982,7 +1039,7 @@ impl Skill for ColorConverterSkill {
             }
         };
 
-        let (r, g, b) = from_hex(color)?;
+        let (r, g, b) = from_hex(color).map_err(|e| crate::SkillError::ValidationError(e))?;
 
         let to_hex = |r: u8, g: u8, b: u8| format!("#{:02x}{:02x}{:02x}", r, g, b);
         let to_hsl = |r: u8, g: u8, b: u8| {
@@ -1027,7 +1084,7 @@ impl Skill for ColorConverterSkill {
     }
 }
 
-static COLOR_CONVERTER_DEFINITION: SkillDefinition = SkillDefinition {
+static COLOR_CONVERTER_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "color_converter".to_string(),
     name: "Color Converter".to_string(),
     description: "Convert between color formats".to_string(),
@@ -1050,7 +1107,7 @@ static COLOR_CONVERTER_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct SlugifySkill;
 
@@ -1095,7 +1152,7 @@ impl Skill for SlugifySkill {
     }
 }
 
-static SLUGIFY_DEFINITION: SkillDefinition = SkillDefinition {
+static SLUGIFY_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "slugify".to_string(),
     name: "Slugify".to_string(),
     description: "Convert text to URL-friendly slug".to_string(),
@@ -1125,7 +1182,7 @@ static SLUGIFY_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct CreditCardValidatorSkill;
 
@@ -1209,7 +1266,7 @@ impl Skill for CreditCardValidatorSkill {
     }
 }
 
-static CREDIT_CARD_VALIDATOR_DEFINITION: SkillDefinition = SkillDefinition {
+static CREDIT_CARD_VALIDATOR_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "credit_card_validator".to_string(),
     name: "Credit Card Validator".to_string(),
     description: "Validate credit card numbers using Luhn algorithm".to_string(),
@@ -1232,7 +1289,7 @@ static CREDIT_CARD_VALIDATOR_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct EmailValidatorSkill;
 
@@ -1279,7 +1336,7 @@ impl Skill for EmailValidatorSkill {
     }
 }
 
-static EMAIL_VALIDATOR_DEFINITION: SkillDefinition = SkillDefinition {
+static EMAIL_VALIDATOR_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "email_validator".to_string(),
     name: "Email Validator".to_string(),
     description: "Validate email addresses".to_string(),
@@ -1302,7 +1359,7 @@ static EMAIL_VALIDATOR_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});
 
 pub struct TimezoneConverterSkill;
 
@@ -1349,7 +1406,7 @@ impl Skill for TimezoneConverterSkill {
     }
 }
 
-static TIMEZONE_CONVERTER_DEFINITION: SkillDefinition = SkillDefinition {
+static TIMEZONE_CONVERTER_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
     id: "timezone_converter".to_string(),
     name: "Timezone Converter".to_string(),
     description: "Convert timestamps between timezones".to_string(),
@@ -1386,4 +1443,4 @@ static TIMEZONE_CONVERTER_DEFINITION: SkillDefinition = SkillDefinition {
     permissions: vec![],
     rate_limit: None,
     version: "1.0.0".to_string(),
-};
+});

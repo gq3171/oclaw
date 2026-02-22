@@ -21,6 +21,9 @@ pub struct ToolResponse {
 #[serde(tag = "type")]
 pub enum Tool {
     Bash(BashTool),
+    ReadFile(ReadFileTool),
+    WriteFile(WriteFileTool),
+    ListDir(ListDirTool),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,12 +40,18 @@ impl Tool {
     pub fn name(&self) -> &str {
         match self {
             Tool::Bash(_) => "bash",
+            Tool::ReadFile(_) => "read_file",
+            Tool::WriteFile(_) => "write_file",
+            Tool::ListDir(_) => "list_dir",
         }
     }
 
     pub fn description(&self) -> &str {
         match self {
             Tool::Bash(_) => "Execute a shell command and return the output",
+            Tool::ReadFile(_) => "Read contents of a file",
+            Tool::WriteFile(_) => "Write content to a file",
+            Tool::ListDir(_) => "List contents of a directory",
         }
     }
 
@@ -70,12 +79,49 @@ impl Tool {
                 },
                 "required": ["command"]
             }),
+            Tool::ReadFile(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to read"
+                    }
+                },
+                "required": ["path"]
+            }),
+            Tool::WriteFile(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to write"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                    }
+                },
+                "required": ["path", "content"]
+            }),
+            Tool::ListDir(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the directory to list"
+                    }
+                },
+                "required": ["path"]
+            }),
         }
     }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         match self {
             Tool::Bash(tool) => tool.execute(arguments).await,
+            Tool::ReadFile(tool) => tool.execute(arguments).await,
+            Tool::WriteFile(tool) => tool.execute(arguments).await,
+            Tool::ListDir(tool) => tool.execute(arguments).await,
         }
     }
 }
@@ -187,6 +233,9 @@ impl ToolRegistry {
     pub fn new() -> Self {
         let mut tools = HashMap::new();
         tools.insert("bash".to_string(), Tool::Bash(BashTool::new()));
+        tools.insert("read_file".to_string(), Tool::ReadFile(ReadFileTool::new()));
+        tools.insert("write_file".to_string(), Tool::WriteFile(WriteFileTool::new()));
+        tools.insert("list_dir".to_string(), Tool::ListDir(ListDirTool::new()));
         Self { tools }
     }
 
@@ -237,6 +286,148 @@ impl ToolRegistry {
 }
 
 impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadFileTool {
+    pub max_size_bytes: Option<u64>,
+}
+
+impl ReadFileTool {
+    pub fn new() -> Self {
+        Self { max_size_bytes: Some(1024 * 1024) }
+    }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct ReadFileArgs {
+            path: String,
+        }
+
+        let args: ReadFileArgs = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        let content = tokio::fs::read_to_string(&args.path).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to read file: {}", e)))?;
+
+        if let Some(max_size) = self.max_size_bytes {
+            if content.len() > max_size as usize {
+                return Err(crate::ToolError::ExecutionFailed("File too large".to_string()));
+            }
+        }
+
+        Ok(serde_json::json!({
+            "path": args.path,
+            "content": content,
+            "size": content.len()
+        }))
+    }
+}
+
+impl Default for ReadFileTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteFileTool {
+    pub create_parents: bool,
+}
+
+impl WriteFileTool {
+    pub fn new() -> Self {
+        Self { create_parents: true }
+    }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct WriteFileArgs {
+            path: String,
+            content: String,
+        }
+
+        let args: WriteFileArgs = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        if self.create_parents {
+            if let Some(parent) = std::path::Path::new(&args.path).parent() {
+                tokio::fs::create_dir_all(parent).await
+                    .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to create directory: {}", e)))?;
+            }
+        }
+
+        tokio::fs::write(&args.path, &args.content).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to write file: {}", e)))?;
+
+        Ok(serde_json::json!({
+            "path": args.path,
+            "bytes_written": args.content.len()
+        }))
+    }
+}
+
+impl Default for WriteFileTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListDirTool {
+    pub include_hidden: bool,
+}
+
+impl ListDirTool {
+    pub fn new() -> Self {
+        Self { include_hidden: true }
+    }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct ListDirArgs {
+            path: String,
+        }
+
+        let args: ListDirArgs = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        let mut entries = Vec::new();
+        let mut dir = tokio::fs::read_dir(&args.path).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to read directory: {}", e)))?;
+
+        while let Some(entry) = dir.next_entry().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to read entry: {}", e)))? {
+            
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            
+            if !self.include_hidden && file_name.starts_with('.') {
+                continue;
+            }
+
+            let metadata = entry.metadata().await
+                .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to get metadata: {}", e)))?;
+
+            entries.push(serde_json::json!({
+                "name": file_name,
+                "is_file": metadata.is_file(),
+                "is_dir": metadata.is_dir(),
+                "size": metadata.len(),
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "path": args.path,
+            "entries": entries,
+            "count": entries.len()
+        }))
+    }
+}
+
+impl Default for ListDirTool {
     fn default() -> Self {
         Self::new()
     }

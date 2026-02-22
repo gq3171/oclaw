@@ -13,6 +13,9 @@ members = [
     "crates/plugin-core",
     "crates/sandbox-core",
     "crates/skills-core",
+    "crates/voice-core",
+    "crates/doctor-core",
+    "crates/security-core",
 ]
 resolver = "2"
 
@@ -42,6 +45,7 @@ url = "2.5"
 regex = "1.11"
 sha2 = "0.10"
 hmac = "0.12"
+hex = "0.4"
 base64 = "0.22"
 rand = "0.9"
 rustls = "0.23"
@@ -54,13 +58,14 @@ hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 tokio-tungstenite = "0.26"
 futures-channel = "0.3"
+futures = "0.3"
 axum = { version = "0.8", features = ["ws"] }
 tower-layer = "0.1"
 tower-service = "0.3"
 rusqlite = { version = "0.33", features = ["bundled"] }
 pem = "3.0"
 tokio-rustls = "0.26"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 
 # Workspace member crates
 oclaws-protocol = { path = "crates/protocol" }
@@ -75,6 +80,9 @@ oclaws-agent-core = { path = "crates/agent-core" }
 oclaws-plugin-core = { path = "crates/plugin-core" }
 oclaws-sandbox-core = { path = "crates/sandbox-core" }
 oclaws-skills-core = { path = "crates/skills-core" }
+oclaws-voice-core = { path = "crates/voice-core" }
+oclaws-doctor-core = { path = "crates/doctor-core" }
+oclaws-security-core = { path = "crates/security-core" }
 
 [profile.release]
 lto = true

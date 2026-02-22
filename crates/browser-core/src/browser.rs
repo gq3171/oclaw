@@ -6,10 +6,26 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[derive(Debug, Clone)]
+pub struct BrowserProfile {
+    pub id: String,
+    pub name: String,
+    pub data_dir: Option<String>,
+    pub args: Vec<String>,
+    pub proxy: Option<ProxyConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProxyConfig {
+    pub server: String,
+    pub bypass_list: Option<Vec<String>>,
+}
+
 pub struct BrowserManager {
     cdp_url: String,
     connection: Option<CdpConnection>,
     pages: Arc<RwLock<HashMap<String, Page>>>,
+    profiles: Arc<RwLock<HashMap<String, BrowserProfile>>>,
     _browser_context_id: Option<String>,
 }
 
@@ -21,10 +37,51 @@ impl BrowserManager {
             cdp_url: cdp_url.to_string(),
             connection: Some(connection),
             pages: Arc::new(RwLock::new(HashMap::new())),
+            profiles: Arc::new(RwLock::new(HashMap::new())),
             _browser_context_id: None,
         };
 
         Ok(browser)
+    }
+
+    pub async fn create_profile(&self, name: &str, data_dir: Option<&str>) -> BrowserProfile {
+        let profile = BrowserProfile {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            data_dir: data_dir.map(String::from),
+            args: Vec::new(),
+            proxy: None,
+        };
+        
+        let mut profiles = self.profiles.write().await;
+        profiles.insert(profile.id.clone(), profile.clone());
+        
+        profile
+    }
+
+    pub async fn get_profile(&self, id: &str) -> Option<BrowserProfile> {
+        let profiles = self.profiles.read().await;
+        profiles.get(id).cloned()
+    }
+
+    pub async fn list_profiles(&self) -> Vec<BrowserProfile> {
+        let profiles = self.profiles.read().await;
+        profiles.values().cloned().collect()
+    }
+
+    pub async fn delete_profile(&self, id: &str) -> bool {
+        let mut profiles = self.profiles.write().await;
+        profiles.remove(id).is_some()
+    }
+
+    pub async fn update_profile(&self, id: &str, profile: BrowserProfile) -> bool {
+        let mut profiles = self.profiles.write().await;
+        if profiles.contains_key(id) {
+            profiles.insert(id.to_string(), profile);
+            true
+        } else {
+            false
+        }
     }
 
     pub async fn connect(&mut self) -> BrowserResult<()> {

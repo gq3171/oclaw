@@ -10,11 +10,13 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use oclaws_config::settings::Gateway;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
+use tower_http::services::ServeDir;
 use tracing::{error, info};
 
 use crate::auth::AuthState;
@@ -33,6 +35,7 @@ pub struct HttpServer {
     auth_state: Arc<RwLock<AuthState>>,
     gateway_server: Arc<GatewayServer>,
     tls_config: Option<Arc<rustls::ServerConfig>>,
+    static_files_path: Option<PathBuf>,
 }
 
 impl HttpServer {
@@ -48,7 +51,13 @@ impl HttpServer {
             auth_state,
             gateway_server,
             tls_config: None,
+            static_files_path: None,
         }
+    }
+
+    pub fn with_static_files(mut self, path: PathBuf) -> Self {
+        self.static_files_path = Some(path);
+        self
     }
 
     pub fn with_tls(mut self, tls_config: Arc<rustls::ServerConfig>) -> Self {
@@ -59,7 +68,7 @@ impl HttpServer {
     pub async fn start(&self) -> GatewayResult<()> {
         let cors = self.build_cors_layer();
 
-        let app = Router::new()
+        let mut router = Router::new()
             .route("/health", get(health_handler))
             .route("/v1/chat/completions", post(routes::chat_completions_handler))
             .route("/v1/responses", post(routes::responses_handler))
@@ -74,15 +83,24 @@ impl HttpServer {
                 _gateway: self.gateway.clone(),
             }));
 
+        if let Some(ref static_path) = self.static_files_path {
+            if static_path.exists() {
+                let serve_dir = ServeDir::new(static_path);
+                router = Router::new()
+                    .nest_service("/static", serve_dir.clone())
+                    .fallback_service(serve_dir)
+                    .merge(router);
+                info!("Serving static files from {:?}", static_path);
+            }
+        }
+
         let listener = tokio::net::TcpListener::bind(self.addr).await.map_err(|e| {
             GatewayError::ServerError(format!("Failed to bind to {}: {}", self.addr, e))
         })?;
 
         info!("HTTP server listening on {}", self.addr);
 
-        let app = app;
-        
-        axum::serve(listener, app).await.map_err(|e: std::io::Error| {
+        axum::serve(listener, router).await.map_err(|e: std::io::Error| {
             GatewayError::ServerError(format!("HTTP server error: {}", e))
         })?;
 
@@ -281,8 +299,15 @@ async fn handle_ws(
                                 let response_json = serde_json::to_vec(&response)?;
                                 write.send(axum::extract::ws::Message::Binary(response_json.into())).await?;
                             }
+                            GatewayFrame::Hello(_) => {}
+                            GatewayFrame::HelloOk(_) => {}
+                            GatewayFrame::SessionCreate(_) => {}
+                            GatewayFrame::SessionCreateOk(_) => {}
+                            GatewayFrame::SessionStart(_) => {}
+                            GatewayFrame::SessionStartOk(_) => {}
                             GatewayFrame::Response(_) => {}
                             GatewayFrame::Event(_) => {}
+                            GatewayFrame::Error(_) => {}
                         }
                     }
                     Some(Ok(axum::extract::ws::Message::Text(text))) => {
@@ -343,8 +368,15 @@ async fn handle_ws(
                                 let response_json = serde_json::to_vec(&response)?;
                                 write.send(axum::extract::ws::Message::Binary(response_json.into())).await?;
                             }
+                            GatewayFrame::Hello(_) => {}
+                            GatewayFrame::HelloOk(_) => {}
+                            GatewayFrame::SessionCreate(_) => {}
+                            GatewayFrame::SessionCreateOk(_) => {}
+                            GatewayFrame::SessionStart(_) => {}
+                            GatewayFrame::SessionStartOk(_) => {}
                             GatewayFrame::Response(_) => {}
                             GatewayFrame::Event(_) => {}
+                            GatewayFrame::Error(_) => {}
                         }
                     }
                     Some(Ok(axum::extract::ws::Message::Close(_))) => {

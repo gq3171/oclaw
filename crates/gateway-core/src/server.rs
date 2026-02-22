@@ -244,11 +244,32 @@ async fn handle_frame(
                 GatewayError::WebSocketError(format!("Failed to send response: {}", e))
             })?;
         }
+        GatewayFrame::Hello(_) => {
+            debug!("Received hello frame");
+        }
+        GatewayFrame::HelloOk(_) => {
+            debug!("Received hello-ok frame (ignored in server mode)");
+        }
+        GatewayFrame::SessionCreate(_) => {
+            debug!("Received session.create frame");
+        }
+        GatewayFrame::SessionCreateOk(_) => {
+            debug!("Received session.create-ok frame");
+        }
+        GatewayFrame::SessionStart(_) => {
+            debug!("Received session.start frame");
+        }
+        GatewayFrame::SessionStartOk(_) => {
+            debug!("Received session.start-ok frame");
+        }
         GatewayFrame::Response(_) => {
             debug!("Received response (ignored in server mode)");
         }
         GatewayFrame::Event(event) => {
             debug!("Received event: {}", event.event);
+        }
+        GatewayFrame::Error(_) => {
+            debug!("Received error frame");
         }
     }
 

@@ -251,6 +251,31 @@ impl Channel for TelegramChannel {
         Ok(())
     }
 
+    async fn send_typing_status(&self, user_id: &str, status: TypingStatus) -> ChannelResult<()> {
+        if self.status != ChannelStatus::Connected {
+            return Err(ChannelError::ConnectionError("Not connected".to_string()));
+        }
+
+        let chat_id = user_id;
+        
+        let method = match status {
+            TypingStatus::Started => "sendChatAction",
+            TypingStatus::Stopped => return Ok(()),
+        };
+
+        let body = serde_json::json!({
+            "chat_id": chat_id,
+            "action": "typing"
+        });
+
+        let _: serde_json::Value = self.send_api_request(
+            method,
+            Some(&body),
+        ).await?;
+
+        Ok(())
+    }
+
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
         Ok(Box::new(TelegramSender {
             channel: Arc::new(RwLock::new(self.clone())),

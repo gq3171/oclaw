@@ -1,11 +1,17 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
 
+pub mod channel_wizard;
 pub mod config_wizard;
+pub mod doctor_wizard;
 pub mod provider_setup;
+pub mod skill_wizard;
 
+pub use channel_wizard::ChannelWizard;
 pub use config_wizard::ConfigWizard;
+pub use doctor_wizard::DoctorWizard;
 pub use provider_setup::ProviderSetup;
+pub use skill_wizard::SkillWizard;
 
 pub fn welcome() {
     println!();

@@ -64,7 +64,7 @@ pub struct Config {
     pub gateway: Option<Gateway>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Meta {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -185,7 +185,7 @@ pub struct Update {
     pub check_on_start: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Browser {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -674,7 +674,7 @@ pub struct Gateway {
     pub http: Option<GatewayHttp>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlUi {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -814,4 +814,184 @@ pub struct HttpEndpoints {
 pub struct HttpEndpoint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+        assert!(config.meta.is_none());
+        assert!(config.env.is_none());
+    }
+
+    #[test]
+    fn test_config_serialization() {
+        let config = Config {
+            meta: Some(Meta {
+                last_touched_version: Some("1.0.0".to_string()),
+                last_touched_at: Some("2024-01-01".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("1.0.0"));
+        assert!(json.contains("2024-01-01"));
+    }
+
+    #[test]
+    fn test_config_deserialization() {
+        let json = r#"{
+            "meta": {
+                "lastTouchedVersion": "2.0.0",
+                "lastTouchedAt": "2024-06-15"
+            },
+            "gateway": {
+                "port": 8080
+            }
+        }"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            config.meta.as_ref().unwrap().last_touched_version,
+            Some("2.0.0".to_string())
+        );
+        assert_eq!(config.gateway.as_ref().unwrap().port, Some(8080));
+    }
+
+    #[test]
+    fn test_meta_serialization() {
+        let meta = Meta {
+            last_touched_version: Some("1.0.0".to_string()),
+            last_touched_at: Some("2024-01-01".to_string()),
+        };
+
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(json.contains("lastTouchedVersion"));
+        assert!(json.contains("1.0.0"));
+    }
+
+    #[test]
+    fn test_model_provider_serialization() {
+        let provider = ModelProvider {
+            provider: "openai".to_string(),
+            api_key: Some("sk-test".to_string()),
+            base_url: Some("https://api.openai.com".to_string()),
+            model: Some("gpt-4".to_string()),
+            max_tokens: Some(4096),
+            temperature: Some(0.7),
+            max_concurrency: Some(10),
+            headers: None,
+        };
+
+        let json = serde_json::to_string(&provider).unwrap();
+        assert!(json.contains("openai"));
+        assert!(json.contains("gpt-4"));
+    }
+
+    #[test]
+    fn test_telegram_channel_config() {
+        let channel = TelegramChannel {
+            enabled: Some(true),
+            bot_token: Some("test_token".to_string()),
+            api_url: None,
+        };
+
+        let json = serde_json::to_string(&channel).unwrap();
+        assert!(json.contains("test_token"));
+
+        let deserialized: TelegramChannel = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.enabled, Some(true));
+        assert_eq!(deserialized.bot_token, Some("test_token".to_string()));
+    }
+
+    #[test]
+    fn test_browser_config() {
+        let browser = Browser {
+            enabled: Some(true),
+            headless: Some(true),
+            no_sandbox: Some(true),
+            cdp_url: Some("ws://localhost:9222".to_string()),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&browser).unwrap();
+        assert!(json.contains("ws://localhost:9222"));
+    }
+
+    #[test]
+    fn test_gateway_config() {
+        let gateway = Gateway {
+            port: Some(8080),
+            mode: Some("normal".to_string()),
+            bind: Some("0.0.0.0".to_string()),
+            control_ui: Some(ControlUi {
+                enabled: Some(true),
+                base_path: Some("/ui".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&gateway).unwrap();
+        assert!(json.contains("8080"));
+        assert!(json.contains("controlUi"));
+    }
+
+    #[test]
+    fn test_auth_profile() {
+        let profile = AuthProfile {
+            provider: "google".to_string(),
+            mode: "oauth".to_string(),
+            email: Some("test@example.com".to_string()),
+        };
+
+        let json = serde_json::to_string(&profile).unwrap();
+        assert!(json.contains("google"));
+        assert!(json.contains("oauth"));
+
+        let deserialized: AuthProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.provider, "google");
+        assert_eq!(deserialized.email, Some("test@example.com".to_string()));
+    }
+
+    #[test]
+    fn test_reconnect_config() {
+        let reconnect = Reconnect {
+            initial_ms: Some(1000),
+            max_ms: Some(60000),
+            factor: Some(2.0),
+            jitter: Some(0.1),
+            max_attempts: Some(5),
+        };
+
+        let json = serde_json::to_string(&reconnect).unwrap();
+        assert!(json.contains("1000"));
+        assert!(json.contains("60000"));
+    }
+
+    #[test]
+    fn test_channels_config() {
+        let channels = Channels {
+            telegram: Some(TelegramChannel {
+                enabled: Some(true),
+                bot_token: Some("token".to_string()),
+                api_url: None,
+            }),
+            discord: Some(DiscordChannel {
+                enabled: Some(false),
+                bot_token: None,
+                guild_id: None,
+                channel_ids: None,
+            }),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&channels).unwrap();
+        assert!(json.contains("telegram"));
+        assert!(json.contains("discord"));
+    }
 }

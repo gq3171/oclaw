@@ -6,6 +6,9 @@ pub mod session;
 pub mod http;
 pub mod tls;
 pub mod tailscale;
+pub mod webhook;
+pub mod control_ui;
+pub mod webchat;
 
 pub use error::*;
 pub use message::*;
@@ -15,3 +18,6 @@ pub use session::*;
 pub use http::*;
 pub use tls::*;
 pub use tailscale::*;
+pub use webhook::*;
+pub use control_ui::*;
+pub use webchat::*;

@@ -1,9 +1,13 @@
 pub mod container;
+pub mod docker;
+pub mod execution;
 pub mod image;
 pub mod volume;
 pub mod network;
 
-pub use container::{Container, ContainerConfig, ContainerStatus, ContainerManager};
+pub use container::{Container, ContainerConfig, ContainerStatus, ContainerManager, HostConfig, ResourceLimits};
+pub use docker::{DockerClient, DockerConfig, DockerSandbox, ContainerInfo, ImageInfo, VolumeInfo, NetworkInfo};
+pub use execution::{ExecutionEngine, ExecutionRequest, ExecutionResult, ExecutionManager, ExecutionContext};
 pub use image::{Image, ImageManager};
 pub use volume::{Volume, VolumeManager};
 pub use network::{Network, NetworkManager};

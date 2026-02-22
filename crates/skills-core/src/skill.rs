@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::{SkillError, SkillResult};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillInput {
@@ -79,7 +81,7 @@ pub struct SkillReturnType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillExample {
-    pub input: HashMap<String, serde_json::Value>,
+    pub input: serde_json::Value,
     pub output: serde_json::Value,
     pub description: String,
 }

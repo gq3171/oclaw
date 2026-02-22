@@ -42,3 +42,4 @@ tower-service.workspace = true
 pem.workspace = true
 tokio-rustls.workspace = true
 tower-http.workspace = true
+hex.workspace = true

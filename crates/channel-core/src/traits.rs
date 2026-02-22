@@ -16,6 +16,26 @@ pub struct ChannelMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChannelMessageWithAttachments {
+    pub message: ChannelMessage,
+    pub attachments: Vec<ChannelAttachment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelAttachment {
+    pub id: Option<String>,
+    pub url: String,
+    pub filename: Option<String>,
+    pub mime_type: Option<String>,
+    pub size: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub duration: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChannelAccount {
     pub id: String,
     pub name: String,
@@ -38,6 +58,12 @@ pub enum ChannelStatus {
     Connecting,
     Connected,
     Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypingStatus {
+    Started,
+    Stopped,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +118,14 @@ pub trait Channel: Send + Sync {
     fn status(&self) -> ChannelStatus;
     
     async fn send_message(&self, message: &ChannelMessage) -> ChannelResult<String>;
+    
+    async fn send_message_with_attachments(&self, message: &ChannelMessageWithAttachments) -> ChannelResult<String> {
+        self.send_message(&message.message).await
+    }
+    
+    async fn send_typing_status(&self, _user_id: &str, _status: TypingStatus) -> ChannelResult<()> {
+        Ok(())
+    }
     
     async fn list_accounts(&self) -> ChannelResult<Vec<ChannelAccount>>;
     

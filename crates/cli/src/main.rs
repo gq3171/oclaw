@@ -48,6 +48,21 @@ enum Commands {
     Wizard {
         #[arg(short, long)]
         path: Option<String>,
+        
+        #[arg(long)]
+        skip_existing: bool,
+    },
+    Channel {
+        #[command(subcommand)]
+        action: ChannelAction,
+    },
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+    Doctor {
+        #[arg(long)]
+        category: Option<String>,
     },
     Provider {
         #[command(subcommand)]
@@ -61,6 +76,18 @@ enum ConfigAction {
     Init,
     Show,
     Validate,
+}
+
+#[derive(Subcommand)]
+enum ChannelAction {
+    Setup,
+    List,
+}
+
+#[derive(Subcommand)]
+enum SkillAction {
+    Setup,
+    List,
 }
 
 #[derive(Subcommand)]
@@ -183,7 +210,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         
-        Commands::Wizard { path } => {
+        Commands::Wizard { path, skip_existing } => {
             use wizard::ConfigWizard;
             use wizard::{success, error};
             
@@ -191,12 +218,14 @@ async fn main() -> anyhow::Result<()> {
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
             
-            let mut manager = ConfigManager::new(config_path);
-            if manager.load().is_ok()
-                && !wizard::prompt_yes_no("Configuration already exists. Overwrite?", false) {
-                    info!("Aborted.");
-                    return Ok(());
-                }
+            if !skip_existing {
+                let mut manager = ConfigManager::new(config_path);
+                if manager.load().is_ok()
+                    && !wizard::prompt_yes_no("Configuration already exists. Overwrite?", false) {
+                        info!("Aborted.");
+                        return Ok(());
+                    }
+            }
             
             match ConfigWizard::run() {
                 Ok(_) => {
@@ -206,6 +235,65 @@ async fn main() -> anyhow::Result<()> {
                     error(&format!("Setup failed: {}", e));
                     return Err(anyhow::anyhow!(e));
                 }
+            }
+        }
+        
+        Commands::Channel { action } => {
+            use wizard::ChannelWizard;
+            
+            match action {
+                ChannelAction::Setup => {
+                    if let Err(e) = ChannelWizard::run() {
+                        tracing::error!("Channel setup failed: {}", e);
+                        return Err(anyhow::anyhow!(e));
+                    }
+                }
+                ChannelAction::List => {
+                    tracing::info!("Channel configuration:");
+                    tracing::info!("Use 'oclaws channel setup' to configure channels.");
+                }
+            }
+        }
+        
+        Commands::Skill { action } => {
+            use wizard::SkillWizard;
+            
+            match action {
+                SkillAction::Setup => {
+                    if let Err(e) = SkillWizard::run() {
+                        tracing::error!("Skill setup failed: {}", e);
+                        return Err(anyhow::anyhow!(e));
+                    }
+                }
+                SkillAction::List => {
+                    tracing::info!("Available skills:");
+                    tracing::info!("Use 'oclaws skill setup' to configure skills.");
+                }
+            }
+        }
+        
+        Commands::Doctor { category } => {
+            use wizard::DoctorWizard;
+            use oclaws_doctor_core::CheckCategory;
+            
+            if let Some(cat) = category {
+                let cat = match cat.as_str() {
+                    "system" => CheckCategory::System,
+                    "network" => CheckCategory::Network,
+                    "config" | "configuration" => CheckCategory::Configuration,
+                    "dependencies" | "deps" => CheckCategory::Dependencies,
+                    "storage" => CheckCategory::Storage,
+                    "security" => CheckCategory::Security,
+                    "performance" => CheckCategory::Performance,
+                    _ => {
+                        tracing::error!("Invalid category. Use: system, network, config, dependencies, storage, security, or performance");
+                        return Ok(());
+                    }
+                };
+                
+                DoctorWizard::check_category(cat);
+            } else {
+                DoctorWizard::run();
             }
         }
         

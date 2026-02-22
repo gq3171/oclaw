@@ -19,7 +19,7 @@ impl SkillRegistry {
     }
 
     pub async fn register(&self, skill: Arc<dyn Skill>) -> String {
-        let def = skill.definition();
+        let def = skill.definition().clone();
         let id = def.id.clone();
         
         self.skills.write().await.insert(id.clone(), skill);
@@ -111,8 +111,8 @@ impl SkillRegistry {
     pub async fn execute(&self, id: &str, input: SkillInput) -> Option<SkillOutput> {
         self.get(id).await.map(|skill| {
             let runner = crate::skill::SkillRunner::new();
-            futures::executor::block_on(runner.run(skill.as_ref(), input))
-        })
+            futures::executor::block_on(runner.run(skill.as_ref(), input)).ok()
+        }).flatten()
     }
 
     pub async fn count(&self) -> usize {

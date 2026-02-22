@@ -1,11 +1,3 @@
-pub mod skill;
-pub mod registry;
-pub mod builtin;
-
-pub use skill::{Skill, SkillInput, SkillOutput, SkillResult, SkillContext};
-pub use registry::SkillRegistry;
-pub use builtin::*;
-
 pub type SkillResult<T> = Result<T, SkillError>;
 
 #[derive(Debug, thiserror::Error)]
@@ -34,3 +26,11 @@ impl serde::Serialize for SkillError {
         serializer.serialize_str(&self.to_string())
     }
 }
+
+pub mod skill;
+pub mod registry;
+pub mod builtin;
+
+pub use skill::{Skill, SkillInput, SkillOutput, SkillContext};
+pub use registry::SkillRegistry;
+pub use builtin::*;

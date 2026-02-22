@@ -1,4 +1,5 @@
 pub mod traits;
+pub mod router;
 pub mod webchat;
 pub mod whatsapp;
 pub mod telegram;
@@ -14,4 +15,5 @@ pub mod mattermost;
 pub mod manager;
 
 pub use traits::*;
+pub use router::*;
 pub use manager::{ChannelManager, ChannelFactory, ChannelRegistry, ChannelInfo};

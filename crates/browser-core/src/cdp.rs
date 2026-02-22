@@ -204,3 +204,47 @@ pub struct ConsoleAPICalledParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<f64>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CdpEventType {
+    PageFrameStartedLoading,
+    PageFrameNavigated,
+    PageLoadStarted,
+    PageLoadFinished,
+    PageConsoleAPICalled,
+    PageExceptionThrown,
+    NetworkRequestWillBeSent,
+    NetworkResponseReceived,
+    NetworkLoadingFinished,
+    RuntimeConsoleAPICalled,
+    RuntimeExceptionThrown,
+    RuntimeExecutionContextCreated,
+    RuntimeExecutionContextDestroyed,
+    TargetTargetCreated,
+    TargetTargetDestroyed,
+    TargetTargetInfoChanged,
+}
+
+impl CdpEventType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            CdpEventType::PageFrameStartedLoading => "Page.frameStartedLoading",
+            CdpEventType::PageFrameNavigated => "Page.frameNavigated",
+            CdpEventType::PageLoadStarted => "Page.loadStarted",
+            CdpEventType::PageLoadFinished => "Page.loadFinished",
+            CdpEventType::PageConsoleAPICalled => "Page.consoleAPICalled",
+            CdpEventType::PageExceptionThrown => "Page.exceptionThrown",
+            CdpEventType::NetworkRequestWillBeSent => "Network.requestWillBeSent",
+            CdpEventType::NetworkResponseReceived => "Network.responseReceived",
+            CdpEventType::NetworkLoadingFinished => "Network.loadingFinished",
+            CdpEventType::RuntimeConsoleAPICalled => "Runtime.consoleAPICalled",
+            CdpEventType::RuntimeExceptionThrown => "Runtime.exceptionThrown",
+            CdpEventType::RuntimeExecutionContextCreated => "Runtime.executionContextCreated",
+            CdpEventType::RuntimeExecutionContextDestroyed => "Runtime.executionContextDestroyed",
+            CdpEventType::TargetTargetCreated => "Target.targetCreated",
+            CdpEventType::TargetTargetDestroyed => "Target.targetDestroyed",
+            CdpEventType::TargetTargetInfoChanged => "Target.targetInfoChanged",
+        }
+    }
+}

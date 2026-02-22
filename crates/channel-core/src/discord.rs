@@ -244,6 +244,74 @@ impl Channel for DiscordChannel {
         Ok(message_id)
     }
 
+    async fn send_message_with_attachments(&self, message_with_attachments: &ChannelMessageWithAttachments) -> ChannelResult<String> {
+        if self.status != ChannelStatus::Connected {
+            return Err(ChannelError::ConnectionError("Not connected".to_string()));
+        }
+
+        let channel_id = message_with_attachments.message.metadata.get("channel_id")
+            .or_else(|| message_with_attachments.message.metadata.get("channel"))
+            .or_else(|| self.channel_ids.first())
+            .cloned()
+            .ok_or_else(|| ChannelError::MessageError("Channel ID not specified".to_string()))?;
+
+        let mut attachments_json: Vec<serde_json::Value> = Vec::new();
+        
+        for attachment in &message_with_attachments.attachments {
+            attachments_json.push(serde_json::json!({
+                "filename": attachment.filename.clone().unwrap_or_else(|| "file".to_string()),
+                "file_url": attachment.url
+            }));
+        }
+
+        let discord_msg = DiscordMessage {
+            content: message_with_attachments.message.content.clone(),
+            tts: message_with_attachments.message.metadata.get("tts").and_then(|v| v.parse().ok()),
+            embeds: None,
+            components: None,
+        };
+
+        let mut request_body = serde_json::to_value(&discord_msg).map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        
+        if let Some(obj) = request_body.as_object_mut() {
+            obj.insert("attachments".to_string(), serde_json::json!(attachments_json));
+        }
+
+        let response: serde_json::Value = self.send_api_request(
+            "POST",
+            &format!("/channels/{}/messages", channel_id),
+            Some(&request_body),
+        ).await?;
+
+        let message_id = response.get("id")
+            .and_then(|id| id.as_str())
+            .map(|id| id.to_string())
+            .ok_or_else(|| ChannelError::MessageError("No message ID returned".to_string()))?;
+
+        Ok(message_id)
+    }
+
+    async fn send_typing_status(&self, _user_id: &str, _status: TypingStatus) -> ChannelResult<()> {
+        if self.status != ChannelStatus::Connected {
+            return Err(ChannelError::ConnectionError("Not connected".to_string()));
+        }
+
+        let channel_id = self.channel_ids.first()
+            .ok_or_else(|| ChannelError::MessageError("No channel configured".to_string()))?;
+
+        match _status {
+            TypingStatus::Started => {
+                let _: serde_json::Value = self.send_api_request(
+                    "POST",
+                    &format!("/channels/{}/typing", channel_id),
+                    None,
+                ).await?;
+                Ok(())
+            }
+            TypingStatus::Stopped => Ok(()),
+        }
+    }
+
     async fn list_accounts(&self) -> ChannelResult<Vec<ChannelAccount>> {
         if self.status != ChannelStatus::Connected {
             return Err(ChannelError::ConnectionError("Not connected".to_string()));
