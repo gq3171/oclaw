@@ -28,3 +28,4 @@ futures.workspace = true
 reqwest.workspace = true
 oclaws-tui-core = { path = "../tui-core" }
 oclaws-daemon-core = { path = "../daemon-core" }
+dotenvy.workspace = true

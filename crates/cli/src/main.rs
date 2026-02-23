@@ -152,6 +152,7 @@ enum ModelAction {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
     let cli = Cli::parse();
     
     let log_level = match cli.log_level.as_str() {
