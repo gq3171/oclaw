@@ -45,6 +45,8 @@ cargo run -p oclaw-cli -- skill setup
 
 Config location: `~/.oclaws/config.json` (Linux/macOS) or `%APPDATA%\oclaws\config.json` (Windows).
 
+See [`config.example.json`](config.example.json) for a full configuration reference with all available options.
+
 ## CLI Commands
 
 | Command | Description |

@@ -1,0 +1,236 @@
+{
+  "meta": {
+    "lastTouchedVersion": "0.1.0",
+    "lastTouchedAt": "2025-01-01T00:00:00Z"
+  },
+  "logging": {
+    "level": "info",
+    "file": "/var/log/oclaws/oclaws.log",
+    "consoleLevel": "warn",
+    "consoleStyle": "compact",
+    "redactSensitive": "true",
+    "redactPatterns": ["sk-.*", "token:.*"]
+  },
+  "gateway": {
+    "port": 8080,
+    "mode": "normal",
+    "bind": "0.0.0.0",
+    "controlUi": {
+      "enabled": true,
+      "basePath": "/ui",
+      "allowedOrigins": ["https://example.com"],
+      "allowInsecureAuth": false
+    },
+    "auth": {
+      "mode": "token",
+      "token": "${OCLAWS_GATEWAY_AUTH_TOKEN}",
+      "password": "${OCLAWS_GATEWAY_AUTH_PASSWORD}",
+      "allowTailscale": false,
+      "rateLimit": {
+        "maxAttempts": 5,
+        "windowMs": 60000,
+        "lockoutMs": 300000,
+        "exemptLoopback": true
+      }
+    },
+    "tls": {
+      "enabled": true,
+      "autoGenerate": false,
+      "certPath": "/etc/oclaws/cert.pem",
+      "keyPath": "/etc/oclaws/key.pem",
+      "caPath": "/etc/oclaws/ca.pem"
+    },
+    "tailscale": {
+      "mode": "funnel",
+      "resetOnExit": true
+    },
+    "reload": {
+      "mode": "watch",
+      "debounceMs": 2000
+    },
+    "trustedProxies": ["10.0.0.0/8", "172.16.0.0/12"],
+    "channelHealthCheckMinutes": 5,
+    "tools": {
+      "allow": ["web_search", "code_exec"],
+      "deny": ["file_delete"]
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": { "enabled": true },
+        "responses": { "enabled": true }
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "anthropic": {
+        "provider": "anthropic",
+        "apiKey": "${OCLAWS_PROVIDER_ANTHROPIC_API_KEY}",
+        "model": "claude-sonnet-4-20250514",
+        "maxTokens": 8192,
+        "temperature": 0.7,
+        "maxConcurrency": 5
+      },
+      "openai": {
+        "provider": "openai",
+        "apiKey": "${OCLAWS_PROVIDER_OPENAI_API_KEY}",
+        "baseUrl": "https://api.openai.com/v1",
+        "model": "gpt-4o",
+        "maxTokens": 4096,
+        "temperature": 0.7,
+        "maxConcurrency": 10
+      },
+      "bedrock": {
+        "provider": "bedrock",
+        "model": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "maxTokens": 4096
+      },
+      "openrouter": {
+        "provider": "openrouter",
+        "apiKey": "${OCLAWS_PROVIDER_OPENROUTER_API_KEY}",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "model": "anthropic/claude-3.5-sonnet"
+      }
+    }
+  },
+  "channels": {
+    "webchat": {
+      "enabled": true,
+      "auth": {
+        "username": "admin",
+        "password": "${OCLAWS_WEBCHAT_PASSWORD}"
+      }
+    },
+    "telegram": {
+      "enabled": true,
+      "botToken": "${OCLAWS_TELEGRAM_BOT_TOKEN}"
+    },
+    "discord": {
+      "enabled": false,
+      "botToken": "${OCLAWS_DISCORD_BOT_TOKEN}",
+      "guildId": "123456789",
+      "channelIds": ["111111111", "222222222"]
+    },
+    "slack": {
+      "enabled": false,
+      "botToken": "${OCLAWS_SLACK_BOT_TOKEN}",
+      "signingSecret": "${OCLAWS_SLACK_SIGNING_SECRET}",
+      "channelIds": ["C01XXXXXX"],
+      "webhookUrl": "https://hooks.slack.com/services/xxx"
+    },
+    "matrix": {
+      "enabled": false,
+      "homeserver": "https://matrix.org",
+      "userId": "@bot:matrix.org",
+      "accessToken": "${OCLAWS_MATRIX_ACCESS_TOKEN}",
+      "roomId": "!room:matrix.org"
+    },
+    "signal": {
+      "enabled": false,
+      "phoneNumber": "+1234567890",
+      "apiUrl": "http://localhost:8088"
+    },
+    "line": {
+      "enabled": false,
+      "channelAccessToken": "${OCLAWS_LINE_ACCESS_TOKEN}",
+      "channelSecret": "${OCLAWS_LINE_CHANNEL_SECRET}"
+    },
+    "mattermost": {
+      "enabled": false,
+      "serverUrl": "https://mattermost.example.com",
+      "accessToken": "${OCLAWS_MATTERMOST_TOKEN}",
+      "teamId": "team-id",
+      "channelId": "channel-id"
+    },
+    "googleChat": {
+      "enabled": false,
+      "spaceName": "spaces/AAAA",
+      "serviceAccountJson": "/etc/oclaws/google-sa.json"
+    }
+  },
+  "auth": {
+    "profiles": {
+      "default": {
+        "provider": "anthropic",
+        "mode": "api_key"
+      }
+    },
+    "cooldowns": {
+      "billingBackoffHours": 1.0,
+      "billingMaxHours": 24.0,
+      "failureWindowHours": 2.0
+    }
+  },
+  "web": {
+    "enabled": true,
+    "heartbeatSeconds": 30,
+    "reconnect": {
+      "initialMs": 1000,
+      "maxMs": 30000,
+      "factor": 2.0,
+      "jitter": 0.1,
+      "maxAttempts": 10
+    }
+  },
+  "browser": {
+    "enabled": false,
+    "headless": true,
+    "noSandbox": false,
+    "cdpUrl": "ws://localhost:9222"
+  },
+  "cron": {
+    "enabled": false,
+    "maxConcurrentRuns": 3
+  },
+  "diagnostics": {
+    "enabled": true,
+    "otel": {
+      "enabled": false,
+      "endpoint": "http://localhost:4318",
+      "protocol": "http",
+      "serviceName": "oclaws",
+      "traces": true,
+      "metrics": true,
+      "logs": false,
+      "sampleRate": 0.1
+    }
+  },
+  "talk": {
+    "voiceId": "alloy",
+    "outputFormat": "mp3",
+    "interruptOnSpeech": true
+  },
+  "discovery": {
+    "wideArea": { "enabled": false },
+    "mdns": { "mode": "passive" }
+  },
+  "ui": {
+    "seamColor": "#4A90D9",
+    "assistant": {
+      "name": "OCLAWS",
+      "avatar": "🤖"
+    }
+  },
+  "update": {
+    "channel": "stable",
+    "checkOnStart": true
+  },
+  "media": {
+    "preserveFilenames": true
+  },
+  "canvasHost": {
+    "enabled": false,
+    "root": "./canvas",
+    "port": 3000,
+    "liveReload": true
+  },
+  "env": {
+    "shellEnv": {
+      "enabled": true,
+      "timeoutMs": 5000
+    },
+    "vars": {
+      "CUSTOM_VAR": "value"
+    }
+  }
+}
