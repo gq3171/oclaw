@@ -216,7 +216,7 @@ async fn main() -> anyhow::Result<()> {
             };
 
             // 5. Start config watcher
-            let watcher = oclaws_config::ConfigWatcher::new(config_path);
+            let watcher = oclaws_config::ConfigWatcher::new(config_path.clone());
             let mut watch_rx = watcher.watch();
             tokio::spawn(async move {
                 while watch_rx.changed().await.is_ok() {
@@ -229,7 +229,7 @@ async fn main() -> anyhow::Result<()> {
 
             if http_only {
                 info!("Starting OCLAWS HTTP server on port {}", port);
-                let server = build_http_server(port, gateway_config, gateway_server, llm_provider, channel_manager).await?;
+                let server = build_http_server(port, gateway_config, gateway_server, llm_provider, channel_manager, config.clone(), config_path.clone()).await?;
                 if let Err(e) = server.start().await {
                     error!("HTTP server error: {}", e);
                     return Err(anyhow::anyhow!(e));
@@ -249,7 +249,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                 });
 
-                let server = build_http_server(port + 1, gateway_config, gateway_server, llm_provider, channel_manager).await?;
+                let server = build_http_server(port + 1, gateway_config, gateway_server, llm_provider, channel_manager, config.clone(), config_path.clone()).await?;
                 tokio::spawn(async move {
                     if let Err(e) = server.start().await {
                         error!("HTTP server error: {}", e);
@@ -588,10 +588,13 @@ async fn build_http_server(
     gateway_server: Arc<GatewayServer>,
     llm_provider: Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>,
     channel_manager: Option<Arc<RwLock<oclaws_channel_core::ChannelManager>>>,
+    full_config: oclaws_config::Config,
+    config_path: std::path::PathBuf,
 ) -> anyhow::Result<oclaws_gateway_core::HttpServer> {
     use oclaws_gateway_core::create_http_server;
     let mut server = create_http_server(port, gateway, gateway_server).await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
+    server = server.with_full_config(full_config, config_path);
     if let Some(provider) = llm_provider {
         server = server.with_llm_provider(provider);
     }

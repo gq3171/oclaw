@@ -4,7 +4,7 @@ use axum::{
     },
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
-    routing::{any, delete, get, post},
+    routing::{any, delete, get, post, put},
     middleware as axum_mw,
     Json, Router,
 };
@@ -50,6 +50,8 @@ pub struct HttpServer {
     llm_provider: Option<Arc<dyn LlmProvider>>,
     hook_pipeline: Option<Arc<HookPipeline>>,
     channel_manager: Option<Arc<RwLock<ChannelManager>>>,
+    full_config: Option<Arc<RwLock<oclaws_config::settings::Config>>>,
+    config_path: Option<PathBuf>,
 }
 
 impl HttpServer {
@@ -69,6 +71,8 @@ impl HttpServer {
             llm_provider: None,
             hook_pipeline: None,
             channel_manager: None,
+            full_config: None,
+            config_path: None,
         }
     }
 
@@ -97,6 +101,12 @@ impl HttpServer {
         self
     }
 
+    pub fn with_full_config(mut self, config: oclaws_config::settings::Config, path: PathBuf) -> Self {
+        self.full_config = Some(Arc::new(RwLock::new(config)));
+        self.config_path = Some(path);
+        self
+    }
+
     pub fn into_router(self) -> Router {
         let cors = self.build_cors_layer();
         let mut hc = HealthChecker::new();
@@ -110,6 +120,8 @@ impl HttpServer {
             channel_manager: self.channel_manager.clone(),
             metrics: Arc::new(metrics::AppMetrics::new()),
             health_checker: Arc::new(hc),
+            full_config: self.full_config.clone(),
+            config_path: self.config_path.clone(),
         });
 
         // Webhook routes skip auth middleware (they use their own verification)
@@ -132,6 +144,9 @@ impl HttpServer {
             .route("/config", get(routes::config_get_handler))
             .route("/config/reload", post(routes::config_reload_handler))
             .route("/models", get(routes::models_list_handler))
+            .route("/api/config/full", get(routes::config_full_get_handler))
+            .route("/api/config/full", put(routes::config_full_put_handler))
+            .route("/ui/config", get(routes::config_ui_handler))
             .route("/metrics", get(metrics::metrics_handler))
             .route("/", any(root_handler))
             .layer(axum_mw::from_fn(middleware::security_headers_middleware))
@@ -241,6 +256,8 @@ pub struct HttpState {
     pub channel_manager: Option<Arc<RwLock<ChannelManager>>>,
     pub metrics: Arc<metrics::AppMetrics>,
     pub health_checker: Arc<HealthChecker>,
+    pub full_config: Option<Arc<RwLock<oclaws_config::settings::Config>>>,
+    pub config_path: Option<PathBuf>,
 }
 
 async fn health_handler() -> impl IntoResponse {
@@ -273,6 +290,8 @@ async fn root_handler() -> impl IntoResponse {
             "/config",
             "/config/reload",
             "/models",
+            "/api/config/full",
+            "/ui/config",
             "/metrics",
             "/webhooks/telegram",
             "/webhooks/slack",

@@ -30,6 +30,20 @@ pub fn prompt(prompt: &str) -> String {
     input.trim().to_string()
 }
 
+pub fn prompt_optional(msg: &str, current: Option<&str>) -> Option<String> {
+    let display = current.unwrap_or("<not set>");
+    print!("{} [{}]: ", msg, display);
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    let input = input.trim();
+    if input.is_empty() {
+        current.map(|s| s.to_string())
+    } else {
+        Some(input.to_string())
+    }
+}
+
 #[allow(dead_code)]
 pub fn prompt_password(prompt: &str) -> String {
     print!("{}: ", prompt);

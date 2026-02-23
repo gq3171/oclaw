@@ -319,6 +319,155 @@ pub async fn models_list_handler(
     Json(serde_json::json!({ "models": models }))
 }
 
+pub async fn config_full_get_handler(
+    State(state): State<Arc<HttpState>>,
+) -> Response {
+    match &state.full_config {
+        Some(cfg) => {
+            let cfg = cfg.read().await;
+            Json(serde_json::to_value(&*cfg).unwrap_or_default()).into_response()
+        }
+        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "full config not available"}))).into_response(),
+    }
+}
+
+pub async fn config_full_put_handler(
+    State(state): State<Arc<HttpState>>,
+    Json(new_config): Json<oclaws_config::settings::Config>,
+) -> Response {
+    let errors = new_config.validate();
+    if !errors.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"errors": errors}))).into_response();
+    }
+    let Some(ref full_config) = state.full_config else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "full config not available"}))).into_response();
+    };
+    if let Some(ref path) = state.config_path {
+        match serde_json::to_string_pretty(&new_config) {
+            Ok(content) => {
+                if let Err(e) = tokio::fs::write(path, content).await {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("write failed: {}", e)}))).into_response();
+                }
+            }
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("serialize failed: {}", e)}))).into_response();
+            }
+        }
+    }
+    *full_config.write().await = new_config;
+    Json(serde_json::json!({"ok": true})).into_response()
+}
+
+pub async fn config_ui_handler() -> axum::response::Html<&'static str> {
+    axum::response::Html(CONFIG_UI_HTML)
+}
+
+const CONFIG_UI_HTML: &str = r##"<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OCLAWS Config</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#e0e0e0;padding:20px}
+h1{text-align:center;margin-bottom:20px;color:#00d4ff}
+.tabs{display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap}
+.tab{padding:8px 16px;background:#16213e;border:1px solid #0f3460;border-radius:6px 6px 0 0;cursor:pointer;color:#a0a0a0}
+.tab.active{background:#0f3460;color:#00d4ff;border-bottom-color:#0f3460}
+.panel{display:none;background:#16213e;border:1px solid #0f3460;border-radius:0 6px 6px 6px;padding:16px;max-height:70vh;overflow-y:auto}
+.panel.active{display:block}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:13px;color:#8899aa;margin-bottom:4px}
+.field input,.field textarea,.field select{width:100%;padding:8px;background:#1a1a2e;border:1px solid #0f3460;border-radius:4px;color:#e0e0e0;font-family:monospace}
+.field input[type=checkbox]{width:auto}
+.field textarea{min-height:60px;resize:vertical}
+.section{margin:12px 0;padding:10px;border:1px solid #0f3460;border-radius:6px}
+.section-title{font-size:14px;font-weight:bold;color:#00d4ff;margin-bottom:8px}
+#save-btn{display:block;margin:20px auto;padding:12px 40px;background:#00d4ff;color:#1a1a2e;border:none;border-radius:6px;font-size:16px;font-weight:bold;cursor:pointer}
+#save-btn:hover{background:#00b8d4}
+#msg{text-align:center;margin-top:10px;min-height:24px}
+.ok{color:#4caf50}.err{color:#f44336}
+</style></head><body>
+<h1>OCLAWS Configuration</h1>
+<div class="tabs" id="tabs"></div>
+<div id="panels"></div>
+<button id="save-btn">Save</button>
+<div id="msg"></div>
+<script>
+const TABS=["Gateway","Models","Channels","Browser","Cron","Logging","Advanced"];
+const TAB_KEYS={Gateway:["gateway"],Models:["models"],Channels:["channels"],Browser:["browser"],Cron:["cron"],Logging:["logging"],Advanced:["diagnostics","talk","web","ui","auth","update","env","media","canvasHost","discovery"]};
+let cfg={};
+function isSensitive(k){return/token|key|password|secret/i.test(k)}
+function makeField(path,val,parent){
+  const div=document.createElement("div");div.className="field";
+  const lbl=document.createElement("label");lbl.textContent=path;div.appendChild(lbl);
+  const key=path.split(".").pop();
+  if(val===null||val===undefined){
+    const inp=document.createElement("input");inp.type="text";inp.dataset.path=path;inp.value="";div.appendChild(inp);
+  }else if(typeof val==="boolean"){
+    const inp=document.createElement("input");inp.type="checkbox";inp.checked=val;inp.dataset.path=path;div.appendChild(inp);
+  }else if(typeof val==="number"){
+    const inp=document.createElement("input");inp.type="number";inp.value=val;inp.step="any";inp.dataset.path=path;div.appendChild(inp);
+  }else if(typeof val==="string"){
+    const inp=document.createElement("input");inp.type=isSensitive(key)?"password":"text";inp.value=val;inp.dataset.path=path;div.appendChild(inp);
+  }else if(Array.isArray(val)){
+    const ta=document.createElement("textarea");ta.value=JSON.stringify(val,null,2);ta.dataset.path=path;ta.dataset.type="array";div.appendChild(ta);
+  }else if(typeof val==="object"){
+    const sec=document.createElement("div");sec.className="section";
+    const t=document.createElement("div");t.className="section-title";t.textContent=key;sec.appendChild(t);
+    for(const[k,v] of Object.entries(val))makeField(path+"."+k,v,sec);
+    parent.appendChild(sec);return;
+  }
+  parent.appendChild(div);
+}
+function render(){
+  const tabsEl=document.getElementById("tabs"),panelsEl=document.getElementById("panels");
+  tabsEl.innerHTML="";panelsEl.innerHTML="";
+  TABS.forEach((name,i)=>{
+    const tab=document.createElement("div");tab.className="tab"+(i===0?" active":"");tab.textContent=name;
+    tab.onclick=()=>{document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));tab.classList.add("active");document.querySelectorAll(".panel").forEach(p=>p.classList.remove("active"));document.getElementById("p-"+i).classList.add("active")};
+    tabsEl.appendChild(tab);
+    const panel=document.createElement("div");panel.className="panel"+(i===0?" active":"");panel.id="p-"+i;
+    TAB_KEYS[name].forEach(key=>{
+      if(cfg[key]!==undefined&&cfg[key]!==null&&typeof cfg[key]==="object"){
+        const sec=document.createElement("div");sec.className="section";
+        const t=document.createElement("div");t.className="section-title";t.textContent=key;sec.appendChild(t);
+        for(const[k,v] of Object.entries(cfg[key]))makeField(key+"."+k,v,sec);
+        panel.appendChild(sec);
+      }else{
+        makeField(key,cfg[key]||null,panel);
+      }
+    });
+    panelsEl.appendChild(panel);
+  });
+}
+function setPath(obj,path,val){
+  const parts=path.split(".");let cur=obj;
+  for(let i=0;i<parts.length-1;i++){if(cur[parts[i]]===undefined||cur[parts[i]]===null)cur[parts[i]]={};cur=cur[parts[i]]}
+  cur[parts[parts.length-1]]=val;
+}
+function collect(){
+  const out=JSON.parse(JSON.stringify(cfg));
+  document.querySelectorAll("[data-path]").forEach(el=>{
+    const p=el.dataset.path;let v;
+    if(el.type==="checkbox")v=el.checked;
+    else if(el.type==="number")v=el.value===""?null:Number(el.value);
+    else if(el.dataset.type==="array"){try{v=JSON.parse(el.value)}catch{v=el.value.split("\n").filter(Boolean)}}
+    else v=el.value===""?null:el.value;
+    if(v!==null)setPath(out,p,v);
+  });
+  return out;
+}
+document.getElementById("save-btn").onclick=async()=>{
+  const msg=document.getElementById("msg");msg.textContent="Saving...";msg.className="";
+  try{
+    const r=await fetch("/api/config/full",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(collect())});
+    const j=await r.json();
+    if(r.ok){msg.textContent="Saved!";msg.className="ok"}
+    else{msg.textContent="Error: "+(j.errors||[j.error]).join(", ");msg.className="err"}
+  }catch(e){msg.textContent="Error: "+e;msg.className="err"}
+};
+fetch("/api/config/full").then(r=>r.json()).then(j=>{cfg=j;render()}).catch(e=>document.getElementById("msg").textContent="Load error: "+e);
+</script></body></html>"##;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,6 +491,8 @@ mod tests {
             channel_manager: None,
             metrics: Arc::new(crate::http::metrics::AppMetrics::new()),
             health_checker: Arc::new(oclaws_doctor_core::HealthChecker::new()),
+            full_config: None,
+            config_path: None,
         })
     }
 
