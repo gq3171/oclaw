@@ -331,8 +331,14 @@ impl Channel for DiscordChannel {
             channel: "discord".to_string(),
             avatar: user_response.get("avatar")
                 .and_then(|a| a.as_str())
-                .map(|a| format!("https://cdn.discordapp.com/avatars/{}/{}.png", 
-                    user_response.get("id").and_then(|i| i.as_str()).unwrap_or(""), a)),
+                .and_then(|a| {
+                    let id = user_response.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                    if id.chars().all(|c| c.is_ascii_digit()) && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                        Some(format!("https://cdn.discordapp.com/avatars/{}/{}.png", id, a))
+                    } else {
+                        None
+                    }
+                }),
             status: Some("active".to_string()),
         };
 

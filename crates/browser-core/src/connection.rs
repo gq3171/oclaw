@@ -40,7 +40,13 @@ impl CdpConnection {
             loop {
                 tokio::select! {
                     Some(cmd) = cmd_rx.recv() => {
-                        let json = serde_json::to_string(&cmd).unwrap();
+                        let json = match serde_json::to_string(&cmd) {
+                            Ok(j) => j,
+                            Err(e) => {
+                                error!("Failed to serialize CDP command: {}", e);
+                                continue;
+                            }
+                        };
                         if let Err(e) = write.send(tokio_tungstenite::tungstenite::Message::Text(json.into())).await {
                             error!("Failed to send CDP command: {}", e);
                             break;

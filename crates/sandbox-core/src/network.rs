@@ -55,7 +55,7 @@ impl NetworkManager {
             id: uuid::Uuid::new_v4().to_string(),
             name: format!(
                 "bridge_{}",
-                uuid::Uuid::new_v4().to_string()[..8].to_string()
+                &uuid::Uuid::new_v4().to_string()[..8]
             ),
             driver: self.default_driver.clone(),
             scope: "local".to_string(),

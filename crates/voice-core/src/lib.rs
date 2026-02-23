@@ -4,9 +4,9 @@ mod stream;
 mod tts;
 
 pub use connection::{VoiceConnection, VoiceConnectionManager};
-pub use stt::{STTProvider, STTResult};
-pub use stream::{AudioStream, AudioFrame, AudioBuffer, AudioProcessor};
-pub use tts::{TTSProvider, TTSVoice};
+pub use stt::{STTProvider, STTResult, STTClient, STTConfig};
+pub use stream::{AudioStream, AudioFrame, AudioBuffer, AudioProcessor, AudioStreamGenerator};
+pub use tts::{TTSProvider, TTSVoice, TTSClient, TTSConfig};
 
 use anyhow::Result;
 use async_trait::async_trait;

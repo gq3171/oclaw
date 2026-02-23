@@ -24,6 +24,8 @@ pub enum Tool {
     ReadFile(ReadFileTool),
     WriteFile(WriteFileTool),
     ListDir(ListDirTool),
+    WebFetch(WebFetchTool),
+    Memory(MemoryTool),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +45,8 @@ impl Tool {
             Tool::ReadFile(_) => "read_file",
             Tool::WriteFile(_) => "write_file",
             Tool::ListDir(_) => "list_dir",
+            Tool::WebFetch(_) => "web_fetch",
+            Tool::Memory(_) => "memory",
         }
     }
 
@@ -52,6 +56,8 @@ impl Tool {
             Tool::ReadFile(_) => "Read contents of a file",
             Tool::WriteFile(_) => "Write content to a file",
             Tool::ListDir(_) => "List contents of a directory",
+            Tool::WebFetch(_) => "Fetch content from a URL via HTTP GET",
+            Tool::Memory(_) => "Store and retrieve key-value memory entries",
         }
     }
 
@@ -113,6 +119,23 @@ impl Tool {
                 },
                 "required": ["path"]
             }),
+            Tool::WebFetch(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "URL to fetch" },
+                    "headers": { "type": "object", "description": "Optional HTTP headers" }
+                },
+                "required": ["url"]
+            }),
+            Tool::Memory(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["get", "set", "delete", "list"], "description": "Memory operation" },
+                    "key": { "type": "string", "description": "Memory key" },
+                    "value": { "type": "string", "description": "Value to store (for set)" }
+                },
+                "required": ["action"]
+            }),
         }
     }
 
@@ -122,6 +145,8 @@ impl Tool {
             Tool::ReadFile(tool) => tool.execute(arguments).await,
             Tool::WriteFile(tool) => tool.execute(arguments).await,
             Tool::ListDir(tool) => tool.execute(arguments).await,
+            Tool::WebFetch(tool) => tool.execute(arguments).await,
+            Tool::Memory(tool) => tool.execute(arguments).await,
         }
     }
 }
@@ -236,6 +261,8 @@ impl ToolRegistry {
         tools.insert("read_file".to_string(), Tool::ReadFile(ReadFileTool::new()));
         tools.insert("write_file".to_string(), Tool::WriteFile(WriteFileTool::new()));
         tools.insert("list_dir".to_string(), Tool::ListDir(ListDirTool::new()));
+        tools.insert("web_fetch".to_string(), Tool::WebFetch(WebFetchTool::new()));
+        tools.insert("memory".to_string(), Tool::Memory(MemoryTool::new()));
         Self { tools }
     }
 
@@ -313,10 +340,10 @@ impl ReadFileTool {
         let content = tokio::fs::read_to_string(&args.path).await
             .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to read file: {}", e)))?;
 
-        if let Some(max_size) = self.max_size_bytes {
-            if content.len() > max_size as usize {
-                return Err(crate::ToolError::ExecutionFailed("File too large".to_string()));
-            }
+        if let Some(max_size) = self.max_size_bytes
+            && content.len() > max_size as usize
+        {
+            return Err(crate::ToolError::ExecutionFailed("File too large".to_string()));
         }
 
         Ok(serde_json::json!({
@@ -353,11 +380,11 @@ impl WriteFileTool {
         let args: WriteFileArgs = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
-        if self.create_parents {
-            if let Some(parent) = std::path::Path::new(&args.path).parent() {
-                tokio::fs::create_dir_all(parent).await
-                    .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to create directory: {}", e)))?;
-            }
+        if self.create_parents
+            && let Some(parent) = std::path::Path::new(&args.path).parent()
+        {
+            tokio::fs::create_dir_all(parent).await
+                .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to create directory: {}", e)))?;
         }
 
         tokio::fs::write(&args.path, &args.content).await
@@ -431,4 +458,114 @@ impl Default for ListDirTool {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebFetchTool {
+    pub timeout_seconds: u64,
+    pub max_body_bytes: usize,
+}
+
+impl WebFetchTool {
+    pub fn new() -> Self {
+        Self { timeout_seconds: 30, max_body_bytes: 1024 * 1024 }
+    }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            url: String,
+            #[serde(default)]
+            headers: Option<HashMap<String, String>>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.timeout_seconds))
+            .build()
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let mut req = client.get(&args.url);
+        if let Some(hdrs) = args.headers {
+            for (k, v) in hdrs {
+                req = req.header(&k, &v);
+            }
+        }
+
+        let resp = req.send().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let status = resp.status().as_u16();
+        let body = resp.text().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let truncated = body.len() > self.max_body_bytes;
+        let body = if truncated { &body[..self.max_body_bytes] } else { &body };
+
+        Ok(serde_json::json!({
+            "url": args.url,
+            "status": status,
+            "body": body,
+            "truncated": truncated
+        }))
+    }
+}
+
+impl Default for WebFetchTool {
+    fn default() -> Self { Self::new() }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryTool {
+    #[serde(skip)]
+    store: std::sync::Arc<std::sync::Mutex<HashMap<String, String>>>,
+}
+
+impl MemoryTool {
+    pub fn new() -> Self {
+        Self { store: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())) }
+    }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            action: String,
+            key: Option<String>,
+            value: Option<String>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        let mut store = self.store.lock().unwrap();
+        match args.action.as_str() {
+            "get" => {
+                let key = args.key.ok_or_else(|| crate::ToolError::InvalidInput("key required".into()))?;
+                let val = store.get(&key).cloned();
+                Ok(serde_json::json!({ "key": key, "value": val }))
+            }
+            "set" => {
+                let key = args.key.ok_or_else(|| crate::ToolError::InvalidInput("key required".into()))?;
+                let val = args.value.unwrap_or_default();
+                store.insert(key.clone(), val.clone());
+                Ok(serde_json::json!({ "key": key, "value": val }))
+            }
+            "delete" => {
+                let key = args.key.ok_or_else(|| crate::ToolError::InvalidInput("key required".into()))?;
+                let removed = store.remove(&key);
+                Ok(serde_json::json!({ "key": key, "removed": removed.is_some() }))
+            }
+            "list" => {
+                let keys: Vec<&String> = store.keys().collect();
+                Ok(serde_json::json!({ "keys": keys, "count": keys.len() }))
+            }
+            other => Err(crate::ToolError::InvalidInput(format!("Unknown action: {}", other))),
+        }
+    }
+}
+
+impl Default for MemoryTool {
+    fn default() -> Self { Self::new() }
 }

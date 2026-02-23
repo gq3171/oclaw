@@ -20,3 +20,7 @@ url.workspace = true
 reqwest.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+tiktoken-rs.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+hex.workspace = true

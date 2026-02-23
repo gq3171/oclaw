@@ -56,7 +56,7 @@ impl ModelChain {
         self.entries.get(self.current_index)
     }
 
-    pub fn next(&mut self) -> bool {
+    pub fn advance(&mut self) -> bool {
         if self.current_index < self.entries.len() - 1 {
             self.current_index += 1;
             true
@@ -139,7 +139,7 @@ impl ModelFallback {
                     Err(e) => {
                         tracing::warn!("Model {} failed: {}", entry.model, e);
 
-                        if !chain.next() {
+                        if !chain.advance() {
                             break;
                         }
 

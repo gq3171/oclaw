@@ -142,7 +142,7 @@ impl Channel for LineChannel {
         }
 
         let user_id = message.metadata.get("user_id")
-            .or_else(|| self.user_id.as_ref())
+            .or(self.user_id.as_ref())
             .cloned()
             .ok_or_else(|| ChannelError::MessageError("User ID not specified".to_string()))?;
 

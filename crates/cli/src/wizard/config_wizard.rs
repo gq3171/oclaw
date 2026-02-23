@@ -105,6 +105,7 @@ impl ConfigWizard {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn show_current_config() -> Result<(), String> {
         let config_path = get_config_dir().join("config.json");
 

@@ -109,10 +109,10 @@ impl SkillRegistry {
     }
 
     pub async fn execute(&self, id: &str, input: SkillInput) -> Option<SkillOutput> {
-        self.get(id).await.map(|skill| {
+        self.get(id).await.and_then(|skill| {
             let runner = crate::skill::SkillRunner::new();
             futures::executor::block_on(runner.run(skill.as_ref(), input)).ok()
-        }).flatten()
+        })
     }
 
     pub async fn count(&self) -> usize {

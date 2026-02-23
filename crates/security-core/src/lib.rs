@@ -1,8 +1,10 @@
 mod oauth;
 mod pairing;
 mod session;
+pub mod audit;
 
-pub use oauth::{OAuthProvider, OAuthClient, OAuthToken, OAuthUser};
+pub use oauth::{OAuthProvider, OAuthClient, OAuthToken, OAuthUser, OAuthStateStore};
+pub use audit::{AuditLog, AuditEvent, AuditEventKind};
 pub use pairing::{DMPairing, PairingRequest, PairingManager};
 pub use session::{SecuritySession, SessionManager};
 
@@ -88,6 +90,7 @@ impl std::error::Error for AuthError {}
 pub struct AuthManager {
     providers: HashMap<String, Box<dyn AuthProvider>>,
     sessions: SessionManager,
+    #[allow(dead_code)]
     config: SecurityConfig,
 }
 
@@ -105,18 +108,17 @@ impl AuthManager {
     }
 
     pub fn authenticate(&self, credentials: &Credentials) -> Result<AuthUser, AuthError> {
-        if let Some(ref token) = credentials.token {
-            if let Some(provider) = self.providers.get("token") {
-                return provider.validate_token(token);
-            }
+        if let Some(ref token) = credentials.token
+            && let Some(provider) = self.providers.get("token")
+        {
+            return provider.validate_token(token);
         }
 
-        if let Some(ref oauth_code) = credentials.oauth_code {
-            if let Some(ref provider_name) = credentials.oauth_provider {
-                if let Some(provider) = self.providers.get(provider_name) {
-                    return provider.authenticate(credentials);
-                }
-            }
+        if credentials.oauth_code.is_some()
+            && let Some(ref provider_name) = credentials.oauth_provider
+            && let Some(provider) = self.providers.get(provider_name)
+        {
+            return provider.authenticate(credentials);
         }
 
         Err(AuthError::InvalidCredentials)

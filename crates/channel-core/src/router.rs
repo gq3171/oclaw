@@ -3,9 +3,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageType {
+    #[default]
     Text,
     Image,
     Video,
@@ -15,12 +16,6 @@ pub enum MessageType {
     Sticker,
     Template,
     Interactive,
-}
-
-impl Default for MessageType {
-    fn default() -> Self {
-        MessageType::Text
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,6 +274,11 @@ impl MessageQueue {
         queue.len()
     }
 
+    pub async fn is_empty(&self) -> bool {
+        let queue = self.queue.read().await;
+        queue.is_empty()
+    }
+
     pub async fn clear(&self) {
         let mut queue = self.queue.write().await;
         queue.clear();
@@ -336,22 +336,18 @@ impl MessageRouter {
 
     fn matches_pattern(&self, text: &Option<String>, pattern: &str) -> bool {
         if let Some(text) = text {
-            if pattern.starts_with("regex:") {
-                let regex_pattern = &pattern[6..];
-                if let Ok(re) = regex::Regex::new(regex_pattern) {
-                    return re.is_match(text);
-                }
+            if let Some(regex_pattern) = pattern.strip_prefix("regex:")
+                && let Ok(re) = regex::Regex::new(regex_pattern)
+            {
+                return re.is_match(text);
             }
-            if pattern.starts_with("contains:") {
-                let keyword = &pattern[9..];
+            if let Some(keyword) = pattern.strip_prefix("contains:") {
                 return text.contains(keyword);
             }
-            if pattern.starts_with("starts:") {
-                let prefix = &pattern[7..];
+            if let Some(prefix) = pattern.strip_prefix("starts:") {
                 return text.starts_with(prefix);
             }
-            if pattern.starts_with("ends:") {
-                let suffix = &pattern[5..];
+            if let Some(suffix) = pattern.strip_prefix("ends:") {
                 return text.ends_with(suffix);
             }
             text == pattern

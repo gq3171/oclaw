@@ -355,9 +355,11 @@ pub struct ChannelInfo {
     pub registered_at: i64,
 }
 
+type ChannelInstanceMap = HashMap<String, Arc<RwLock<dyn Channel>>>;
+
 pub struct ChannelRegistry {
     channels: Arc<RwLock<HashMap<String, ChannelInfo>>>,
-    channel_instances: Arc<RwLock<HashMap<String, Arc<RwLock<dyn Channel>>>>>,
+    channel_instances: Arc<RwLock<ChannelInstanceMap>>,
 }
 
 impl ChannelRegistry {
@@ -520,5 +522,46 @@ impl fmt::Debug for ChannelRegistry {
         f.debug_struct("ChannelRegistry")
             .field("channel_count", &self.channels.try_read().map(|c| c.len()).unwrap_or(0))
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::webchat::WebchatChannel;
+
+    #[tokio::test]
+    async fn test_register_get_list_lifecycle() {
+        let mut mgr = ChannelManager::new();
+        assert!(mgr.list().await.is_empty());
+
+        mgr.register("webchat".to_string(), WebchatChannel::new()).await;
+        let names = mgr.list().await;
+        assert_eq!(names.len(), 1);
+        assert!(names.contains(&"webchat".to_string()));
+
+        let ch = mgr.get("webchat").await;
+        assert!(ch.is_some());
+
+        assert!(mgr.get("nonexistent").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_send_to_channel_unknown_returns_not_found() {
+        let mgr = ChannelManager::new();
+        let msg = ChannelMessage {
+            id: "1".to_string(),
+            channel: "unknown".to_string(),
+            sender: String::new(),
+            content: "hello".to_string(),
+            timestamp: 0,
+            metadata: HashMap::new(),
+        };
+        let result = mgr.send_to_channel("unknown", &msg).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ChannelError::NotFound(_) => {}
+            other => panic!("Expected NotFound, got {:?}", other),
+        }
     }
 }

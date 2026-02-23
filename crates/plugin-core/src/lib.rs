@@ -5,7 +5,7 @@ pub mod manifest;
 
 pub use plugin::{Plugin, PluginState, PluginConfig};
 pub use loader::PluginLoader;
-pub use registry::PluginRegistry;
+pub use registry::{PluginRegistry, PluginManager, HookPipeline};
 pub use manifest::PluginManifest;
 
 pub type PluginResult<T> = Result<T, PluginError>;

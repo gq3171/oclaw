@@ -137,6 +137,7 @@ impl TTSEngine for TTSClient {
     }
 }
 
+#[allow(dead_code)]
 impl TTSClient {
     async fn openai_tts(&self, text: &str, voice: &TTSVoice) -> Result<Vec<u8>> {
         if let Some(ref api_key) = self.config.api_key {
@@ -187,7 +188,7 @@ impl TTSClient {
         }
     }
 
-    async fn default_tts(&self, text: &str, _voice: &TTSVoice) -> Result<Vec<u8>> {
+    async fn default_tts(&self, _text: &str, _voice: &TTSVoice) -> Result<Vec<u8>> {
         let silence: Vec<u8> = vec![0u8; 1000];
         Ok(silence)
     }

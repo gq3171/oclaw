@@ -9,6 +9,7 @@ pub mod tailscale;
 pub mod webhook;
 pub mod control_ui;
 pub mod webchat;
+pub mod channel_access;
 
 pub use error::*;
 pub use message::*;
@@ -21,3 +22,4 @@ pub use tailscale::*;
 pub use webhook::*;
 pub use control_ui::*;
 pub use webchat::*;
+pub use channel_access::*;

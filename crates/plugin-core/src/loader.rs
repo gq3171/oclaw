@@ -19,7 +19,7 @@ impl PluginLoader {
             plugin_dirs.push(data_dir.join("oclaws").join("plugins"));
         }
 
-        if let Some(cwd) = std::env::current_dir().ok() {
+        if let Ok(cwd) = std::env::current_dir() {
             plugin_dirs.push(cwd.join("plugins"));
         }
 
@@ -47,18 +47,15 @@ impl PluginLoader {
                     .into_iter()
                     .filter_map(|e| e.ok())
                 {
-                    if entry.file_type().is_file() {
-                        if let Some(ext) = entry.path().extension() {
-                            if ext == "json"
-                                && entry.file_name().to_string_lossy().contains("manifest")
-                            {
-                                if let Ok(manifest) = self.load_manifest(entry.path()) {
-                                    let metadata = PluginMetadata::new(manifest)
-                                        .with_path(entry.path().to_str().unwrap_or(""));
-                                    plugins.push(metadata);
-                                }
-                            }
-                        }
+                    if entry.file_type().is_file()
+                        && let Some(ext) = entry.path().extension()
+                        && ext == "json"
+                        && entry.file_name().to_string_lossy().contains("manifest")
+                        && let Ok(manifest) = self.load_manifest(entry.path())
+                    {
+                        let metadata = PluginMetadata::new(manifest)
+                            .with_path(entry.path().to_str().unwrap_or(""));
+                        plugins.push(metadata);
                     }
                 }
             }
@@ -147,7 +144,7 @@ pub fn load_manifest_from_file(path: &str) -> PluginResult<PluginManifest> {
     let manifest: PluginManifest = serde_json::from_str(&content)
         .map_err(|e| PluginError::LoadError(format!("Failed to parse manifest: {}", e)))?;
 
-    manifest.validate().map_err(|e| PluginError::LoadError(e))?;
+    manifest.validate().map_err(PluginError::LoadError)?;
 
     Ok(manifest)
 }

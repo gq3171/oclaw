@@ -20,8 +20,15 @@ pub struct AuthState {
 
 #[derive(Clone)]
 struct TokenInfo {
-    _created_at: Instant,
+    created_at: Instant,
+    ttl: Duration,
     scopes: Vec<String>,
+}
+
+impl TokenInfo {
+    fn is_expired(&self) -> bool {
+        self.created_at.elapsed() > self.ttl
+    }
 }
 
 #[derive(Clone)]
@@ -52,6 +59,10 @@ impl AuthState {
         }
     }
 
+    pub fn has_auth_config(&self) -> bool {
+        self.config.is_some()
+    }
+
     pub async fn should_allow_connection(&self, client_ip: &IpAddr) -> bool {
         let limiter = self.rate_limiter.read().await;
         limiter.is_allowed(client_ip)
@@ -59,7 +70,9 @@ impl AuthState {
 
     pub async fn authenticate_token(&self, token: &str) -> Option<Vec<String>> {
         let tokens = self.tokens.read().await;
-        tokens.get(token).map(|t| t.scopes.clone())
+        tokens.get(token).and_then(|t| {
+            if t.is_expired() { None } else { Some(t.scopes.clone()) }
+        })
     }
 
     pub async fn validate_password(&self, password: &str) -> bool {
@@ -71,14 +84,17 @@ impl AuthState {
     }
 
     pub async fn register_token(&self, token: String, scopes: Vec<String>) {
+        self.register_token_with_ttl(token, scopes, Duration::from_secs(86400)).await;
+    }
+
+    pub async fn register_token_with_ttl(&self, token: String, scopes: Vec<String>, ttl: Duration) {
         let mut tokens = self.tokens.write().await;
-        tokens.insert(
-            token,
-            TokenInfo {
-                _created_at: Instant::now(),
-                scopes,
-            },
-        );
+        tokens.insert(token, TokenInfo { created_at: Instant::now(), ttl, scopes });
+    }
+
+    pub async fn cleanup_expired_tokens(&self) {
+        let mut tokens = self.tokens.write().await;
+        tokens.retain(|_, t| !t.is_expired());
     }
 
     pub async fn create_device_session(&self, device_id: String) -> String {

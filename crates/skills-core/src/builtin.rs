@@ -29,7 +29,7 @@ impl Skill for CalculatorSkill {
             .ok_or_else(|| crate::SkillError::ValidationError("Missing 'expression' parameter".to_string()))?;
 
         let result = evaluate_expression(expr)
-            .map_err(|e| crate::SkillError::ExecutionError(e))?;
+            .map_err(crate::SkillError::ExecutionError)?;
 
         Ok(SkillOutput {
             success: true,
@@ -680,7 +680,7 @@ impl Skill for RandomSkill {
                     .map(|_| {
                         let idx = rng.random_range(0..62);
                         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-                            .chars().nth(idx).unwrap()
+                            .chars().nth(idx).unwrap_or('a')
                     })
                     .collect();
                 serde_json::json!({ "result": chars })
@@ -727,6 +727,10 @@ static RANDOM_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
 });
 
 pub struct RegexSkill;
+
+impl Default for RegexSkill {
+    fn default() -> Self { Self::new() }
+}
 
 impl RegexSkill {
     pub fn new() -> Self {
@@ -826,6 +830,10 @@ static REGEX_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition {
 
 pub struct FilePathSkill;
 
+impl Default for FilePathSkill {
+    fn default() -> Self { Self::new() }
+}
+
 impl FilePathSkill {
     pub fn new() -> Self {
         Self
@@ -924,6 +932,10 @@ static FILEPATH_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition
 
 pub struct UserAgentParserSkill;
 
+impl Default for UserAgentParserSkill {
+    fn default() -> Self { Self::new() }
+}
+
 impl UserAgentParserSkill {
     pub fn new() -> Self {
         Self
@@ -1010,6 +1022,10 @@ static USERAGENT_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinitio
 
 pub struct ColorConverterSkill;
 
+impl Default for ColorConverterSkill {
+    fn default() -> Self { Self::new() }
+}
+
 impl ColorConverterSkill {
     pub fn new() -> Self {
         Self
@@ -1039,7 +1055,7 @@ impl Skill for ColorConverterSkill {
             }
         };
 
-        let (r, g, b) = from_hex(color).map_err(|e| crate::SkillError::ValidationError(e))?;
+        let (r, g, b) = from_hex(color).map_err(crate::SkillError::ValidationError)?;
 
         let to_hex = |r: u8, g: u8, b: u8| format!("#{:02x}{:02x}{:02x}", r, g, b);
         let to_hsl = |r: u8, g: u8, b: u8| {
@@ -1111,6 +1127,10 @@ static COLOR_CONVERTER_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDef
 
 pub struct SlugifySkill;
 
+impl Default for SlugifySkill {
+    fn default() -> Self { Self::new() }
+}
+
 impl SlugifySkill {
     pub fn new() -> Self {
         Self
@@ -1135,7 +1155,7 @@ impl Skill for SlugifySkill {
         let slug = text
             .to_lowercase()
             .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { separator.chars().next().unwrap() })
+            .map(|c| if c.is_alphanumeric() { c } else { separator.chars().next().unwrap_or('-') })
             .collect::<String>()
             .split(separator)
             .filter(|s| !s.is_empty())
@@ -1185,6 +1205,10 @@ static SLUGIFY_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDefinition 
 });
 
 pub struct CreditCardValidatorSkill;
+
+impl Default for CreditCardValidatorSkill {
+    fn default() -> Self { Self::new() }
+}
 
 impl CreditCardValidatorSkill {
     pub fn new() -> Self {
@@ -1238,7 +1262,7 @@ impl Skill for CreditCardValidatorSkill {
         let card_type = if card.starts_with("4") {
             "Visa"
         } else if card.starts_with("5") || (card.starts_with("2") && digits.len() >= 2) {
-            let start = format!("{}{}", card.chars().nth(0).unwrap(), card.chars().nth(1).unwrap_or('0'));
+            let start = format!("{}{}", card.chars().next().unwrap_or('0'), card.chars().nth(1).unwrap_or('0'));
             if ["51", "52", "53", "54", "55"].contains(&start.as_str()) {
                 "Mastercard"
             } else {
@@ -1292,6 +1316,10 @@ static CREDIT_CARD_VALIDATOR_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| Sk
 });
 
 pub struct EmailValidatorSkill;
+
+impl Default for EmailValidatorSkill {
+    fn default() -> Self { Self::new() }
+}
 
 impl EmailValidatorSkill {
     pub fn new() -> Self {
@@ -1362,6 +1390,10 @@ static EMAIL_VALIDATOR_DEFINITION: Lazy<SkillDefinition> = Lazy::new(|| SkillDef
 });
 
 pub struct TimezoneConverterSkill;
+
+impl Default for TimezoneConverterSkill {
+    fn default() -> Self { Self::new() }
+}
 
 impl TimezoneConverterSkill {
     pub fn new() -> Self {

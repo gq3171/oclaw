@@ -64,6 +64,115 @@ pub struct Config {
     pub gateway: Option<Gateway>,
 }
 
+impl Config {
+    /// Validate config, returning a list of warnings/errors.
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        if let Some(gw) = &self.gateway
+            && let Some(port) = gw.port
+            && !(1..=65535).contains(&port)
+        {
+            errors.push(format!("gateway.port out of range: {}", port));
+        }
+
+        if let Some(models) = &self.models
+            && let Some(providers) = &models.providers
+        {
+            for (name, p) in providers {
+                if p.provider.is_empty() {
+                    errors.push(format!("models.providers.{}.provider is empty", name));
+                }
+            }
+        }
+
+        if let Some(logging) = &self.logging
+            && let Some(level) = &logging.level
+        {
+            let valid = ["trace", "debug", "info", "warn", "error"];
+            if !valid.contains(&level.to_lowercase().as_str()) {
+                errors.push(format!("logging.level invalid: {}", level));
+            }
+        }
+
+        errors
+    }
+
+    /// Apply environment variable overrides (OCLAWS_GATEWAY_PORT, etc.).
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(port) = std::env::var("OCLAWS_GATEWAY_PORT")
+            && let Ok(p) = port.parse::<i32>()
+        {
+            self.gateway.get_or_insert_with(Gateway::default).port = Some(p);
+        }
+        if let Ok(bind) = std::env::var("OCLAWS_GATEWAY_BIND") {
+            self.gateway.get_or_insert_with(Gateway::default).bind = Some(bind);
+        }
+        if let Ok(level) = std::env::var("OCLAWS_LOG_LEVEL") {
+            self.logging.get_or_insert(Logging {
+                level: None, file: None, console_level: None,
+                console_style: None, redact_sensitive: None, redact_patterns: None,
+            }).level = Some(level);
+        }
+
+        // Gateway auth secrets
+        if let Ok(token) = std::env::var("OCLAWS_GATEWAY_AUTH_TOKEN") {
+            self.gateway.get_or_insert_with(Gateway::default)
+                .auth.get_or_insert(GatewayAuth {
+                    mode: None, token: None, password: None, allow_tailscale: None,
+                    rate_limit: None, trusted_proxy: None,
+                }).token = Some(token);
+        }
+        if let Ok(password) = std::env::var("OCLAWS_GATEWAY_AUTH_PASSWORD") {
+            self.gateway.get_or_insert_with(Gateway::default)
+                .auth.get_or_insert(GatewayAuth {
+                    mode: None, token: None, password: None, allow_tailscale: None,
+                    rate_limit: None, trusted_proxy: None,
+                }).password = Some(password);
+        }
+
+        // Channel bot tokens
+        if let Ok(v) = std::env::var("OCLAWS_TELEGRAM_BOT_TOKEN") {
+            self.channels.get_or_insert_with(Channels::default)
+                .telegram.get_or_insert(TelegramChannel { enabled: None, bot_token: None, api_url: None })
+                .bot_token = Some(v);
+        }
+        if let Ok(v) = std::env::var("OCLAWS_DISCORD_BOT_TOKEN") {
+            self.channels.get_or_insert_with(Channels::default)
+                .discord.get_or_insert(DiscordChannel { enabled: None, bot_token: None, guild_id: None, channel_ids: None })
+                .bot_token = Some(v);
+        }
+        if let Ok(v) = std::env::var("OCLAWS_SLACK_BOT_TOKEN") {
+            self.channels.get_or_insert_with(Channels::default)
+                .slack.get_or_insert(SlackChannel { enabled: None, bot_token: None, signing_secret: None, channel_ids: None, webhook_url: None })
+                .bot_token = Some(v);
+        }
+        if let Ok(v) = std::env::var("OCLAWS_SLACK_SIGNING_SECRET") {
+            self.channels.get_or_insert_with(Channels::default)
+                .slack.get_or_insert(SlackChannel { enabled: None, bot_token: None, signing_secret: None, channel_ids: None, webhook_url: None })
+                .signing_secret = Some(v);
+        }
+
+        // Dynamic per-provider API keys: OCLAWS_PROVIDER_{NAME}_API_KEY
+        for (key, value) in std::env::vars() {
+            if let Some(name) = key.strip_prefix("OCLAWS_PROVIDER_")
+                && let Some(name) = name.strip_suffix("_API_KEY")
+            {
+                let name = name.to_lowercase();
+                let models = self.models.get_or_insert_with(ModelsConfig::default);
+                let providers = models.providers.get_or_insert_with(HashMap::new);
+                providers.entry(name.clone())
+                    .or_insert(ModelProvider {
+                        provider: name, api_key: None, base_url: None,
+                        model: None, max_tokens: None, temperature: None,
+                        max_concurrency: None, headers: None,
+                    })
+                    .api_key = Some(value);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Meta {

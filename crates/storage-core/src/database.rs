@@ -23,6 +23,14 @@ impl Database {
         let conn = Connection::open(&db_path)
             .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
 
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA temp_store = MEMORY;
+             PRAGMA busy_timeout = 5000;"
+        ).map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+
         conn.execute(
             "CREATE TABLE IF NOT EXISTS records (
                 id TEXT PRIMARY KEY,
@@ -185,11 +193,13 @@ impl Database {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(" LIMIT ?");
+            params_vec.push(Box::new(limit as i64));
         }
 
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(" OFFSET ?");
+            params_vec.push(Box::new(offset as i64));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(|e| StorageError::DatabaseError(e.to_string()))?;

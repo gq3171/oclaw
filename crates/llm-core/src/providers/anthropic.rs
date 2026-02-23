@@ -33,44 +33,37 @@ impl LlmProvider for AnthropicProvider {
         let url = "https://api.anthropic.com/v1/messages";
 
         #[derive(Serialize)]
-        struct AnthropicRequest {
-            model: String,
-            messages: Vec<AnthropicMessage>,
-            max_tokens: i32,
-        }
-
-        #[derive(Serialize)]
         struct AnthropicMessage {
             role: String,
             content: String,
         }
 
+        let system_prompt = request.messages.iter()
+            .find(|m| m.role == MessageRole::System)
+            .map(|m| m.content.clone());
+
         let messages: Vec<AnthropicMessage> = request.messages.iter()
             .filter(|m| m.role != MessageRole::System)
-            .map(|m| {
-                let role = match m.role {
-                    MessageRole::User => "user",
-                    MessageRole::Assistant => "assistant",
-                    _ => "user",
-                };
-                AnthropicMessage {
-                    role: role.to_string(),
-                    content: m.content.clone(),
-                }
+            .map(|m| AnthropicMessage {
+                role: if m.role == MessageRole::User { "user" } else { "assistant" }.to_string(),
+                content: m.content.clone(),
             }).collect();
 
-        let req = AnthropicRequest {
-            model: request.model.clone(),
-            messages,
-            max_tokens: request.max_tokens.unwrap_or(4096),
-        };
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": serde_json::to_value(&messages).unwrap_or_default(),
+            "max_tokens": request.max_tokens.unwrap_or(4096),
+        });
+        if let Some(sp) = system_prompt {
+            body["system"] = serde_json::Value::String(sp);
+        }
 
         let response = self.client
             .post(url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
-            .json(&req)
+            .json(&body)
             .send()
             .await
             .map_err(|e| LlmError::NetworkError(e.to_string()))?;
@@ -118,6 +111,100 @@ impl LlmProvider for AnthropicProvider {
         } else {
             Err(LlmError::ApiError(format!("HTTP {}", response.status())))
         }
+    }
+
+    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<crate::chat::StreamChunk>>> {
+        let url = "https://api.anthropic.com/v1/messages";
+
+        #[derive(Serialize)]
+        struct AnthropicMsg { role: String, content: String }
+
+        let system_prompt = request.messages.iter()
+            .find(|m| m.role == MessageRole::System)
+            .map(|m| m.content.clone());
+
+        let messages: Vec<AnthropicMsg> = request.messages.iter()
+            .filter(|m| m.role != MessageRole::System)
+            .map(|m| AnthropicMsg {
+                role: if m.role == MessageRole::User { "user" } else { "assistant" }.to_string(),
+                content: m.content.clone(),
+            }).collect();
+
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": serde_json::to_value(&messages).unwrap_or_default(),
+            "max_tokens": request.max_tokens.unwrap_or(4096),
+            "stream": true,
+        });
+        if let Some(sp) = system_prompt {
+            body["system"] = serde_json::Value::String(sp);
+        }
+
+        let response = self.client
+            .post(url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(LlmError::ApiError(format!("HTTP {}", response.status())));
+        }
+
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+        let model = request.model.clone();
+
+        tokio::spawn(async move {
+            use futures_util::StreamExt;
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+            let id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
+
+            while let Some(chunk) = stream.next().await {
+                let bytes = match chunk {
+                    Ok(b) => b,
+                    Err(e) => { let _ = tx.send(Err(LlmError::NetworkError(e.to_string()))).await; break; }
+                };
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                while let Some(line_end) = buffer.find('\n') {
+                    let line = buffer[..line_end].trim().to_string();
+                    buffer = buffer[line_end + 1..].to_string();
+
+                    if line.is_empty() || !line.starts_with("data: ") { continue; }
+                    let data = &line[6..];
+                    if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+                        if event.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                            if let Some(text) = event.pointer("/delta/text").and_then(|t| t.as_str()) {
+                                let sc = crate::chat::StreamChunk {
+                                    id: id.clone(),
+                                    object: "chat.completion.chunk".to_string(),
+                                    created: chrono::Utc::now().timestamp(),
+                                    model: model.clone(),
+                                    choices: vec![crate::chat::StreamChoice {
+                                        index: 0,
+                                        delta: Some(crate::chat::ChatMessage {
+                                            role: crate::chat::MessageRole::Assistant,
+                                            content: text.to_string(),
+                                            name: None, tool_calls: None, tool_call_id: None,
+                                        }),
+                                        finish_reason: None,
+                                    }],
+                                };
+                                if tx.send(Ok(sc)).await.is_err() { return; }
+                            }
+                        } else if event.get("type").and_then(|t| t.as_str()) == Some("message_stop") {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(rx)
     }
 
     async fn embeddings(&self, _request: EmbeddingRequest) -> LlmResult<EmbeddingResponse> {

@@ -66,6 +66,29 @@ impl ConfigManager {
     pub fn config_mut(&mut self) -> &mut Config {
         &mut self.config
     }
+
+    /// Reload config from disk, apply env overrides, and validate.
+    pub fn reload(&mut self) -> ConfigResult<Vec<String>> {
+        self.load()?;
+        self.config.apply_env_overrides();
+        Ok(self.config.validate())
+    }
+
+    /// Load config, applying env overrides. Creates default if missing.
+    pub fn load_or_create(&mut self) -> ConfigResult<Vec<String>> {
+        if !self.config_path.exists() {
+            self.config = Config::default();
+            self.save()?;
+        } else {
+            self.load()?;
+        }
+        self.config.apply_env_overrides();
+        Ok(self.config.validate())
+    }
+
+    pub fn config_path(&self) -> &PathBuf {
+        &self.config_path
+    }
 }
 
 impl Default for ConfigManager {

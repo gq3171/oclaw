@@ -113,11 +113,11 @@ impl AuthManager {
             return Err("Invalid credentials".to_string());
         }
 
-        if creds.is_expired() {
-            if let Some(provider_impl) = self.providers.read().await.get(provider) {
-                let new_creds = provider_impl.refresh(&creds).await?;
-                self.credentials.write().await.insert(provider.to_string(), new_creds);
-            }
+        if creds.is_expired()
+            && let Some(provider_impl) = self.providers.read().await.get(provider)
+        {
+            let new_creds = provider_impl.refresh(&creds).await?;
+            self.credentials.write().await.insert(provider.to_string(), new_creds);
         }
 
         Ok(creds.api_key.or(creds.access_token).unwrap_or_default())
@@ -165,20 +165,75 @@ impl MultiProviderAuth {
     }
 
     pub async fn get_valid_token(&self, auth: &AuthManager) -> Option<String> {
-        if auth.has_valid_credentials(&self.default_provider).await {
-            if let Ok(token) = auth.authenticate(&self.default_provider).await {
+        if auth.has_valid_credentials(&self.default_provider).await
+            && let Ok(token) = auth.authenticate(&self.default_provider).await
+        {
+            return Some(token);
+        }
+
+        for provider in &self.fallback_providers {
+            if auth.has_valid_credentials(provider).await
+                && let Ok(token) = auth.authenticate(provider).await
+            {
                 return Some(token);
             }
         }
 
-        for provider in &self.fallback_providers {
-            if auth.has_valid_credentials(provider).await {
-                if let Ok(token) = auth.authenticate(provider).await {
-                    return Some(token);
-                }
+        None
+    }
+}
+
+/// API key rotation with cooldown and automatic failover.
+pub struct KeyRotator {
+    keys: Vec<KeySlot>,
+    current: Arc<RwLock<usize>>,
+}
+
+#[derive(Clone)]
+struct KeySlot {
+    key: String,
+    cooldown_until: Arc<RwLock<Option<i64>>>,
+}
+
+impl KeyRotator {
+    pub fn new(keys: Vec<String>) -> Self {
+        let slots = keys.into_iter().map(|k| KeySlot {
+            key: k,
+            cooldown_until: Arc::new(RwLock::new(None)),
+        }).collect();
+        Self { keys: slots, current: Arc::new(RwLock::new(0)) }
+    }
+
+    /// Get the next available key, skipping those in cooldown.
+    pub async fn get_key(&self) -> Option<String> {
+        let now = chrono::Utc::now().timestamp();
+        let len = self.keys.len();
+        let start = *self.current.read().await;
+
+        for i in 0..len {
+            let idx = (start + i) % len;
+            let slot = &self.keys[idx];
+            let cd = slot.cooldown_until.read().await;
+            if cd.is_none_or(|t| now >= t) {
+                return Some(slot.key.clone());
             }
         }
-
         None
+    }
+
+    /// Mark the current key as rate-limited; rotate to next.
+    pub async fn mark_limited(&self, cooldown_secs: i64) {
+        let idx = *self.current.read().await;
+        if idx < self.keys.len() {
+            let until = chrono::Utc::now().timestamp() + cooldown_secs;
+            *self.keys[idx].cooldown_until.write().await = Some(until);
+        }
+        // Rotate to next
+        let mut cur = self.current.write().await;
+        *cur = (*cur + 1) % self.keys.len();
+    }
+
+    pub fn count(&self) -> usize {
+        self.keys.len()
     }
 }

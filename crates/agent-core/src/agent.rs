@@ -1,10 +1,19 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use oclaws_llm_core::chat::{ChatMessage, ChatRequest, MessageRole};
+use oclaws_llm_core::chat::{ChatMessage, ChatRequest, MessageRole, Tool};
 use oclaws_llm_core::providers::LlmProvider;
 
 use crate::{AgentError, AgentResult};
+use crate::loop_detect::LoopDetector;
+use oclaws_tools_core::{ApprovalGate, ApprovalDecision};
+
+/// Trait for executing tool calls. Implement this to provide tool execution to agents.
+#[async_trait::async_trait]
+pub trait ToolExecutor: Send + Sync {
+    async fn execute(&self, name: &str, arguments: &str) -> Result<String, String>;
+    fn available_tools(&self) -> Vec<Tool>;
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +72,7 @@ pub struct Agent {
     provider: Arc<dyn LlmProvider>,
     history: Vec<ChatMessage>,
     context: HashMap<String, String>,
+    approval_gate: Option<Arc<ApprovalGate>>,
 }
 
 impl Agent {
@@ -73,6 +83,7 @@ impl Agent {
             provider,
             history: Vec::new(),
             context: HashMap::new(),
+            approval_gate: None,
         }
     }
 
@@ -98,6 +109,11 @@ impl Agent {
 
     pub fn get_context(&self, key: &str) -> Option<&String> {
         self.context.get(key)
+    }
+
+    pub fn with_approval_gate(mut self, gate: Arc<ApprovalGate>) -> Self {
+        self.approval_gate = Some(gate);
+        self
     }
 
     pub fn clear_history(&mut self) {
@@ -151,6 +167,10 @@ impl Agent {
         let mut last_error = None;
 
         for attempt in 0..max_retries {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_millis(500 * 2u64.pow(attempt as u32 - 1));
+                tokio::time::sleep(delay).await;
+            }
             match self.provider.chat(request.clone()).await {
                 Ok(response) => {
                     if let Some(choice) = response.choices.first() {
@@ -183,7 +203,14 @@ impl Agent {
         )))
     }
 
-    pub async fn run_with_tools(&mut self, input: &str, tools: Vec<oclaws_llm_core::chat::Tool>) -> AgentResult<String> {
+    /// Run agent with tool execution loop. The agent will call the LLM, execute any
+    /// tool calls via the executor, feed results back, and repeat until the LLM
+    /// produces a final text response (no more tool calls).
+    pub async fn run_with_tools(
+        &mut self,
+        input: &str,
+        executor: &dyn ToolExecutor,
+    ) -> AgentResult<String> {
         self.state = AgentState::Running;
 
         self.history.push(ChatMessage {
@@ -194,12 +221,13 @@ impl Agent {
             tool_call_id: None,
         });
 
-        self.state = AgentState::WaitingForResponse;
+        let tools = executor.available_tools();
+        let max_iterations = 20;
+        let mut loop_detector = LoopDetector::default();
 
-        let max_retries = self.config.max_retries.unwrap_or(3);
-        let mut last_error = None;
+        for iteration in 0..max_iterations {
+            self.state = AgentState::WaitingForResponse;
 
-        for attempt in 0..max_retries {
             let request = ChatRequest {
                 model: self.config.model.clone(),
                 messages: self.history.clone(),
@@ -213,36 +241,72 @@ impl Agent {
                 response_format: None,
             };
 
-            match self.provider.chat(request).await {
-                Ok(response) => {
-                    if let Some(choice) = response.choices.first() {
-                        let response_content = choice.message.content.clone();
+            let response = self.provider.chat(request).await.map_err(|e| {
+                AgentError::ModelError(e.to_string())
+            })?;
 
-                        self.history.push(ChatMessage {
-                            role: MessageRole::Assistant,
-                            content: response_content.clone(),
-                            name: None,
-                            tool_calls: choice.message.tool_calls.clone(),
-                            tool_call_id: None,
-                        });
+            let choice = response.choices.first().ok_or_else(|| {
+                AgentError::ModelError("No choices in response".to_string())
+            })?;
 
-                        self.state = AgentState::Idle;
-                        return Ok(response_content);
-                    }
+            // Push assistant message to history
+            self.history.push(ChatMessage {
+                role: MessageRole::Assistant,
+                content: choice.message.content.clone(),
+                name: None,
+                tool_calls: choice.message.tool_calls.clone(),
+                tool_call_id: None,
+            });
+
+            // If no tool calls, we're done — return the text response
+            let tool_calls = match &choice.message.tool_calls {
+                Some(tc) if !tc.is_empty() => tc.clone(),
+                _ => {
+                    self.state = AgentState::Idle;
+                    return Ok(choice.message.content.clone());
                 }
-                Err(e) => {
-                    let error_msg = e.to_string();
-                    last_error = Some(e);
-                    tracing::warn!("Attempt {} failed: {}", attempt + 1, error_msg);
+            };
+
+            // Execute each tool call and feed results back
+            tracing::info!("Iteration {}: executing {} tool call(s)", iteration, tool_calls.len());
+            for tc in &tool_calls {
+                if loop_detector.record(&tc.function.name, &tc.function.arguments) {
+                    self.state = AgentState::Error;
+                    return Err(AgentError::ExecutionError(
+                        format!("Tool loop detected: {} called repeatedly with same arguments", tc.function.name),
+                    ));
                 }
+                if let Some(gate) = &self.approval_gate
+                    && let ApprovalDecision::Denied = gate.check(&tc.function.name)
+                {
+                    self.history.push(ChatMessage {
+                        role: MessageRole::Tool,
+                        content: format!("Tool '{}' denied by approval policy", tc.function.name),
+                        name: Some(tc.function.name.clone()),
+                        tool_calls: None,
+                        tool_call_id: Some(tc.id.clone()),
+                    });
+                    continue;
+                }
+                let result = executor.execute(&tc.function.name, &tc.function.arguments).await;
+                let (content, _is_err) = match result {
+                    Ok(output) => (output, false),
+                    Err(err) => (format!("Error: {}", err), true),
+                };
+                self.history.push(ChatMessage {
+                    role: MessageRole::Tool,
+                    content,
+                    name: Some(tc.function.name.clone()),
+                    tool_calls: None,
+                    tool_call_id: Some(tc.id.clone()),
+                });
             }
         }
 
         self.state = AgentState::Error;
-        Err(AgentError::ModelError(format!(
-            "Failed after {} attempts: {:?}",
-            max_retries, last_error
-        )))
+        Err(AgentError::ExecutionError(
+            "Max tool iterations reached without final response".to_string(),
+        ))
     }
 
     pub fn clone_with_history(&self) -> Self {
@@ -252,6 +316,7 @@ impl Agent {
             provider: self.provider.clone(),
             history: self.history.clone(),
             context: self.context.clone(),
+            approval_gate: self.approval_gate.clone(),
         }
     }
 }
@@ -264,6 +329,87 @@ impl Clone for Agent {
             provider: self.provider.clone(),
             history: self.history.clone(),
             context: self.context.clone(),
+            approval_gate: self.approval_gate.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oclaws_llm_core::providers::MockLlmProvider;
+    use oclaws_llm_core::chat::{Tool, ToolFunction};
+
+    struct MockExecutor;
+
+    #[async_trait::async_trait]
+    impl ToolExecutor for MockExecutor {
+        async fn execute(&self, name: &str, _arguments: &str) -> Result<String, String> {
+            Ok(format!("{} result", name))
+        }
+        fn available_tools(&self) -> Vec<Tool> {
+            vec![Tool {
+                type_: "function".into(),
+                function: ToolFunction {
+                    name: "test_tool".into(),
+                    description: "A test tool".into(),
+                    parameters: serde_json::json!({}),
+                },
+            }]
+        }
+    }
+
+    fn make_agent(provider: Arc<dyn oclaws_llm_core::providers::LlmProvider>) -> Agent {
+        Agent::new(AgentConfig::new("test", "mock-model", "mock"), provider)
+    }
+
+    #[tokio::test]
+    async fn test_run_simple() {
+        let mock = MockLlmProvider::new();
+        mock.queue_text("Hello!");
+        let provider: Arc<dyn oclaws_llm_core::providers::LlmProvider> = Arc::new(mock);
+        let mut agent = make_agent(provider);
+        let result = agent.run("hi").await.unwrap();
+        assert_eq!(result, "Hello!");
+        assert_eq!(agent.state(), AgentState::Idle);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_tools_no_tool_calls() {
+        let mock = MockLlmProvider::new();
+        mock.queue_text("Direct answer");
+        let provider: Arc<dyn oclaws_llm_core::providers::LlmProvider> = Arc::new(mock);
+        let mut agent = make_agent(provider);
+        let result = agent.run_with_tools("question", &MockExecutor).await.unwrap();
+        assert_eq!(result, "Direct answer");
+    }
+
+    #[tokio::test]
+    async fn test_run_with_tools_executes_tool() {
+        let mock = MockLlmProvider::new();
+        // First response: tool call
+        mock.queue_tool_call("test_tool", r#"{"input":"x"}"#);
+        // Second response: final text after tool result
+        mock.queue_text("Final answer after tool");
+        let provider: Arc<dyn oclaws_llm_core::providers::LlmProvider> = Arc::new(mock);
+        let mut agent = make_agent(provider);
+        let result = agent.run_with_tools("do something", &MockExecutor).await.unwrap();
+        assert_eq!(result, "Final answer after tool");
+        // History should contain: user, assistant(tool_call), tool(result), assistant(final)
+        assert_eq!(agent.history().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_approval_gate_denies_tool() {
+        let mock = MockLlmProvider::new();
+        mock.queue_tool_call("blocked_tool", "{}");
+        mock.queue_text("Denied fallback");
+        let provider: Arc<dyn oclaws_llm_core::providers::LlmProvider> = Arc::new(mock);
+        let mut policy = oclaws_tools_core::ApprovalPolicy::default();
+        policy.deny.insert("blocked_tool".into());
+        let gate = Arc::new(ApprovalGate::new(policy));
+        let mut agent = make_agent(provider).with_approval_gate(gate);
+        let result = agent.run_with_tools("try blocked", &MockExecutor).await.unwrap();
+        assert_eq!(result, "Denied fallback");
     }
 }

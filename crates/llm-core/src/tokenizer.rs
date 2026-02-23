@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tiktoken_rs::CoreBPE;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenCount {
@@ -20,67 +21,64 @@ impl TokenCount {
 pub struct TokenCounter;
 
 impl TokenCounter {
-    pub fn estimate(text: &str, model: &str) -> TokenCount {
-        let tokens_per_word = Self::tokens_per_word(model);
-        let word_count = text.split_whitespace().count();
-        let estimated = (word_count as f64 * tokens_per_word) as usize;
+    fn bpe_for_model(model: &str) -> Option<CoreBPE> {
+        tiktoken_rs::get_bpe_from_model(model).ok()
+    }
 
-        TokenCount::new(estimated, 0)
+    /// Fallback estimation when no BPE tokenizer is available.
+    fn estimate_fallback(text: &str) -> usize {
+        // ~4 chars per token is a reasonable cross-model heuristic
+        text.len().div_ceil(4)
+    }
+
+    pub fn count(text: &str, model: &str) -> TokenCount {
+        let tokens = match Self::bpe_for_model(model) {
+            Some(bpe) => bpe.encode_with_special_tokens(text).len(),
+            None => Self::estimate_fallback(text),
+        };
+        TokenCount::new(tokens, 0)
+    }
+
+    /// Kept for backward compat — delegates to `count`.
+    pub fn estimate(text: &str, model: &str) -> TokenCount {
+        Self::count(text, model)
     }
 
     pub fn estimate_messages(messages: &[super::chat::ChatMessage], model: &str) -> TokenCount {
+        let bpe = Self::bpe_for_model(model);
         let mut total = 0;
 
         for message in messages {
-            let tokens = Self::estimate(&message.content, model);
-            total += tokens.total_tokens;
-
+            total += match &bpe {
+                Some(b) => b.encode_with_special_tokens(&message.content).len(),
+                None => Self::estimate_fallback(&message.content),
+            };
+            // per-message overhead (role, separators)
+            total += 4;
             if let Some(name) = &message.name {
-                total += name.len() / 4;
+                total += match &bpe {
+                    Some(b) => b.encode_with_special_tokens(name).len(),
+                    None => Self::estimate_fallback(name),
+                };
             }
         }
-
-        total += messages.len() * 4;
-
+        // reply priming
+        total += 3;
         TokenCount::new(total, 0)
     }
 
-    fn tokens_per_word(model: &str) -> f64 {
-        let model_lower = model.to_lowercase();
-
-        if model_lower.contains("gpt-4") || model_lower.contains("claude") {
-            0.75
-        } else if model_lower.contains("gpt-3.5") {
-            0.8
-        } else if model_lower.contains("gemini") {
-            0.7
-        } else {
-            0.75
-        }
-    }
-
     pub fn max_tokens(model: &str) -> Option<usize> {
-        let model_lower = model.to_lowercase();
-
-        if model_lower.contains("gpt-4-32k") {
-            Some(32768)
-        } else if model_lower.contains("gpt-4") {
-            Some(8192)
-        } else if model_lower.contains("gpt-3.5-turbo-16k") {
-            Some(16385)
-        } else if model_lower.contains("gpt-3.5") {
-            Some(4096)
-        } else if model_lower.contains("claude-3-opus") {
-            Some(200000)
-        } else if model_lower.contains("claude-3-sonnet") {
-            Some(200000)
-        } else if model_lower.contains("claude-3-haiku") {
-            Some(200000)
-        } else if model_lower.contains("gemini-pro") {
-            Some(32768)
-        } else {
-            None
-        }
+        let m = model.to_lowercase();
+        if m.contains("gpt-4o") { return Some(128000); }
+        if m.contains("gpt-4-turbo") { return Some(128000); }
+        if m.contains("gpt-4-32k") { return Some(32768); }
+        if m.contains("gpt-4") { return Some(8192); }
+        if m.contains("gpt-3.5-turbo-16k") { return Some(16385); }
+        if m.contains("gpt-3.5") { return Some(4096); }
+        if m.contains("claude-3") || m.contains("claude-4") { return Some(200000); }
+        if m.contains("gemini-pro") { return Some(32768); }
+        if m.contains("gemini-1.5") { return Some(1048576); }
+        None
     }
 
     pub fn remaining_tokens(model: &str, used: &TokenCount) -> Option<usize> {

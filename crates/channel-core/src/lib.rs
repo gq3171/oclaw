@@ -15,5 +15,9 @@ pub mod mattermost;
 pub mod manager;
 
 pub use traits::*;
-pub use router::*;
+pub use router::{
+    MessageType, Attachment, MessageContent, Message,
+    MessageSender as RouterMessageSender, MessageRecipient, MessageReaction,
+    MessageQueue, QueueError, MessageRouter, normalize_message,
+};
 pub use manager::{ChannelManager, ChannelFactory, ChannelRegistry, ChannelInfo};

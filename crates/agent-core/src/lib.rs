@@ -2,11 +2,13 @@ pub mod agent;
 pub mod subagent;
 pub mod model_fallback;
 pub mod auth;
+pub mod loop_detect;
 
-pub use agent::{Agent, AgentConfig, AgentState};
+pub use agent::{Agent, AgentConfig, AgentState, ToolExecutor};
 pub use subagent::{Subagent, SubagentRegistry, SubagentStatus};
 pub use model_fallback::{ModelFallback, ModelChain, FallbackConfig};
 pub use auth::{AuthManager, AuthProvider, ProviderCredentials};
+pub use loop_detect::LoopDetector;
 
 pub type AgentResult<T> = Result<T, AgentError>;
 

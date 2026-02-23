@@ -1,7 +1,9 @@
 use crate::traits::*;
 use async_trait::async_trait;
+use hmac::{Hmac, Mac};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -211,7 +213,23 @@ impl Channel for SlackChannel {
 
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Received Slack event: {:?}", event);
-        
+
+        if let Some(secret) = &self.signing_secret
+            && let (Some(ts), Some(sig), Some(body)) = (
+                event.payload.get("_slack_timestamp").and_then(|v| v.as_str()),
+                event.payload.get("_slack_signature").and_then(|v| v.as_str()),
+                event.payload.get("_slack_raw_body").and_then(|v| v.as_str()),
+            ) {
+                let base = format!("v0:{}:{}", ts, body);
+                let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+                    .map_err(|e| ChannelError::AuthenticationError(e.to_string()))?;
+                mac.update(base.as_bytes());
+                let expected = format!("v0={}", hex::encode(mac.finalize().into_bytes()));
+                if expected != sig {
+                    return Err(ChannelError::AuthenticationError("Invalid Slack signature".to_string()));
+                }
+        }
+
         match event.event_type.as_str() {
             "message" => {
                 tracing::info!("Received Slack message: {:?}", event.payload);
@@ -221,7 +239,7 @@ impl Channel for SlackChannel {
             }
             _ => {}
         }
-        
+
         Ok(())
     }
 

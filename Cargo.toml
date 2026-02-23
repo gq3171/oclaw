@@ -16,6 +16,9 @@ members = [
     "crates/voice-core",
     "crates/doctor-core",
     "crates/security-core",
+    "crates/tui-core",
+    "crates/media-core",
+    "crates/daemon-core",
 ]
 resolver = "2"
 
@@ -32,7 +35,7 @@ serde_json = "1.0"
 thiserror = "2.0"
 anyhow = "1.0"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 async-trait = "0.1"
 bytes = "1.9"
 futures-util = "0.3"
@@ -51,7 +54,7 @@ rand = "0.9"
 rustls = "0.23"
 webpki-roots = "0.26"
 native-tls = "0.2"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 tower = "0.5"
 hyper = { version = "1.5", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
@@ -65,7 +68,16 @@ tower-service = "0.3"
 rusqlite = { version = "0.33", features = ["bundled"] }
 pem = "3.0"
 tokio-rustls = "0.26"
-tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "timeout"] }
+ratatui = "0.29"
+tokio-postgres = "0.7"
+lancedb = "0.2"
+image = "0.25"
+hound = "3.5"
+symphonia = { version = "0.5", features = ["all"] }
+async-stream = "0.3"
+cron = "0.15"
+tiktoken-rs = "0.6"
 
 # Workspace member crates
 oclaws-protocol = { path = "crates/protocol" }
@@ -83,9 +95,11 @@ oclaws-skills-core = { path = "crates/skills-core" }
 oclaws-voice-core = { path = "crates/voice-core" }
 oclaws-doctor-core = { path = "crates/doctor-core" }
 oclaws-security-core = { path = "crates/security-core" }
+oclaws-tui-core = { path = "crates/tui-core" }
+oclaws-media-core = { path = "crates/media-core" }
+oclaws-daemon-core = { path = "crates/daemon-core" }
 
 [profile.release]
-lto = true
+lto = "thin"
 opt-level = 3
-codegen-units = 1
 strip = true

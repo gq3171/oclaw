@@ -287,6 +287,52 @@ impl Page {
         Ok(())
     }
 
+    pub async fn get_html(&self) -> BrowserResult<String> {
+        let result = self.evaluate("document.documentElement.outerHTML").await?;
+        Ok(result.value.and_then(|v| v.as_str().map(String::from)).unwrap_or_default())
+    }
+
+    pub async fn wait_for_selector(&self, selector: &str, timeout_ms: u64) -> BrowserResult<()> {
+        let start = std::time::Instant::now();
+        let expr = format!(r#"!!document.querySelector('{}')"#, selector.replace('\'', "\\'"));
+        loop {
+            let result = self.evaluate(&expr).await?;
+            if result.value.and_then(|v| v.as_bool()).unwrap_or(false) {
+                return Ok(());
+            }
+            if start.elapsed().as_millis() > timeout_ms as u128 {
+                return Err(BrowserError::Timeout(format!("Selector '{}' not found", selector)));
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    pub async fn set_viewport(&self, width: i32, height: i32) -> BrowserResult<()> {
+        let conn = self.connection.as_ref()
+            .ok_or_else(|| BrowserError::ConnectionError("Not connected".into()))?;
+        conn.send_command("Emulation.setDeviceMetricsOverride", Some(serde_json::json!({
+            "width": width, "height": height,
+            "deviceScaleFactor": 1, "mobile": false,
+        }))).await?;
+        Ok(())
+    }
+
+    pub async fn get_pdf(&self) -> BrowserResult<Vec<u8>> {
+        let conn = self.connection.as_ref()
+            .ok_or_else(|| BrowserError::ConnectionError("Not connected".into()))?;
+        let response = conn.send_command(
+            &build_method(CdpDomain::Page, "printToPDF"),
+            Some(serde_json::json!({"printBackground": true})),
+        ).await?;
+        let data = response.result.as_ref()
+            .and_then(|r| r.get("data"))
+            .and_then(|d| d.as_str())
+            .ok_or_else(|| BrowserError::PageError("No PDF data".into()))?;
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.decode(data)
+            .map_err(|e| BrowserError::ProtocolError(e.to_string()))
+    }
+
     pub fn target_id(&self) -> &str {
         &self.target_id
     }

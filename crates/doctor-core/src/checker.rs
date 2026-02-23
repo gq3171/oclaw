@@ -38,6 +38,10 @@ pub trait DiagnosticChecker: Send + Sync {
 
 pub struct SystemChecker;
 
+impl Default for SystemChecker {
+    fn default() -> Self { Self }
+}
+
 impl SystemChecker {
     pub fn new() -> Self {
         Self
@@ -108,6 +112,10 @@ impl DiagnosticChecker for SystemChecker {
 
 pub struct NetworkChecker;
 
+impl Default for NetworkChecker {
+    fn default() -> Self { Self }
+}
+
 impl NetworkChecker {
     pub fn new() -> Self {
         Self
@@ -164,6 +172,10 @@ impl DiagnosticChecker for NetworkChecker {
 }
 
 pub struct ConfigChecker;
+
+impl Default for ConfigChecker {
+    fn default() -> Self { Self }
+}
 
 impl ConfigChecker {
     pub fn new() -> Self {
@@ -222,6 +234,10 @@ impl DiagnosticChecker for ConfigChecker {
 
 pub struct DependencyChecker;
 
+impl Default for DependencyChecker {
+    fn default() -> Self { Self }
+}
+
 impl DependencyChecker {
     pub fn new() -> Self {
         Self
@@ -278,6 +294,10 @@ impl DiagnosticChecker for DependencyChecker {
 }
 
 pub struct StorageChecker;
+
+impl Default for StorageChecker {
+    fn default() -> Self { Self }
+}
 
 impl StorageChecker {
     pub fn new() -> Self {
@@ -336,6 +356,10 @@ impl DiagnosticChecker for StorageChecker {
 
 pub struct SecurityChecker;
 
+impl Default for SecurityChecker {
+    fn default() -> Self { Self }
+}
+
 impl SecurityChecker {
     pub fn new() -> Self {
         Self
@@ -392,6 +416,10 @@ impl DiagnosticChecker for SecurityChecker {
 }
 
 pub struct PerformanceChecker;
+
+impl Default for PerformanceChecker {
+    fn default() -> Self { Self }
+}
 
 impl PerformanceChecker {
     pub fn new() -> Self {

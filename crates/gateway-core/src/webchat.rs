@@ -34,12 +34,18 @@ pub struct WebChatState {
     pub max_history: usize,
 }
 
-impl WebChatState {
-    pub fn new() -> Self {
+impl Default for WebChatState {
+    fn default() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(Vec::new())),
             max_history: 100,
         }
+    }
+}
+
+impl WebChatState {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub async fn add_message(&self, session_id: &str, message: ChatMessage) {

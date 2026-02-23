@@ -80,10 +80,9 @@ impl MatrixChannel {
         let client = self.client.as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".to_string()))?;
 
-        let mut request = client.request(
-            reqwest::Method::from_bytes(method.as_bytes()).unwrap(),
-            &url,
-        );
+        let http_method = reqwest::Method::from_bytes(method.as_bytes())
+            .map_err(|e| ChannelError::ConfigurationError(format!("Invalid HTTP method '{}': {}", method, e)))?;
+        let mut request = client.request(http_method, &url);
 
         if let Some(token) = &self.access_token {
             request = request.header("Authorization", format!("Bearer {}", token));
@@ -159,7 +158,7 @@ impl Channel for MatrixChannel {
         }
 
         let room_id = message.metadata.get("room_id")
-            .or_else(|| self.room_id.as_ref())
+            .or(self.room_id.as_ref())
             .cloned()
             .ok_or_else(|| ChannelError::MessageError("Room ID not specified".to_string()))?;
 
@@ -174,7 +173,8 @@ impl Channel for MatrixChannel {
             "/_matrix/client/v3/rooms/{}/send/m.room.message/{}?access_token={}",
             room_id,
             txn_id,
-            self.access_token.as_ref().unwrap()
+            self.access_token.as_ref()
+                .ok_or_else(|| ChannelError::AuthenticationError("Access token not set".to_string()))?,
         );
 
         let response: serde_json::Value = self.send_api_request("PUT", &path, Some(&body)).await?;
@@ -206,11 +206,8 @@ impl Channel for MatrixChannel {
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Received Matrix event: {:?}", event);
         
-        match event.event_type.as_str() {
-            "m.room.message" => {
-                tracing::info!("Received Matrix message: {:?}", event.payload);
-            }
-            _ => {}
+        if event.event_type.as_str() == "m.room.message" {
+            tracing::info!("Received Matrix message: {:?}", event.payload);
         }
         
         Ok(())

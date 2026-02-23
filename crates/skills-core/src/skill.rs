@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::{SkillError, SkillResult};
 
@@ -99,7 +97,7 @@ pub trait Skill: Send + Sync {
     
     async fn execute(&self, input: SkillInput) -> SkillResult<SkillOutput>;
     
-    async fn validate(&self, input: &SkillInput) -> Result<(), String> {
+    async fn validate(&self, _input: &SkillInput) -> Result<(), String> {
         Ok(())
     }
     
@@ -132,7 +130,7 @@ impl SkillRunner {
         let start = std::time::Instant::now();
         
         skill.validate(&input).await
-            .map_err(|e| SkillError::ValidationError(e))?;
+            .map_err(SkillError::ValidationError)?;
         
         let result = skill.execute(input).await;
         

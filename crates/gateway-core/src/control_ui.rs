@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::Json,
-    routing::{get, post},
+    routing::get,
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -46,11 +46,17 @@ pub struct ControlUiState {
     pub start_time: i64,
 }
 
-impl ControlUiState {
-    pub fn new() -> Self {
+impl Default for ControlUiState {
+    fn default() -> Self {
         Self {
             start_time: Utc::now().timestamp(),
         }
+    }
+}
+
+impl ControlUiState {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 

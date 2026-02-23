@@ -144,10 +144,11 @@ impl DockerClient {
         let response = self.client.get(&url).send().await?;
         #[derive(Deserialize)]
         struct VolumesResponse {
-            Volumes: Vec<VolumeInfo>,
+            #[serde(rename = "Volumes")]
+            volumes: Vec<VolumeInfo>,
         }
         let volumes: VolumesResponse = response.json().await?;
-        Ok(volumes.Volumes)
+        Ok(volumes.volumes)
     }
 
     pub async fn create_volume(&self, name: &str, driver: &str) -> Result<VolumeInfo> {

@@ -1,9 +1,11 @@
 pub mod error;
 pub mod scheduler;
 pub mod tool;
+pub mod approval;
 
 pub use error::{ToolError, ToolResult};
-pub use tool::{Tool, ToolCall, ToolResponse, ToolRegistry, BashTool};
+pub use tool::{Tool, ToolCall, ToolResponse, ToolRegistry, BashTool, WebFetchTool, MemoryTool};
+pub use approval::{ApprovalGate, ApprovalPolicy, ApprovalDecision};
 
 #[cfg(test)]
 mod tests {

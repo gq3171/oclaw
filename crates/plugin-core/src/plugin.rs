@@ -91,15 +91,73 @@ pub trait Plugin: Send + Sync {
         Ok(())
     }
 
+    // --- Request/Response hooks ---
     async fn hook_before_request(&self, _request: &str) -> Result<Option<String>, String> {
         Ok(None)
     }
-
     async fn hook_after_response(&self, _response: &str) -> Result<Option<String>, String> {
         Ok(None)
     }
-
     async fn hook_on_error(&self, _error: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    // --- Tool hooks ---
+    async fn hook_before_tool_call(&self, _tool: &str, _args: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    async fn hook_after_tool_call(&self, _tool: &str, _result: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    async fn hook_tool_denied(&self, _tool: &str, _reason: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    // --- Session hooks ---
+    async fn hook_session_start(&self, _session_id: &str) -> Result<(), String> {
+        Ok(())
+    }
+    async fn hook_session_end(&self, _session_id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    // --- Message hooks ---
+    async fn hook_before_message(&self, _message: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    async fn hook_after_message(&self, _message: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    // --- Agent hooks ---
+    async fn hook_agent_spawn(&self, _agent_id: &str, _config: &str) -> Result<(), String> {
+        Ok(())
+    }
+    async fn hook_agent_complete(&self, _agent_id: &str, _result: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    // --- Security hooks ---
+    async fn hook_auth_attempt(&self, _user: &str, _success: bool) -> Result<(), String> {
+        Ok(())
+    }
+    async fn hook_content_filter(&self, _content: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    // --- LLM hooks ---
+    async fn hook_before_llm_call(&self, _model: &str, _payload: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    async fn hook_after_llm_call(&self, _model: &str, _response: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    // --- Gateway hooks ---
+    async fn hook_gateway_startup(&self) -> Result<(), String> {
+        Ok(())
+    }
+    async fn hook_gateway_shutdown(&self) -> Result<(), String> {
         Ok(())
     }
 }
@@ -115,6 +173,10 @@ impl PluginWrapper {
             inner: Box::new(plugin),
             config,
         }
+    }
+
+    pub fn inner(&self) -> &dyn Plugin {
+        &*self.inner
     }
 
     pub fn manifest(&self) -> &PluginManifest {

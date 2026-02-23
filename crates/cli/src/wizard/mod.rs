@@ -30,6 +30,7 @@ pub fn prompt(prompt: &str) -> String {
     input.trim().to_string()
 }
 
+#[allow(dead_code)]
 pub fn prompt_password(prompt: &str) -> String {
     print!("{}: ", prompt);
     io::stdout().flush().unwrap();
@@ -59,6 +60,7 @@ pub fn prompt_yes_no(prompt: &str, default: bool) -> bool {
     }
 }
 
+#[allow(dead_code)]
 pub fn select_option<T: AsRef<str>>(prompt: &str, options: &[T], default: usize) -> usize {
     println!();
     println!("{}", prompt);
@@ -102,6 +104,7 @@ pub fn get_config_dir() -> PathBuf {
     config_dir
 }
 
+#[allow(dead_code)]
 pub fn get_data_dir() -> PathBuf {
     let data_dir = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))

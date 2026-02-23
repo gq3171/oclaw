@@ -200,8 +200,7 @@ impl Channel for TelegramChannel {
             Some(&serde_json::to_value(&telegram_msg).map_err(|e| ChannelError::MessageError(e.to_string()))?),
         ).await?;
 
-        let message_id = response.get("result")
-            .and_then(|r| r.get("message_id"))
+        let message_id = response.get("message_id")
             .and_then(|m| m.as_i64())
             .map(|id| id.to_string())
             .ok_or_else(|| ChannelError::MessageError("No message ID returned".to_string()))?;
@@ -217,13 +216,11 @@ impl Channel for TelegramChannel {
         let response: serde_json::Value = self.send_api_request("getMe", None).await?;
 
         let account = ChannelAccount {
-            id: response.get("result")
-                .and_then(|r| r.get("id"))
+            id: response.get("id")
                 .and_then(|id| id.as_i64())
                 .map(|id| id.to_string())
                 .unwrap_or_default(),
-            name: response.get("result")
-                .and_then(|r| r.get("username"))
+            name: response.get("username")
                 .and_then(|n| n.as_str())
                 .unwrap_or("unknown")
                 .to_string(),

@@ -97,28 +97,29 @@ impl STTEngine for STTClient {
     }
 }
 
+#[allow(dead_code)]
 impl STTClient {
     async fn whisper_transcribe(&self, audio: &[u8]) -> Result<STTResult> {
         if let Some(ref api_key) = self.config.api_key {
             let client = reqwest::Client::new();
-            
+
             let boundary = uuid::Uuid::new_v4().to_string();
             let mut body = Vec::new();
-            
-            body.extend_from_slice(&format!("--{}\r\n", boundary).as_bytes());
+
+            body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
             body.extend_from_slice(b"Content-Disposition: form-data; name=\"model\"\r\n\r\n");
             body.extend_from_slice(self.config.model.as_deref().unwrap_or("whisper-1").as_bytes());
             body.extend_from_slice(b"\r\n");
-            
-            body.extend_from_slice(&format!("--{}\r\n", boundary).as_bytes());
-            body.extend_from_slice(&format!("Content-Disposition: form-data; name=\"language\"\r\n\r\n{}\r\n", self.config.language).as_bytes());
-            
-            body.extend_from_slice(&format!("--{}\r\n", boundary).as_bytes());
+
+            body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+            body.extend_from_slice(format!("Content-Disposition: form-data; name=\"language\"\r\n\r\n{}\r\n", self.config.language).as_bytes());
+
+            body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
             body.extend_from_slice(b"Content-Disposition: form-data; name=\"file\"; filename=\"audio.mp3\"\r\nContent-Type: audio/mp3\r\n\r\n");
             body.extend_from_slice(audio);
             body.extend_from_slice(b"\r\n");
-            
-            body.extend_from_slice(&format!("--{}--\r\n", boundary).as_bytes());
+
+            body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
 
             let response = client
                 .post("https://api.openai.com/v1/audio/transcriptions")

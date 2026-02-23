@@ -174,11 +174,8 @@ impl Channel for GoogleChatChannel {
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Received Google Chat event: {:?}", event);
         
-        match event.event_type.as_str() {
-            "MESSAGE" => {
-                tracing::info!("Received Google Chat message: {:?}", event.payload);
-            }
-            _ => {}
+        if event.event_type.as_str() == "MESSAGE" {
+            tracing::info!("Received Google Chat message: {:?}", event.payload);
         }
         
         Ok(())

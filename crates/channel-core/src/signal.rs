@@ -80,10 +80,8 @@ impl SignalChannel {
         let signal_resp: SignalResponse = response.json().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
-        if signal_resp.error.is_some() {
-            return Err(ChannelError::MessageError(
-                signal_resp.error.unwrap()
-            ));
+        if let Some(err) = signal_resp.error {
+            return Err(ChannelError::MessageError(err));
         }
 
         Ok(format!("{}_{}", recipient, uuid::Uuid::new_v4()))
@@ -135,7 +133,7 @@ impl Channel for SignalChannel {
         }
 
         let recipient = message.metadata.get("recipient")
-            .or_else(|| self.recipient.as_ref())
+            .or(self.recipient.as_ref())
             .cloned()
             .ok_or_else(|| ChannelError::MessageError("Recipient not specified".to_string()))?;
 

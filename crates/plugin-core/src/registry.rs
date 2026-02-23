@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::manifest::PluginManifest;
@@ -6,7 +7,7 @@ use crate::plugin::{Plugin, PluginConfig, PluginWrapper};
 use crate::{PluginResult, PluginError};
 
 pub struct PluginRegistry {
-    plugins: Arc<RwLock<HashMap<String, PluginWrapper>>>,
+    pub(crate) plugins: Arc<RwLock<HashMap<String, PluginWrapper>>>,
     dependencies: Arc<RwLock<HashMap<String, Vec<String>>>>,
 }
 
@@ -22,7 +23,7 @@ impl PluginRegistry {
         let manifest = plugin.manifest();
         let plugin_id = manifest.id.clone();
 
-        self.check_dependencies(&manifest, &config).await?;
+        self.check_dependencies(manifest, &config).await?;
 
         let mut plugins = self.plugins.write().await;
         
@@ -45,7 +46,7 @@ impl PluginRegistry {
         
         if let Some(mut wrapper) = plugins.remove(plugin_id) {
             wrapper.unload().await
-                .map_err(|e| PluginError::ExecutionError(e))?;
+                .map_err(PluginError::ExecutionError)?;
             tracing::info!("Plugin unregistered: {}", plugin_id);
             Ok(())
         } else {
@@ -90,7 +91,7 @@ impl PluginRegistry {
         
         if let Some(wrapper) = plugins.get_mut(plugin_id) {
             wrapper.initialize().await
-                .map_err(|e| PluginError::InitError(e))?;
+                .map_err(PluginError::InitError)?;
             tracing::info!("Plugin initialized: {}", plugin_id);
             Ok(())
         } else {
@@ -106,7 +107,7 @@ impl PluginRegistry {
         
         if let Some(wrapper) = plugins.get_mut(plugin_id) {
             wrapper.start().await
-                .map_err(|e| PluginError::ExecutionError(e))?;
+                .map_err(PluginError::ExecutionError)?;
             tracing::info!("Plugin started: {}", plugin_id);
             Ok(())
         } else {
@@ -122,7 +123,7 @@ impl PluginRegistry {
         
         if let Some(wrapper) = plugins.get_mut(plugin_id) {
             wrapper.stop().await
-                .map_err(|e| PluginError::ExecutionError(e))?;
+                .map_err(PluginError::ExecutionError)?;
             tracing::info!("Plugin stopped: {}", plugin_id);
             Ok(())
         } else {
@@ -162,7 +163,7 @@ impl PluginRegistry {
         
         if let Some(wrapper) = plugins.get_mut(plugin_id) {
             wrapper.update_config(config).await
-                .map_err(|e| PluginError::ConfigError(e))?;
+                .map_err(PluginError::ConfigError)?;
             tracing::info!("Plugin config updated: {}", plugin_id);
             Ok(())
         } else {
@@ -188,7 +189,7 @@ impl PluginRegistry {
 
         let plugins = self.plugins.read().await;
         
-        for (dep_id, _version) in &manifest.dependencies {
+        for dep_id in manifest.dependencies.keys() {
             if !plugins.contains_key(dep_id) {
                 return Err(PluginError::DependencyError(format!(
                     "Missing dependency '{}' for plugin '{}'",
@@ -247,5 +248,260 @@ impl PluginManager {
 impl Default for PluginManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Hook execution pipeline. Runs hooks across all active plugins in priority order.
+pub struct HookPipeline {
+    registry: Arc<RwLock<HashMap<String, PluginWrapper>>>,
+}
+
+impl HookPipeline {
+    pub fn from_registry(registry: &PluginRegistry) -> Self {
+        Self {
+            registry: registry.plugins.clone(),
+        }
+    }
+
+    /// Run a transforming hook. Each plugin can optionally transform the value.
+    async fn run_transform<F>(&self, initial: &str, hook_fn: F) -> Result<String, String>
+    where
+        F: for<'a> Fn(&'a PluginWrapper, String) -> Pin<Box<dyn std::future::Future<Output = Result<Option<String>, String>> + Send + 'a>>,
+    {
+        let plugins = self.registry.read().await;
+        let mut sorted: Vec<&PluginWrapper> = plugins.values()
+            .filter(|p| p.config().enabled)
+            .collect();
+        sorted.sort_by_key(|p| std::cmp::Reverse(p.config().priority));
+
+        let mut value = initial.to_string();
+        for plugin in sorted {
+            match hook_fn(plugin, value.clone()).await {
+                Ok(Some(transformed)) => value = transformed,
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!("Hook error in plugin {}: {}", plugin.manifest().id, e);
+                }
+            }
+        }
+        Ok(value)
+    }
+
+    /// Run a notification hook (no return value transformation).
+    async fn run_notify<F>(&self, hook_fn: F)
+    where
+        F: for<'a> Fn(&'a PluginWrapper) -> Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>>,
+    {
+        let plugins = self.registry.read().await;
+        for plugin in plugins.values().filter(|p| p.config().enabled) {
+            if let Err(e) = hook_fn(plugin).await {
+                tracing::warn!("Hook error in plugin {}: {}", plugin.manifest().id, e);
+            }
+        }
+    }
+
+    // --- Public hook execution methods ---
+
+    pub async fn before_request(&self, request: &str) -> Result<String, String> {
+        self.run_transform(request, |p, v| Box::pin(async move {
+            p.inner().hook_before_request(&v).await
+        })).await
+    }
+
+    pub async fn after_response(&self, response: &str) -> Result<String, String> {
+        self.run_transform(response, |p, v| Box::pin(async move {
+            p.inner().hook_after_response(&v).await
+        })).await
+    }
+
+    pub async fn before_tool_call(&self, tool: &str, args: &str) -> Result<String, String> {
+        let t = tool.to_string();
+        self.run_transform(args, move |p, v| {
+            let t = t.clone();
+            Box::pin(async move { p.inner().hook_before_tool_call(&t, &v).await })
+        }).await
+    }
+
+    pub async fn after_tool_call(&self, tool: &str, result: &str) -> Result<String, String> {
+        let t = tool.to_string();
+        self.run_transform(result, move |p, v| {
+            let t = t.clone();
+            Box::pin(async move { p.inner().hook_after_tool_call(&t, &v).await })
+        }).await
+    }
+
+    pub async fn before_message(&self, message: &str) -> Result<String, String> {
+        self.run_transform(message, |p, v| Box::pin(async move {
+            p.inner().hook_before_message(&v).await
+        })).await
+    }
+
+    pub async fn after_message(&self, message: &str) -> Result<String, String> {
+        self.run_transform(message, |p, v| Box::pin(async move {
+            p.inner().hook_after_message(&v).await
+        })).await
+    }
+
+    pub async fn before_llm_call(&self, model: &str, payload: &str) -> Result<String, String> {
+        let m = model.to_string();
+        self.run_transform(payload, move |p, v| {
+            let m = m.clone();
+            Box::pin(async move { p.inner().hook_before_llm_call(&m, &v).await })
+        }).await
+    }
+
+    pub async fn after_llm_call(&self, model: &str, response: &str) -> Result<String, String> {
+        let m = model.to_string();
+        self.run_transform(response, move |p, v| {
+            let m = m.clone();
+            Box::pin(async move { p.inner().hook_after_llm_call(&m, &v).await })
+        }).await
+    }
+
+    pub async fn content_filter(&self, content: &str) -> Result<String, String> {
+        self.run_transform(content, |p, v| Box::pin(async move {
+            p.inner().hook_content_filter(&v).await
+        })).await
+    }
+
+    pub async fn on_error(&self, error: &str) {
+        let e = error.to_string();
+        self.run_notify(move |p| {
+            let err = e.clone();
+            Box::pin(async move { p.inner().hook_on_error(&err).await })
+        }).await;
+    }
+
+    pub async fn session_start(&self, session_id: &str) {
+        let sid = session_id.to_string();
+        self.run_notify(move |p| {
+            let s = sid.clone();
+            Box::pin(async move { p.inner().hook_session_start(&s).await })
+        }).await;
+    }
+
+    pub async fn session_end(&self, session_id: &str) {
+        let sid = session_id.to_string();
+        self.run_notify(move |p| {
+            let s = sid.clone();
+            Box::pin(async move { p.inner().hook_session_end(&s).await })
+        }).await;
+    }
+
+    pub async fn gateway_startup(&self) {
+        self.run_notify(|p| Box::pin(async move { p.inner().hook_gateway_startup().await })).await;
+    }
+
+    pub async fn gateway_shutdown(&self) {
+        self.run_notify(|p| Box::pin(async move { p.inner().hook_gateway_shutdown().await })).await;
+    }
+
+    pub async fn agent_spawn(&self, agent_id: &str, config: &str) {
+        let aid = agent_id.to_string();
+        let cfg = config.to_string();
+        self.run_notify(move |p| {
+            let a = aid.clone();
+            let c = cfg.clone();
+            Box::pin(async move { p.inner().hook_agent_spawn(&a, &c).await })
+        }).await;
+    }
+
+    pub async fn tool_denied(&self, tool: &str, reason: &str) {
+        let t = tool.to_string();
+        let r = reason.to_string();
+        self.run_notify(move |p| {
+            let t = t.clone();
+            let r = r.clone();
+            Box::pin(async move { p.inner().hook_tool_denied(&t, &r).await })
+        }).await;
+    }
+
+    pub async fn auth_attempt(&self, user: &str, success: bool) {
+        let u = user.to_string();
+        self.run_notify(move |p| {
+            let u = u.clone();
+            Box::pin(async move { p.inner().hook_auth_attempt(&u, success).await })
+        }).await;
+    }
+
+    pub async fn agent_complete(&self, agent_id: &str, result: &str) {
+        let aid = agent_id.to_string();
+        let res = result.to_string();
+        self.run_notify(move |p| {
+            let a = aid.clone();
+            let r = res.clone();
+            Box::pin(async move { p.inner().hook_agent_complete(&a, &r).await })
+        }).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::PluginManifest;
+    use crate::plugin::{BasePlugin, PluginConfig};
+
+    fn test_manifest(id: &str) -> PluginManifest {
+        PluginManifest {
+            id: id.to_string(),
+            name: id.to_string(),
+            version: "1.0.0".to_string(),
+            description: None,
+            author: None,
+            homepage: None,
+            repository: None,
+            license: None,
+            entry_point: "main".to_string(),
+            dependencies: Default::default(),
+            optional_dependencies: Default::default(),
+            tags: vec![],
+            capabilities: vec![],
+            hooks: vec![],
+            platform: None,
+            builtin: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_register_and_list() {
+        let reg = PluginRegistry::new();
+        let plugin = BasePlugin::new(test_manifest("p1"));
+        reg.register(plugin, PluginConfig::default()).await.unwrap();
+        let list = reg.list().await;
+        assert_eq!(list.len(), 1);
+        assert!(list.contains(&"p1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_register_fails() {
+        let reg = PluginRegistry::new();
+        let p1 = BasePlugin::new(test_manifest("dup"));
+        reg.register(p1, PluginConfig::default()).await.unwrap();
+        let p2 = BasePlugin::new(test_manifest("dup"));
+        assert!(reg.register(p2, PluginConfig::default()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_unregister() {
+        let reg = PluginRegistry::new();
+        let plugin = BasePlugin::new(test_manifest("rm"));
+        reg.register(plugin, PluginConfig::default()).await.unwrap();
+        reg.unregister("rm").await.unwrap();
+        assert!(!reg.is_registered("rm").await);
+    }
+
+    #[tokio::test]
+    async fn test_unregister_missing_fails() {
+        let reg = PluginRegistry::new();
+        assert!(reg.unregister("nope").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_count() {
+        let reg = PluginRegistry::new();
+        assert_eq!(reg.count().await, 0);
+        let p = BasePlugin::new(test_manifest("c1"));
+        reg.register(p, PluginConfig::default()).await.unwrap();
+        assert_eq!(reg.count().await, 1);
     }
 }

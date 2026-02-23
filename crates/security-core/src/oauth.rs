@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OAuthProvider {
@@ -21,7 +23,7 @@ impl OAuthProvider {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "google" => Some(OAuthProvider::Google),
             "discord" => Some(OAuthProvider::Discord),
@@ -131,6 +133,49 @@ pub struct OAuthUser {
     pub display_name: String,
     pub email: Option<String>,
     pub avatar_url: Option<String>,
+}
+
+pub struct OAuthStateStore {
+    states: Mutex<HashMap<String, Instant>>,
+    ttl: Duration,
+    max_entries: usize,
+}
+
+impl OAuthStateStore {
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            states: Mutex::new(HashMap::new()),
+            ttl,
+            max_entries: 10_000,
+        }
+    }
+
+    pub fn generate_state(&self) -> String {
+        use rand::Rng;
+        let bytes: [u8; 16] = rand::rng().random();
+        let state = hex::encode(bytes);
+        let mut states = self.states.lock().unwrap();
+        if states.len() >= self.max_entries {
+            let ttl = self.ttl;
+            states.retain(|_, created| created.elapsed() < ttl);
+        }
+        states.insert(state.clone(), Instant::now());
+        state
+    }
+
+    pub fn validate_state(&self, state: &str) -> bool {
+        let mut states = self.states.lock().unwrap();
+        match states.remove(state) {
+            Some(created) => created.elapsed() < self.ttl,
+            None => false,
+        }
+    }
+
+    pub fn cleanup_expired(&self) {
+        let mut states = self.states.lock().unwrap();
+        let ttl = self.ttl;
+        states.retain(|_, created| created.elapsed() < ttl);
+    }
 }
 
 pub struct OAuthClient {
@@ -338,3 +383,123 @@ impl std::fmt::Display for OAuthError {
 }
 
 impl std::error::Error for OAuthError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provider_parse_round_trip() {
+        for name in ["google", "discord", "github", "slack", "custom"] {
+            let p = OAuthProvider::parse(name).unwrap();
+            assert_eq!(p.as_str(), name);
+        }
+        assert!(OAuthProvider::parse("unknown").is_none());
+    }
+
+    #[test]
+    fn test_auth_url_generation() {
+        let cfg = OAuthConfig::google("cid", "csec", "http://localhost/cb");
+        let url = cfg.get_auth_url("state123");
+        assert!(url.starts_with("https://accounts.google.com/o/oauth2/v2/auth?"));
+        assert!(url.contains("client_id=cid"));
+        assert!(url.contains("redirect_uri=http"));
+        assert!(url.contains("state=state123"));
+    }
+
+    #[test]
+    fn test_discord_config_urls() {
+        let cfg = OAuthConfig::discord("id", "sec", "http://cb");
+        assert_eq!(cfg.auth_url, "https://discord.com/api/oauth2/authorize");
+        assert_eq!(cfg.token_url, "https://discord.com/api/oauth2/token");
+    }
+
+    #[test]
+    fn test_github_config_urls() {
+        let cfg = OAuthConfig::github("id", "sec", "http://cb");
+        assert_eq!(cfg.auth_url, "https://github.com/login/oauth/authorize");
+    }
+
+    #[test]
+    fn test_token_expiry() {
+        let token = OAuthToken {
+            access_token: "at".into(),
+            refresh_token: None,
+            token_type: "Bearer".into(),
+            expires_in: 3600,
+            scope: None,
+            created_at: chrono::Utc::now().timestamp() - 7200,
+        };
+        assert!(token.is_expired());
+        assert!(token.refresh_needed());
+    }
+
+    #[test]
+    fn test_token_not_expired() {
+        let token = OAuthToken {
+            access_token: "at".into(),
+            refresh_token: Some("rt".into()),
+            token_type: "Bearer".into(),
+            expires_in: 3600,
+            scope: Some("openid".into()),
+            created_at: chrono::Utc::now().timestamp(),
+        };
+        assert!(!token.is_expired());
+        assert!(!token.refresh_needed());
+    }
+
+    #[test]
+    fn test_token_refresh_needed_within_buffer() {
+        // Created 3400s ago with 3600s expiry → 200s left, under 300s buffer
+        let token = OAuthToken {
+            access_token: "at".into(),
+            refresh_token: None,
+            token_type: "Bearer".into(),
+            expires_in: 3600,
+            scope: None,
+            created_at: chrono::Utc::now().timestamp() - 3400,
+        };
+        assert!(!token.is_expired());
+        assert!(token.refresh_needed());
+    }
+
+    #[test]
+    fn test_state_store_generate_and_validate() {
+        let store = OAuthStateStore::new(Duration::from_secs(300));
+        let state = store.generate_state();
+        assert_eq!(state.len(), 32); // 16 bytes = 32 hex chars
+        assert!(store.validate_state(&state));
+    }
+
+    #[test]
+    fn test_state_store_reuse_fails() {
+        let store = OAuthStateStore::new(Duration::from_secs(300));
+        let state = store.generate_state();
+        assert!(store.validate_state(&state));
+        assert!(!store.validate_state(&state)); // second use fails
+    }
+
+    #[test]
+    fn test_state_store_unknown_fails() {
+        let store = OAuthStateStore::new(Duration::from_secs(300));
+        assert!(!store.validate_state("bogus"));
+    }
+
+    #[test]
+    fn test_state_store_expired_fails() {
+        let store = OAuthStateStore::new(Duration::from_millis(0));
+        let state = store.generate_state();
+        std::thread::sleep(Duration::from_millis(1));
+        assert!(!store.validate_state(&state));
+    }
+
+    #[test]
+    fn test_state_store_cleanup() {
+        let store = OAuthStateStore::new(Duration::from_millis(0));
+        store.generate_state();
+        store.generate_state();
+        std::thread::sleep(Duration::from_millis(1));
+        store.cleanup_expired();
+        assert!(store.states.lock().unwrap().is_empty());
+    }
+}

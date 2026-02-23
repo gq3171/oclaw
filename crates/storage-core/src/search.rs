@@ -357,3 +357,53 @@ impl Default for HybridSearchStore {
         Self::new(1536)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_vector_store_insert_and_search() {
+        let store = VectorStore::new(3);
+        store.insert(VectorEntry {
+            id: "a".into(),
+            vector: vec![1.0, 0.0, 0.0],
+            metadata: HashMap::from([("content".into(), "hello".into())]),
+            score: None,
+        }).await;
+
+        let results = store.search(&[1.0, 0.0, 0.0], 5).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a");
+        assert!(results[0].score > 0.99);
+    }
+
+    #[tokio::test]
+    async fn test_vector_store_delete() {
+        let store = VectorStore::new(2);
+        store.insert(VectorEntry {
+            id: "x".into(), vector: vec![1.0, 0.0],
+            metadata: HashMap::new(), score: None,
+        }).await;
+        assert_eq!(store.count().await, 1);
+        store.delete("x").await;
+        assert_eq!(store.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_fulltext_search() {
+        let store = FullTextStore::new();
+        store.insert("d1".into(), "the quick brown fox".into(), HashMap::new()).await;
+        store.insert("d2".into(), "lazy dog sleeps".into(), HashMap::new()).await;
+
+        let results = store.search("quick fox", 10).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "d1");
+    }
+
+    #[tokio::test]
+    async fn test_cosine_similarity_orthogonal() {
+        let score = cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]);
+        assert!(score.abs() < 0.001);
+    }
+}

@@ -22,6 +22,9 @@ pub enum ToolError {
 
     #[error("Scheduler error: {0}")]
     SchedulerError(String),
+
+    #[error("Tool denied: {0}")]
+    Denied(String),
 }
 
 pub type ToolResult<T> = Result<T, ToolError>;

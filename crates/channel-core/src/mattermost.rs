@@ -81,10 +81,9 @@ impl MattermostChannel {
         let client = self.client.as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".to_string()))?;
 
-        let mut request = client.request(
-            reqwest::Method::from_bytes(method.as_bytes()).unwrap(),
-            &url,
-        );
+        let http_method = reqwest::Method::from_bytes(method.as_bytes())
+            .map_err(|e| ChannelError::ConfigError(format!("Invalid HTTP method '{}': {}", method, e)))?;
+        let mut request = client.request(http_method, &url);
 
         if let Some(token) = &self.access_token {
             request = request.header("Authorization", format!("Bearer {}", token));
@@ -162,7 +161,7 @@ impl Channel for MattermostChannel {
         }
 
         let channel_id = message.metadata.get("channel_id")
-            .or_else(|| self.channel_id.as_ref())
+            .or(self.channel_id.as_ref())
             .cloned()
             .ok_or_else(|| ChannelError::MessageError("Channel ID not specified".to_string()))?;
 
@@ -216,11 +215,8 @@ impl Channel for MattermostChannel {
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Received Mattermost event: {:?}", event);
         
-        match event.event_type.as_str() {
-            "posted" => {
-                tracing::info!("Received Mattermost message: {:?}", event.payload);
-            }
-            _ => {}
+        if event.event_type.as_str() == "posted" {
+            tracing::info!("Received Mattermost message: {:?}", event.payload);
         }
         
         Ok(())

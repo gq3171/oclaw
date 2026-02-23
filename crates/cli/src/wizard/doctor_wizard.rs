@@ -1,4 +1,4 @@
-use crate::wizard::{error, info, success};
+use crate::wizard::{info, success};
 use oclaws_doctor_core::{CheckCategory, DiagnosticManager};
 
 pub struct DoctorWizard;

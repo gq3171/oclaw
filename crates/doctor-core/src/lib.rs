@@ -2,9 +2,16 @@ mod checker;
 mod health;
 mod report;
 
-pub use checker::{DiagnosticChecker, CheckResult, CheckStatus, CheckCategory};
-pub use health::{HealthChecker, HealthStatus};
-pub use report::{DiagnosticReport, ReportEntry};
+pub use checker::{
+    DiagnosticChecker, CheckResult, CheckStatus, CheckCategory,
+    SystemChecker, NetworkChecker, ConfigChecker, DependencyChecker,
+    StorageChecker, SecurityChecker, PerformanceChecker,
+};
+pub use health::{
+    HealthChecker, HealthStatus, HealthCheck, HealthComponent, HealthReport,
+    SystemHealthCheck, FlagHealthCheck, CallbackHealthCheck,
+};
+pub use report::{DiagnosticReport, ReportEntry, ReportBuilder};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
