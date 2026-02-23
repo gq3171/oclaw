@@ -10,14 +10,16 @@ use crate::providers::{LlmProvider, ProviderType};
 pub struct AnthropicProvider {
     client: Client,
     api_key: String,
+    base_url: String,
     default_model_name: String,
 }
 
 impl AnthropicProvider {
-    pub fn new(api_key: &str) -> LlmResult<Self> {
+    pub fn new(api_key: &str, base_url: Option<&str>) -> LlmResult<Self> {
         Ok(Self {
             client: Client::new(),
             api_key: api_key.to_string(),
+            base_url: base_url.unwrap_or("https://api.anthropic.com").trim_end_matches('/').to_string(),
             default_model_name: "claude-3-5-sonnet-20241022".to_string(),
         })
     }
@@ -30,7 +32,7 @@ impl LlmProvider for AnthropicProvider {
     }
 
     async fn chat(&self, request: ChatRequest) -> LlmResult<ChatCompletion> {
-        let url = "https://api.anthropic.com/v1/messages";
+        let url = format!("{}/v1/messages", self.base_url);
 
         #[derive(Serialize)]
         struct AnthropicMessage {
@@ -114,7 +116,7 @@ impl LlmProvider for AnthropicProvider {
     }
 
     async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<crate::chat::StreamChunk>>> {
-        let url = "https://api.anthropic.com/v1/messages";
+        let url = format!("{}/v1/messages", self.base_url);
 
         #[derive(Serialize)]
         struct AnthropicMsg { role: String, content: String }

@@ -90,6 +90,13 @@
         "apiKey": "${OCLAWS_PROVIDER_OPENROUTER_API_KEY}",
         "baseUrl": "https://openrouter.ai/api/v1",
         "model": "anthropic/claude-3.5-sonnet"
+      },
+      "minimax": {
+        "provider": "anthropic",
+        "apiKey": "${OCLAWS_PROVIDER_MINIMAX_API_KEY}",
+        "baseUrl": "https://api.minimaxi.com/anthropic",
+        "model": "MiniMax-Text-01",
+        "maxTokens": 4096
       }
     }
   },

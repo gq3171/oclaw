@@ -76,7 +76,7 @@ impl LlmFactory {
     pub fn create(provider_type: ProviderType, api_key: &str, base_url: Option<&str>) -> LlmResult<Box<dyn LlmProvider>> {
         match provider_type {
             ProviderType::OpenAi => Ok(Box::new(OpenAiProvider::new(api_key, base_url)?)),
-            ProviderType::Anthropic => Ok(Box::new(AnthropicProvider::new(api_key)?)),
+            ProviderType::Anthropic => Ok(Box::new(AnthropicProvider::new(api_key, base_url)?)),
             ProviderType::Ollama => Ok(Box::new(OllamaProvider::new(base_url.unwrap_or("http://localhost:11434"))?)),
             ProviderType::Google => Ok(Box::new(GoogleProvider::new(api_key)?)),
             ProviderType::Cohere => Ok(Box::new(CohereProvider::new(api_key)?)),
