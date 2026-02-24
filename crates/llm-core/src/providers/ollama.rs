@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::chat::{ChatMessage, ChatRequest, ChatCompletion, MessageRole};
+use crate::chat::{ChatMessage, ChatRequest, ChatCompletion, StreamChunk, StreamChoice, MessageRole};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::{LlmError, LlmResult};
 use crate::providers::{LlmProvider, ProviderType};
@@ -109,6 +109,123 @@ impl LlmProvider for OllamaProvider {
         } else {
             Err(LlmError::ApiError(format!("HTTP {}", response.status())))
         }
+    }
+
+    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
+        let url = format!("{}/api/chat", self.base_url);
+
+        #[derive(Serialize)]
+        struct OllamaStreamRequest {
+            model: String,
+            messages: Vec<OllamaMsg>,
+            stream: bool,
+        }
+        #[derive(Serialize)]
+        struct OllamaMsg {
+            role: String,
+            content: String,
+        }
+
+        let messages: Vec<OllamaMsg> = request.messages.iter().map(|m| {
+            let role = match m.role {
+                MessageRole::System => "system",
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::Tool => "tool",
+            };
+            OllamaMsg { role: role.to_string(), content: m.content.clone() }
+        }).collect();
+
+        let req = OllamaStreamRequest {
+            model: request.model.clone(),
+            messages,
+            stream: true,
+        };
+
+        let response = self.client
+            .post(&url)
+            .json(&req)
+            .send()
+            .await
+            .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(LlmError::ApiError(format!("HTTP {}: {}", status, body)));
+        }
+
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+        let model = request.model.clone();
+
+        tokio::spawn(async move {
+            use futures_util::StreamExt;
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+
+            while let Some(chunk) = stream.next().await {
+                let bytes = match chunk {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let _ = tx.send(Err(LlmError::NetworkError(e.to_string()))).await;
+                        break;
+                    }
+                };
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                // Ollama streams newline-delimited JSON
+                while let Some(line_end) = buffer.find('\n') {
+                    let line = buffer[..line_end].trim().to_string();
+                    buffer = buffer[line_end + 1..].to_string();
+
+                    if line.is_empty() { continue; }
+
+                    #[derive(Deserialize)]
+                    struct OllamaStreamChunk {
+                        message: Option<OllamaStreamMsg>,
+                        done: bool,
+                    }
+                    #[derive(Deserialize)]
+                    struct OllamaStreamMsg {
+                        content: String,
+                    }
+
+                    let parsed: OllamaStreamChunk = match serde_json::from_str(&line) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+
+                    let content = parsed.message.map(|m| m.content).unwrap_or_default();
+                    let finish = if parsed.done { Some("stop".to_string()) } else { None };
+
+                    let chunk = StreamChunk {
+                        id: format!("ollama-stream"),
+                        object: "chat.completion.chunk".to_string(),
+                        created: 0,
+                        model: model.clone(),
+                        choices: vec![StreamChoice {
+                            index: 0,
+                            delta: Some(ChatMessage {
+                                role: MessageRole::Assistant,
+                                content,
+                                name: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                            }),
+                            finish_reason: finish,
+                        }],
+                    };
+
+                    if tx.send(Ok(chunk)).await.is_err() {
+                        return;
+                    }
+
+                    if parsed.done { return; }
+                }
+            }
+        });
+
+        Ok(rx)
     }
 
     async fn embeddings(&self, _request: EmbeddingRequest) -> LlmResult<EmbeddingResponse> {

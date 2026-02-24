@@ -12,6 +12,12 @@ use crate::irc::IrcChannel;
 use crate::google_chat::GoogleChatChannel;
 use crate::mattermost::MattermostChannel;
 use crate::feishu::FeishuChannel as FeishuCh;
+use crate::msteams::MsTeamsChannel;
+use crate::twitch::TwitchChannel as TwitchCh;
+use crate::zalo::ZaloChannel as ZaloCh;
+use crate::nextcloud::NextcloudChannel as NextcloudCh;
+use crate::synology::SynologyChannel as SynologyCh;
+use crate::bluebubbles::BlueBubblesChannel as BlueBubblesCh;
 use oclaws_config::settings::Channels;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -191,6 +197,61 @@ impl ChannelManager {
                     let channel = FeishuCh::new()
                         .with_config(app_id, app_secret);
                     manager.register("feishu".to_string(), channel).await;
+                }
+
+        if let Some(msteams) = &config.msteams
+            && msteams.enabled.unwrap_or(false)
+                && let (Some(bot_id), Some(bot_password)) = (&msteams.bot_id, &msteams.bot_password) {
+                    let channel = MsTeamsChannel::new()
+                        .with_config(bot_id, bot_password, msteams.tenant_id.as_deref());
+                    manager.register("msteams".to_string(), channel).await;
+                }
+
+        if let Some(twitch) = &config.twitch
+            && twitch.enabled.unwrap_or(false)
+                && let (Some(client_id), Some(access_token), Some(channel_name)) =
+                    (&twitch.client_id, &twitch.access_token, &twitch.channel_name) {
+                    let channel = TwitchCh::new()
+                        .with_config(client_id, access_token, channel_name);
+                    manager.register("twitch".to_string(), channel).await;
+                }
+
+        if let Some(zalo) = &config.zalo
+            && zalo.enabled.unwrap_or(false)
+                && let (Some(app_id), Some(access_token)) = (&zalo.app_id, &zalo.access_token) {
+                    let mut channel = ZaloCh::new()
+                        .with_config(app_id, access_token);
+                    if let Some(secret) = &zalo.webhook_secret {
+                        channel = channel.with_webhook_secret(secret);
+                    }
+                    manager.register("zalo".to_string(), channel).await;
+                }
+
+        if let Some(nextcloud) = &config.nextcloud
+            && nextcloud.enabled.unwrap_or(false)
+                && let (Some(server_url), Some(token)) = (&nextcloud.server_url, &nextcloud.token) {
+                    let mut channel = NextcloudCh::new()
+                        .with_config(server_url, token);
+                    if let Some(secret) = &nextcloud.secret {
+                        channel = channel.with_secret(secret);
+                    }
+                    manager.register("nextcloud".to_string(), channel).await;
+                }
+
+        if let Some(synology) = &config.synology
+            && synology.enabled.unwrap_or(false)
+                && let (Some(server_url), Some(token)) = (&synology.server_url, &synology.token) {
+                    let channel = SynologyCh::new()
+                        .with_config(server_url, token);
+                    manager.register("synology".to_string(), channel).await;
+                }
+
+        if let Some(bb) = &config.bluebubbles
+            && bb.enabled.unwrap_or(false)
+                && let (Some(server_url), Some(password)) = (&bb.server_url, &bb.password) {
+                    let channel = BlueBubblesCh::new()
+                        .with_config(server_url, password);
+                    manager.register("bluebubbles".to_string(), channel).await;
                 }
 
         manager

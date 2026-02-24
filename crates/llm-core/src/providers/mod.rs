@@ -10,6 +10,15 @@ pub mod cohere;
 pub mod openrouter;
 pub mod together;
 pub mod bedrock;
+pub mod qwen;
+pub mod volcengine;
+pub mod moonshot;
+pub mod xai;
+pub mod huggingface;
+pub mod vllm;
+pub mod cloudflare;
+pub mod litellm;
+pub mod copilot;
 pub mod mock;
 
 pub use openai::OpenAiProvider;
@@ -20,6 +29,15 @@ pub use cohere::CohereProvider;
 pub use openrouter::OpenRouterProvider;
 pub use together::TogetherProvider;
 pub use bedrock::BedrockProvider;
+pub use qwen::QwenProvider;
+pub use volcengine::VolcengineProvider;
+pub use moonshot::MoonshotProvider;
+pub use xai::XaiProvider;
+pub use huggingface::HuggingFaceProvider;
+pub use vllm::VllmProvider;
+pub use cloudflare::CloudflareProvider;
+pub use litellm::LitellmProvider;
+pub use copilot::CopilotProvider;
 pub use mock::MockLlmProvider;
 
 use std::collections::HashMap;
@@ -47,6 +65,15 @@ pub enum ProviderType {
     OpenRouter,
     Together,
     Bedrock,
+    Qwen,
+    Volcengine,
+    Moonshot,
+    Xai,
+    HuggingFace,
+    Vllm,
+    Cloudflare,
+    Litellm,
+    Copilot,
 }
 impl FromStr for ProviderType {
     type Err = String;
@@ -61,6 +88,15 @@ impl FromStr for ProviderType {
             "openrouter" => Ok(Self::OpenRouter),
             "together" | "togetherai" => Ok(Self::Together),
             "bedrock" | "aws" => Ok(Self::Bedrock),
+            "qwen" | "dashscope" | "tongyi" => Ok(Self::Qwen),
+            "volcengine" | "doubao" | "bytedance" => Ok(Self::Volcengine),
+            "moonshot" | "kimi" => Ok(Self::Moonshot),
+            "xai" | "grok" => Ok(Self::Xai),
+            "huggingface" | "hf" => Ok(Self::HuggingFace),
+            "vllm" => Ok(Self::Vllm),
+            "cloudflare" | "cf" => Ok(Self::Cloudflare),
+            "litellm" => Ok(Self::Litellm),
+            "copilot" | "github-copilot" => Ok(Self::Copilot),
             other => Err(format!("Unknown provider: {other}")),
         }
     }
@@ -77,6 +113,12 @@ pub trait LlmProvider: Send + Sync {
     async fn embeddings(&self, request: EmbeddingRequest) -> LlmResult<EmbeddingResponse>;
     fn supported_models(&self) -> Vec<String>;
     fn default_model(&self) -> &str;
+
+    /// Dynamically discover available models from the provider API.
+    /// Default implementation returns the static `supported_models()` list.
+    async fn list_models(&self) -> LlmResult<Vec<String>> {
+        Ok(self.supported_models())
+    }
 }
 
 pub struct LlmFactory;
@@ -97,6 +139,15 @@ impl LlmFactory {
                     .ok_or_else(|| LlmError::InvalidRequest("Bedrock api_key must be ACCESS_KEY:SECRET_KEY".into()))?;
                 Ok(Box::new(BedrockProvider::new(access, secret, base_url)?))
             }
+            ProviderType::Qwen => Ok(Box::new(QwenProvider::new(api_key)?)),
+            ProviderType::Volcengine => Ok(Box::new(VolcengineProvider::new(api_key)?)),
+            ProviderType::Moonshot => Ok(Box::new(MoonshotProvider::new(api_key)?)),
+            ProviderType::Xai => Ok(Box::new(XaiProvider::new(api_key)?)),
+            ProviderType::HuggingFace => Ok(Box::new(HuggingFaceProvider::new(api_key)?)),
+            ProviderType::Vllm => Ok(Box::new(VllmProvider::new(Some(api_key), base_url)?)),
+            ProviderType::Cloudflare => Ok(Box::new(CloudflareProvider::new(api_key, base_url)?)),
+            ProviderType::Litellm => Ok(Box::new(LitellmProvider::new(Some(api_key), base_url)?)),
+            ProviderType::Copilot => Ok(Box::new(CopilotProvider::new(api_key, defaults)?)),
         }
     }
 }

@@ -190,8 +190,8 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] Prometheus Metrics (`/metrics`)
 - [x] Web Chat UI (`/ui/chat`)
 - [x] Web Config UI (`/ui/config`)
-- [ ] OpenTelemetry Tracing
-- [ ] Canvas Host (live canvas rendering)
+- [x] OpenTelemetry Tracing
+- [x] Canvas Host (live canvas rendering)
 
 ### LLM Providers
 
@@ -204,15 +204,15 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] OpenRouter
 - [x] Together AI
 - [x] MiniMax
-- [ ] Hugging Face
-- [ ] vLLM
-- [ ] Qwen (Alibaba)
-- [ ] Doubao / Volcengine (ByteDance)
-- [ ] Moonshot (Kimi)
-- [ ] xAI (Grok)
-- [ ] Cloudflare AI Gateway
-- [ ] LiteLLM
-- [ ] GitHub Copilot
+- [x] Hugging Face
+- [x] vLLM
+- [x] Qwen (Alibaba)
+- [x] Doubao / Volcengine (ByteDance)
+- [x] Moonshot (Kimi)
+- [x] xAI (Grok)
+- [x] Cloudflare AI Gateway
+- [x] LiteLLM
+- [x] GitHub Copilot
 
 ### Messaging Channels
 
@@ -229,12 +229,12 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] Nostr
 - [x] IRC
 - [x] Webchat (built-in)
-- [ ] iMessage / BlueBubbles
-- [ ] Microsoft Teams
-- [ ] Nextcloud Talk
-- [ ] Synology Chat
-- [ ] Twitch
-- [ ] Zalo
+- [x] iMessage / BlueBubbles
+- [x] Microsoft Teams
+- [x] Nextcloud Talk
+- [x] Synology Chat
+- [x] Twitch
+- [x] Zalo
 
 ### Agent & Orchestration
 
@@ -250,8 +250,8 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] Auto-recall (Memory Integration)
 - [x] Thread Ownership
 - [x] Reply Dispatch
-- [ ] Thinking Mode (Extended Reasoning)
-- [ ] Context Window Guard
+- [x] Thinking Mode (Extended Reasoning)
+- [x] Context Window Guard
 
 ### Tools & Integrations
 
@@ -260,9 +260,9 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] Tool Approval Gates
 - [x] Browser Automation (CDP)
 - [x] Docker Sandbox Execution
-- [ ] Web Search (Brave / Perplexity)
-- [ ] Web Scraping (Firecrawl)
-- [ ] Playwright Integration
+- [x] Web Search (Brave / Perplexity)
+- [x] Web Scraping (Firecrawl)
+- [x] Playwright Integration
 
 ### Storage & Memory
 
@@ -286,7 +286,7 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] Skill Gating
 - [x] Built-in Skills
 - [x] Plugin System (load, hooks, HTTP routes)
-- [ ] Workspace Skills
+- [x] Workspace Skills
 
 ### Media & Voice
 
@@ -296,9 +296,9 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] STT (Speech-to-Text)
 - [x] TTS (Text-to-Speech)
 - [x] Audio Streaming (WebSocket)
-- [ ] ElevenLabs TTS
-- [ ] Deepgram STT
-- [ ] Voice Wake Detection
+- [x] ElevenLabs TTS
+- [x] Deepgram STT
+- [x] Voice Wake Detection
 
 ### Security
 
@@ -307,7 +307,7 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] Device Pairing
 - [x] HMAC / SHA2 Crypto
 - [x] Audit Logging
-- [ ] Multi-key Rotation (Auth Profiles)
+- [x] Multi-key Rotation (Auth Profiles)
 
 ### CLI & UI
 
@@ -316,7 +316,7 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] Terminal UI (ratatui)
 - [x] Daemon Management
 - [x] System Diagnostics (`doctor`)
-- [ ] Onboarding Command
+- [x] Onboarding Command
 
 ### Cron & Background
 

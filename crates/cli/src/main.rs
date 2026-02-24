@@ -6,6 +6,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug, Level};
 use tracing_subscriber::{FmtSubscriber, fmt};
+#[cfg(feature = "otel")]
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 mod wizard;
 
@@ -136,6 +138,8 @@ enum Commands {
         #[command(subcommand)]
         action: PluginAction,
     },
+    /// First-time interactive setup wizard
+    Onboard,
 }
 
 #[derive(Subcommand)]
@@ -221,23 +225,31 @@ async fn main() -> anyhow::Result<()> {
         _ => Level::INFO,
     };
     
-    if cli.log_format == "json" {
-        fmt::Subscriber::builder()
-            .json()
-            .with_max_level(log_level)
-            .with_target(true)
-            .with_file(true)
-            .with_line_number(true)
-            .init();
-    } else {
-        FmtSubscriber::builder()
-            .with_max_level(log_level)
-            .with_target(false)
-            .with_thread_ids(false)
-            .with_file(true)
-            .with_line_number(true)
-            .init();
-    }
+    // Load config early to check OTEL settings
+    #[cfg(feature = "otel")]
+    let otel_config = {
+        let cfg_path = cli.config.as_ref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
+        let mut mgr = ConfigManager::new(cfg_path);
+        mgr.load().ok();
+        mgr.config().diagnostics.as_ref().and_then(|d| d.otel.clone())
+    };
+
+    #[cfg(feature = "otel")]
+    let _otel_guard = {
+        let otel_enabled = otel_config.as_ref()
+            .and_then(|o| o.enabled).unwrap_or(false);
+        if otel_enabled {
+            Some(init_otel_tracing(log_level, &cli.log_format, &otel_config.unwrap()))
+        } else {
+            init_plain_tracing(log_level, &cli.log_format);
+            None
+        }
+    };
+
+    #[cfg(not(feature = "otel"))]
+    init_plain_tracing(log_level, &cli.log_format);
     
     let Some(command) = cli.command else {
         // No subcommand — print help and exit
@@ -860,9 +872,123 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+
+        Commands::Onboard => {
+            use wizard::ConfigWizard;
+
+            let config_path = cli.config
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
+
+            // Check if config already exists
+            let mut manager = ConfigManager::new(config_path.clone());
+            let has_config = manager.load().is_ok();
+
+            if has_config {
+                println!("Existing configuration found at {:?}", config_path);
+                if !wizard::prompt_yes_no("Re-run setup? (existing values will be kept as defaults)", false) {
+                    println!("Aborted. Use 'oclaws start' to launch the gateway.");
+                    return Ok(());
+                }
+            } else {
+                println!("Welcome to OCLAWS! Let's get you set up.");
+                println!();
+            }
+
+            match ConfigWizard::run() {
+                Ok(_) => {
+                    println!();
+                    println!("Setup complete!");
+                    println!("Run 'oclaws start' to launch the gateway.");
+                }
+                Err(e) => {
+                    error!("Onboarding failed: {}", e);
+                    return Err(anyhow::anyhow!(e));
+                }
+            }
+        }
     }
-    
+
     Ok(())
+}
+
+fn init_plain_tracing(level: Level, format: &str) {
+    if format == "json" {
+        fmt::Subscriber::builder()
+            .json()
+            .with_max_level(level)
+            .with_target(true)
+            .with_file(true)
+            .with_line_number(true)
+            .init();
+    } else {
+        FmtSubscriber::builder()
+            .with_max_level(level)
+            .with_target(false)
+            .with_thread_ids(false)
+            .with_file(true)
+            .with_line_number(true)
+            .init();
+    }
+}
+
+#[cfg(feature = "otel")]
+fn init_otel_tracing(
+    level: Level,
+    format: &str,
+    otel: &oclaws_config::settings::Otel,
+) -> opentelemetry_sdk::trace::TracerProvider {
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry::KeyValue;
+    use opentelemetry_otlp::WithExportConfig;
+
+    let endpoint = otel.endpoint.as_deref()
+        .unwrap_or("http://localhost:4317");
+    let service_name = otel.service_name.as_deref()
+        .unwrap_or("oclaws");
+
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()
+        .expect("Failed to create OTLP exporter");
+
+    let resource = opentelemetry_sdk::Resource::new(vec![
+        KeyValue::new("service.name", service_name.to_string()),
+    ]);
+
+    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
+        .with_simple_exporter(exporter)
+        .with_config(opentelemetry_sdk::trace::Config::default().with_resource(resource))
+        .build();
+
+    let tracer = provider.tracer("oclaws");
+    let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+    let fmt_layer = if format == "json" {
+        fmt::layer()
+            .json()
+            .with_target(true)
+            .with_file(true)
+            .with_line_number(true)
+            .boxed()
+    } else {
+        fmt::layer()
+            .with_target(false)
+            .with_thread_ids(false)
+            .with_file(true)
+            .with_line_number(true)
+            .boxed()
+    };
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::filter::LevelFilter::from_level(level))
+        .with(fmt_layer)
+        .with(otel_layer)
+        .init();
+
+    info!("OpenTelemetry tracing enabled → {}", endpoint);
+    provider
 }
 
 fn create_llm_provider(config: &Config) -> Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>> {

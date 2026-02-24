@@ -167,6 +167,143 @@ impl LlmProvider for BedrockProvider {
         })
     }
 
+    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
+        let model = &request.model;
+        let url = format!(
+            "https://bedrock-runtime.{}.amazonaws.com/model/{}/invoke-with-response-stream",
+            self.region, model
+        );
+        let uri = format!("/model/{}/invoke-with-response-stream", model);
+
+        let messages: Vec<serde_json::Value> = request.messages.iter().map(|m| {
+            serde_json::json!({ "role": Self::role_str(&m.role), "content": m.content })
+        }).collect();
+
+        let body = serde_json::json!({
+            "anthropic_version": "bedrock-2023-10-16",
+            "max_tokens": request.max_tokens.unwrap_or(4096),
+            "messages": messages,
+        });
+
+        let body_bytes = serde_json::to_vec(&body)
+            .map_err(|e| LlmError::ParseError(e.to_string()))?;
+        let now = chrono::Utc::now();
+        let timestamp = now.format("%Y%m%dT%H%M%SZ").to_string();
+        let date = now.format("%Y%m%d").to_string();
+
+        let sig_headers = self.sign_request("POST", &uri, &body_bytes, &timestamp, &date);
+
+        let mut req = self.client.post(&url)
+            .header("Content-Type", "application/json")
+            .body(body_bytes);
+
+        for (k, v) in &sig_headers {
+            if k != "host" {
+                req = req.header(k.as_str(), v.as_str());
+            }
+        }
+
+        let resp = req.send().await
+            .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(LlmError::ApiError(format!("{}: {}", status, text)));
+        }
+
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+        let model_name = model.clone();
+
+        tokio::spawn(async move {
+            use futures_util::StreamExt;
+            let mut stream = resp.bytes_stream();
+            let mut buffer = String::new();
+
+            while let Some(chunk) = stream.next().await {
+                let bytes = match chunk {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let _ = tx.send(Err(LlmError::NetworkError(e.to_string()))).await;
+                        break;
+                    }
+                };
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                // Bedrock streams event-stream format; parse JSON chunks
+                while let Some(line_end) = buffer.find('\n') {
+                    let line = buffer[..line_end].trim().to_string();
+                    buffer = buffer[line_end + 1..].to_string();
+
+                    if line.is_empty() { continue; }
+
+                    // Try parsing as JSON (Bedrock wraps in event frames)
+                    let json: serde_json::Value = match serde_json::from_str(&line) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            // Try extracting from "data: " prefix
+                            if let Some(data) = line.strip_prefix("data: ") {
+                                match serde_json::from_str(data) {
+                                    Ok(v) => v,
+                                    Err(_) => continue,
+                                }
+                            } else {
+                                continue;
+                            }
+                        }
+                    };
+
+                    // Anthropic Bedrock stream: content_block_delta with text delta
+                    let event_type = json["type"].as_str().unwrap_or("");
+                    let text = match event_type {
+                        "content_block_delta" => {
+                            json["delta"]["text"].as_str()
+                                .unwrap_or("").to_string()
+                        }
+                        "message_stop" => {
+                            let done_chunk = StreamChunk {
+                                id: "bedrock-stream".into(),
+                                object: "chat.completion.chunk".into(),
+                                created: 0,
+                                model: model_name.clone(),
+                                choices: vec![StreamChoice {
+                                    index: 0,
+                                    delta: None,
+                                    finish_reason: Some("stop".into()),
+                                }],
+                            };
+                            let _ = tx.send(Ok(done_chunk)).await;
+                            return;
+                        }
+                        _ => continue,
+                    };
+
+                    let chunk = StreamChunk {
+                        id: "bedrock-stream".into(),
+                        object: "chat.completion.chunk".into(),
+                        created: 0,
+                        model: model_name.clone(),
+                        choices: vec![StreamChoice {
+                            index: 0,
+                            delta: Some(ChatMessage {
+                                role: MessageRole::Assistant,
+                                content: text,
+                                name: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                            }),
+                            finish_reason: None,
+                        }],
+                    };
+
+                    if tx.send(Ok(chunk)).await.is_err() { return; }
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+
     async fn embeddings(&self, _request: EmbeddingRequest) -> LlmResult<EmbeddingResponse> {
         Err(LlmError::UnsupportedModel("Use Bedrock embedding models directly".into()))
     }

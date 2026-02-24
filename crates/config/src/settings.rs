@@ -542,6 +542,18 @@ pub struct Channels {
     pub mattermost: Option<MattermostChannel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feishu: Option<FeishuChannel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msteams: Option<MsTeamsChannel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub twitch: Option<TwitchChannel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zalo: Option<ZaloChannel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nextcloud: Option<NextcloudChannel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synology: Option<SynologyChannel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bluebubbles: Option<BlueBubblesChannel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -728,6 +740,80 @@ pub struct MattermostChannel {
     pub team_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MsTeamsChannel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bot_password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TwitchChannel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZaloChannel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_secret: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextcloudChannel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SynologyChannel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlueBubblesChannel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

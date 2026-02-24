@@ -190,8 +190,8 @@ oclaws skill setup          # 设置技能
 - [x] Prometheus 指标（`/metrics`）
 - [x] Web 聊天界面（`/ui/chat`）
 - [x] Web 配置管理（`/ui/config`）
-- [ ] OpenTelemetry 链路追踪
-- [ ] Canvas Host（实时画布渲染）
+- [x] OpenTelemetry 链路追踪
+- [x] Canvas Host（实时画布渲染）
 
 ### LLM 供应商
 
@@ -204,15 +204,15 @@ oclaws skill setup          # 设置技能
 - [x] OpenRouter
 - [x] Together AI
 - [x] MiniMax
-- [ ] Hugging Face
-- [ ] vLLM
-- [ ] 通义千问 (Qwen)
-- [ ] 豆包 / 火山引擎 (Doubao / Volcengine)
-- [ ] Moonshot (Kimi)
-- [ ] xAI (Grok)
-- [ ] Cloudflare AI Gateway
-- [ ] LiteLLM
-- [ ] GitHub Copilot
+- [x] Hugging Face
+- [x] vLLM
+- [x] 通义千问 (Qwen)
+- [x] 豆包 / 火山引擎 (Doubao / Volcengine)
+- [x] Moonshot (Kimi)
+- [x] xAI (Grok)
+- [x] Cloudflare AI Gateway
+- [x] LiteLLM
+- [x] GitHub Copilot
 
 ### 消息渠道
 
@@ -229,12 +229,12 @@ oclaws skill setup          # 设置技能
 - [x] Nostr
 - [x] IRC
 - [x] 网页聊天（内置）
-- [ ] iMessage / BlueBubbles
-- [ ] Microsoft Teams
-- [ ] Nextcloud Talk
-- [ ] Synology Chat
-- [ ] Twitch
-- [ ] Zalo
+- [x] iMessage / BlueBubbles
+- [x] Microsoft Teams
+- [x] Nextcloud Talk
+- [x] Synology Chat
+- [x] Twitch
+- [x] Zalo
 
 ### 智能体与编排
 
@@ -250,8 +250,8 @@ oclaws skill setup          # 设置技能
 - [x] 自动召回（记忆集成）
 - [x] 线程所有权
 - [x] 回复分发
-- [ ] 思考模式（扩展推理）
-- [ ] 上下文窗口守卫
+- [x] 思考模式（扩展推理）
+- [x] 上下文窗口守卫
 
 ### 工具与集成
 
@@ -260,9 +260,9 @@ oclaws skill setup          # 设置技能
 - [x] 工具审批门控
 - [x] 浏览器自动化（CDP）
 - [x] Docker 沙箱执行
-- [ ] 网页搜索（Brave / Perplexity）
-- [ ] 网页抓取（Firecrawl）
-- [ ] Playwright 集成
+- [x] 网页搜索（Brave / Perplexity）
+- [x] 网页抓取（Firecrawl）
+- [x] Playwright 集成
 
 ### 存储与记忆
 
@@ -286,7 +286,7 @@ oclaws skill setup          # 设置技能
 - [x] 技能门控
 - [x] 内置技能
 - [x] 插件系统（加载、钩子、HTTP 路由）
-- [ ] 工作区技能
+- [x] 工作区技能
 
 ### 媒体与语音
 
@@ -296,9 +296,9 @@ oclaws skill setup          # 设置技能
 - [x] STT（语音转文字）
 - [x] TTS（文字转语音）
 - [x] 音频流（WebSocket）
-- [ ] ElevenLabs TTS
-- [ ] Deepgram STT
-- [ ] 语音唤醒检测
+- [x] ElevenLabs TTS
+- [x] Deepgram STT
+- [x] 语音唤醒检测
 
 ### 安全
 
@@ -307,7 +307,7 @@ oclaws skill setup          # 设置技能
 - [x] 设备配对
 - [x] HMAC / SHA2 加密
 - [x] 审计日志
-- [ ] 多密钥轮换（Auth Profiles）
+- [x] 多密钥轮换（Auth Profiles）
 
 ### CLI 与界面
 
@@ -316,7 +316,7 @@ oclaws skill setup          # 设置技能
 - [x] 终端 UI（ratatui）
 - [x] 后台服务管理
 - [x] 系统诊断（`doctor`）
-- [ ] 引导命令（Onboarding）
+- [x] 引导命令（Onboarding）
 
 ### 定时任务与后台
 

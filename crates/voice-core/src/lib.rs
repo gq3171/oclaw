@@ -2,6 +2,8 @@ mod connection;
 mod stt;
 mod stream;
 mod tts;
+pub mod voicewake;
+pub mod heartbeat_wake;
 
 pub use connection::{VoiceConnection, VoiceConnectionManager};
 pub use stt::{STTProvider, STTResult, STTClient, STTConfig};

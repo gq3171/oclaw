@@ -126,7 +126,12 @@ pub trait Channel: Send + Sync {
     async fn send_typing_status(&self, _user_id: &str, _status: TypingStatus) -> ChannelResult<()> {
         Ok(())
     }
-    
+
+    /// Send a reaction (emoji) to a message. Default: no-op.
+    async fn send_reaction(&self, _message_id: &str, _emoji: &str, _metadata: &HashMap<String, String>) -> ChannelResult<()> {
+        Ok(())
+    }
+
     async fn list_accounts(&self) -> ChannelResult<Vec<ChannelAccount>>;
     
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()>;

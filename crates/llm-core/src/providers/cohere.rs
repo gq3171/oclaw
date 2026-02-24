@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::chat::{ChatMessage, ChatRequest, ChatCompletion, MessageRole};
+use crate::chat::{ChatMessage, ChatRequest, ChatCompletion, StreamChunk, StreamChoice, MessageRole};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::{LlmError, LlmResult};
 use crate::providers::{LlmProvider, ProviderType};
@@ -110,6 +110,112 @@ impl LlmProvider for CohereProvider {
         } else {
             Err(LlmError::ApiError(format!("HTTP {}", response.status())))
         }
+    }
+
+    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
+        let url = "https://api.cohere.ai/v2/chat";
+
+        let messages: Vec<serde_json::Value> = request.messages.iter()
+            .filter(|m| m.role != MessageRole::System)
+            .map(|m| {
+                let role = match m.role {
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    _ => "user",
+                };
+                serde_json::json!({ "role": role, "content": m.content })
+            }).collect();
+
+        let req_body = serde_json::json!({
+            "model": request.model,
+            "messages": messages,
+            "stream": true,
+        });
+
+        let response = self.client
+            .post(url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&req_body)
+            .send()
+            .await
+            .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(LlmError::ApiError(format!("HTTP {}: {}", status, body)));
+        }
+
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+        let model = request.model.clone();
+
+        tokio::spawn(async move {
+            use futures_util::StreamExt;
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+
+            while let Some(chunk) = stream.next().await {
+                let bytes = match chunk {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let _ = tx.send(Err(LlmError::NetworkError(e.to_string()))).await;
+                        break;
+                    }
+                };
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                while let Some(line_end) = buffer.find('\n') {
+                    let line = buffer[..line_end].trim().to_string();
+                    buffer = buffer[line_end + 1..].to_string();
+
+                    // Cohere v2 streams SSE: "data: {...}" or event lines
+                    let data_str = if let Some(d) = line.strip_prefix("data: ") {
+                        d
+                    } else {
+                        continue;
+                    };
+                    if data_str.is_empty() { continue; }
+
+                    let json: serde_json::Value = match serde_json::from_str(data_str) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+
+                    // Cohere v2 stream events: content-delta, stream-end
+                    let event_type = json["type"].as_str().unwrap_or("");
+                    let text = match event_type {
+                        "content-delta" => {
+                            json["delta"]["message"]["content"]["text"]
+                                .as_str().unwrap_or("").to_string()
+                        }
+                        _ => continue,
+                    };
+
+                    let chunk = StreamChunk {
+                        id: "cohere-stream".to_string(),
+                        object: "chat.completion.chunk".to_string(),
+                        created: 0,
+                        model: model.clone(),
+                        choices: vec![StreamChoice {
+                            index: 0,
+                            delta: Some(ChatMessage {
+                                role: MessageRole::Assistant,
+                                content: text,
+                                name: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                            }),
+                            finish_reason: None,
+                        }],
+                    };
+
+                    if tx.send(Ok(chunk)).await.is_err() { return; }
+                }
+            }
+        });
+
+        Ok(rx)
     }
 
     async fn embeddings(&self, request: EmbeddingRequest) -> LlmResult<EmbeddingResponse> {

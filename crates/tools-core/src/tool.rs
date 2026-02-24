@@ -66,7 +66,7 @@ impl Tool {
             Tool::ListDir(_) => "List contents of a directory",
             Tool::WebFetch(_) => "Fetch content from a URL via HTTP GET",
             Tool::Memory(_) => "Store and retrieve key-value memory entries",
-            Tool::Browse(_) => "Navigate to a URL using a browser, render JavaScript, and return the page text content",
+            Tool::Browse(_) => "Browser automation: navigate, click, type, screenshot, evaluate JS, get DOM snapshot, console logs, and network requests",
             Tool::WebSearch(_) => "Search the web and return a list of results with titles, URLs, and snippets",
             Tool::LinkReader(_) => "Fetch a URL and extract its main text content",
             Tool::MediaDescribe(_) => "Describe an image from a URL using vision capabilities",
@@ -123,15 +123,21 @@ impl Tool {
             Tool::Browse(_) => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "url": { "type": "string" }
+                    "action": { "type": "string", "enum": ["navigate", "click", "type", "screenshot", "evaluate", "snapshot", "console", "network", "back", "forward", "reload"], "description": "Browser action to perform (default: navigate)" },
+                    "url": { "type": "string", "description": "URL to navigate to (for navigate action)" },
+                    "selector": { "type": "string", "description": "CSS selector (for click/type actions)" },
+                    "text": { "type": "string", "description": "Text to type (for type action)" },
+                    "expression": { "type": "string", "description": "JavaScript expression (for evaluate action)" },
+                    "wait_ms": { "type": "integer", "description": "Wait time in ms after action (default 1000)" }
                 },
-                "required": ["url"]
+                "required": ["action"]
             }),
             Tool::WebSearch(_) => serde_json::json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "Search query" },
-                    "max_results": { "type": "integer", "description": "Max results (default 5)" }
+                    "max_results": { "type": "integer", "description": "Max results (default 5)" },
+                    "provider": { "type": "string", "enum": ["auto", "brave", "perplexity", "duckduckgo"], "description": "Search provider (default: auto)" }
                 },
                 "required": ["query"]
             }),
@@ -516,7 +522,7 @@ pub struct WebFetchTool {
 
 impl WebFetchTool {
     pub fn new() -> Self {
-        Self { timeout_seconds: 30, max_body_bytes: 1024 * 1024 }
+        Self { timeout_seconds: 30, max_body_bytes: 2 * 1024 * 1024 }
     }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
@@ -530,13 +536,53 @@ impl WebFetchTool {
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
+        // SSRF guard: block private IPs unless explicitly allowed
+        if !Self::is_url_allowed(&args.url) {
+            return Err(crate::ToolError::ExecutionFailed(
+                "URL targets a private/localhost address (SSRF blocked)".into(),
+            ));
+        }
+
+        // Use Firecrawl if API key is available
+        if let Ok(fc_key) = std::env::var("FIRECRAWL_API_KEY") {
+            return self.fetch_firecrawl(&args.url, &fc_key).await;
+        }
+
+        // Fallback: direct HTTP fetch
+        self.fetch_direct(&args.url, args.headers).await
+    }
+
+    fn is_url_allowed(url: &str) -> bool {
+        let host = url
+            .strip_prefix("https://").or_else(|| url.strip_prefix("http://"))
+            .and_then(|s| s.split('/').next())
+            .and_then(|s| s.split(':').next())
+            .unwrap_or("");
+        let blocked = ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"];
+        if blocked.contains(&host) {
+            return std::env::var("OCLAWS_ALLOW_PRIVATE_FETCH").is_ok();
+        }
+        if host.starts_with("10.")
+            || host.starts_with("192.168.")
+            || host.starts_with("172.")
+        {
+            return std::env::var("OCLAWS_ALLOW_PRIVATE_FETCH").is_ok();
+        }
+        true
+    }
+
+    async fn fetch_direct(
+        &self,
+        url: &str,
+        headers: Option<HashMap<String, String>>,
+    ) -> ToolResult<serde_json::Value> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.timeout_seconds))
             .build()
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
-        let mut req = client.get(&args.url);
-        if let Some(hdrs) = args.headers {
+        let mut req = client.get(url);
+        if let Some(hdrs) = headers {
             for (k, v) in hdrs {
                 req = req.header(&k, &v);
             }
@@ -549,14 +595,74 @@ impl WebFetchTool {
         let body = resp.text().await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
-        let truncated = body.len() > self.max_body_bytes;
-        let body = if truncated { &body[..self.max_body_bytes] } else { &body };
+        let max_chars = 50_000;
+        let truncated = body.len() > max_chars;
+        let body = if truncated { &body[..max_chars] } else { &body };
 
         Ok(serde_json::json!({
-            "url": args.url,
+            "url": url,
             "status": status,
             "body": body,
-            "truncated": truncated
+            "truncated": truncated,
+            "backend": "direct"
+        }))
+    }
+
+    async fn fetch_firecrawl(
+        &self,
+        url: &str,
+        api_key: &str,
+    ) -> ToolResult<serde_json::Value> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let body = serde_json::json!({
+            "url": url,
+            "formats": ["markdown"],
+            "onlyMainContent": true
+        });
+
+        let resp = client
+            .post("https://api.firecrawl.dev/v1/scrape")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::ToolError::ExecutionFailed(
+                format!("Firecrawl request failed: {}", e),
+            ))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(crate::ToolError::ExecutionFailed(
+                format!("Firecrawl error ({}): {}", status, text),
+            ));
+        }
+
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let markdown = json["data"]["markdown"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        let max_chars = 50_000;
+        let truncated = markdown.len() > max_chars;
+        let content = if truncated {
+            &markdown[..max_chars]
+        } else {
+            &markdown
+        };
+
+        Ok(serde_json::json!({
+            "url": url,
+            "body": content,
+            "truncated": truncated,
+            "backend": "firecrawl"
         }))
     }
 }
@@ -627,6 +733,9 @@ pub struct BrowseTool {
     /// Track a child browser process we launched (PID).
     #[serde(skip)]
     launched_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
+    /// Page state tracking (console, errors, network).
+    #[serde(skip)]
+    state: std::sync::Arc<std::sync::Mutex<oclaws_browser_core::PageState>>,
 }
 
 impl BrowseTool {
@@ -637,6 +746,7 @@ impl BrowseTool {
             headless: None,
             timeout_seconds: 30,
             launched_pid: Default::default(),
+            state: Default::default(),
         }
     }
 
@@ -758,58 +868,140 @@ impl BrowseTool {
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
         struct Args {
-            url: String,
+            #[serde(default = "default_action")]
+            action: String,
+            #[serde(default)]
+            url: Option<String>,
+            #[serde(default)]
+            selector: Option<String>,
+            #[serde(default)]
+            text: Option<String>,
+            #[serde(default)]
+            expression: Option<String>,
             #[serde(default)]
             wait_ms: Option<u64>,
         }
+        fn default_action() -> String { "navigate".into() }
 
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
         let mut manager = self.ensure_browser().await?;
-
         let mut page = manager.create_page().await.map_err(|e| {
             crate::ToolError::ExecutionFailed(format!("Failed to create page: {}", e))
         })?;
 
-        page.navigate(&args.url).await.map_err(|e| {
-            crate::ToolError::ExecutionFailed(format!("Navigation failed: {}", e))
-        })?;
+        let wait = args.wait_ms.unwrap_or(1000);
+        let mut state = self.state.lock().unwrap().clone();
 
-        let wait = args.wait_ms.unwrap_or(2000);
-        tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+        let result = match args.action.as_str() {
+            "navigate" => {
+                let url = args.url.as_deref()
+                    .ok_or_else(|| crate::ToolError::InvalidInput("url required for navigate".into()))?;
+                page.navigate(url).await.map_err(|e| {
+                    crate::ToolError::ExecutionFailed(format!("Navigation failed: {}", e))
+                })?;
+                tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                state.url = Some(url.to_string());
+                let title = eval_string(&page, "document.title").await;
+                state.title = Some(title.clone());
+                let text = eval_string(&page, "document.body.innerText").await;
+                let max_len = 8000;
+                let truncated = text.len() > max_len;
+                let content = if truncated { &text[..max_len] } else { &text };
+                serde_json::json!({ "action": "navigate", "url": url, "title": title, "content": content, "truncated": truncated })
+            }
+            "click" => {
+                let sel = args.selector.as_deref()
+                    .ok_or_else(|| crate::ToolError::InvalidInput("selector required for click".into()))?;
+                page.click_element(sel).await.map_err(|e| {
+                    crate::ToolError::ExecutionFailed(format!("Click failed: {}", e))
+                })?;
+                tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                serde_json::json!({ "action": "click", "selector": sel, "ok": true })
+            }
+            "type" => {
+                let sel = args.selector.as_deref()
+                    .ok_or_else(|| crate::ToolError::InvalidInput("selector required for type".into()))?;
+                let text = args.text.as_deref()
+                    .ok_or_else(|| crate::ToolError::InvalidInput("text required for type".into()))?;
+                page.type_text(sel, text).await.map_err(|e| {
+                    crate::ToolError::ExecutionFailed(format!("Type failed: {}", e))
+                })?;
+                serde_json::json!({ "action": "type", "selector": sel, "ok": true })
+            }
+            "screenshot" => {
+                let bytes = page.take_screenshot().await.map_err(|e| {
+                    crate::ToolError::ExecutionFailed(format!("Screenshot failed: {}", e))
+                })?;
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                serde_json::json!({ "action": "screenshot", "base64": b64, "size_bytes": bytes.len() })
+            }
+            "evaluate" => {
+                let expr = args.expression.as_deref()
+                    .ok_or_else(|| crate::ToolError::InvalidInput("expression required for evaluate".into()))?;
+                let result = page.evaluate(expr).await.map_err(|e| {
+                    crate::ToolError::ExecutionFailed(format!("Evaluate failed: {}", e))
+                })?;
+                serde_json::json!({ "action": "evaluate", "result": result.value })
+            }
+            "snapshot" => {
+                let html = page.get_html().await.unwrap_or_default();
+                let title = eval_string(&page, "document.title").await;
+                let url = eval_string(&page, "window.location.href").await;
+                let max_len = 12000;
+                let truncated = html.len() > max_len;
+                let content = if truncated { &html[..max_len] } else { &html };
+                serde_json::json!({ "action": "snapshot", "url": url, "title": title, "html": content, "html_length": html.len(), "truncated": truncated })
+            }
+            "console" => {
+                let entries: Vec<_> = state.recent_console(50).into_iter().cloned().collect();
+                serde_json::json!({ "action": "console", "entries": entries, "count": entries.len() })
+            }
+            "network" => {
+                let entries: Vec<_> = state.recent_requests(50).into_iter().cloned().collect();
+                serde_json::json!({ "action": "network", "entries": entries, "count": entries.len() })
+            }
+            "back" => {
+                page.go_back().await.map_err(|e| {
+                    crate::ToolError::ExecutionFailed(format!("Back failed: {}", e))
+                })?;
+                tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                serde_json::json!({ "action": "back", "ok": true })
+            }
+            "forward" => {
+                page.go_forward().await.map_err(|e| {
+                    crate::ToolError::ExecutionFailed(format!("Forward failed: {}", e))
+                })?;
+                tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                serde_json::json!({ "action": "forward", "ok": true })
+            }
+            "reload" => {
+                page.reload().await.map_err(|e| {
+                    crate::ToolError::ExecutionFailed(format!("Reload failed: {}", e))
+                })?;
+                tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                serde_json::json!({ "action": "reload", "ok": true })
+            }
+            other => {
+                return Err(crate::ToolError::InvalidInput(format!("Unknown action: {}", other)));
+            }
+        };
 
-        let html_len = page.get_html().await.map(|h| h.len()).unwrap_or(0);
-
-        let text_obj = page.evaluate("document.body.innerText").await;
-        let text_str = text_obj.as_ref().ok()
-            .and_then(|r| r.value.as_ref())
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        let title_obj = page.evaluate("document.title").await;
-        let title_str = title_obj.as_ref().ok()
-            .and_then(|r| r.value.as_ref())
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        let max_len = 8000;
-        let truncated = text_str.len() > max_len;
-        let content = if truncated { &text_str[..max_len] } else { text_str };
-
-        let result = serde_json::json!({
-            "url": args.url,
-            "title": title_str,
-            "content": content,
-            "html_length": html_len,
-            "truncated": truncated
-        });
-
+        *self.state.lock().unwrap() = state;
         page.close().await.ok();
         manager.disconnect().await.ok();
 
         Ok(result)
     }
+}
+
+async fn eval_string(page: &oclaws_browser_core::Page, expr: &str) -> String {
+    page.evaluate(expr).await.ok()
+        .and_then(|r| r.value)
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default()
 }
 
 impl Default for BrowseTool {
@@ -828,27 +1020,133 @@ impl WebSearchTool {
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
-        struct Args { query: String, #[serde(default)] max_results: Option<usize> }
+        struct Args {
+            query: String,
+            #[serde(default)]
+            max_results: Option<usize>,
+            #[serde(default)]
+            provider: Option<String>,
+        }
 
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
         let max = args.max_results.unwrap_or(5).min(10);
 
+        let provider = args.provider.as_deref().unwrap_or("auto");
+        match provider {
+            "brave" => self.search_brave(&args.query, max).await,
+            "perplexity" => self.search_perplexity(&args.query).await,
+            _ => {
+                // Auto: try Brave if key exists, else DuckDuckGo
+                if std::env::var("BRAVE_API_KEY").is_ok() {
+                    self.search_brave(&args.query, max).await
+                } else {
+                    self.search_ddg(&args.query, max).await
+                }
+            }
+        }
+    }
+
+    async fn search_ddg(&self, query: &str, max: usize) -> ToolResult<serde_json::Value> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.timeout_seconds))
             .build().map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let resp = client.get("https://html.duckduckgo.com/html/")
-            .query(&[("q", &args.query)])
+            .query(&[("q", query)])
             .header("User-Agent", "Mozilla/5.0 (compatible; oclaw/1.0)")
             .send().await
-            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Search request failed: {}", e)))?;
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Search failed: {}", e)))?;
 
         let html = resp.text().await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let results = parse_ddg_results(&html, max);
-        Ok(serde_json::json!({ "query": args.query, "results": results }))
+        Ok(serde_json::json!({ "query": query, "provider": "duckduckgo", "results": results }))
+    }
+
+    async fn search_brave(&self, query: &str, max: usize) -> ToolResult<serde_json::Value> {
+        let api_key = std::env::var("BRAVE_API_KEY")
+            .map_err(|_| crate::ToolError::ExecutionFailed("BRAVE_API_KEY not set".into()))?;
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.timeout_seconds))
+            .build().map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let resp = client.get("https://api.search.brave.com/res/v1/web/search")
+            .query(&[("q", query), ("count", &max.to_string())])
+            .header("X-Subscription-Token", &api_key)
+            .header("Accept", "application/json")
+            .send().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Brave search failed: {}", e)))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(crate::ToolError::ExecutionFailed(
+                format!("Brave API error ({}): {}", status, body)
+            ));
+        }
+
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let results: Vec<serde_json::Value> = json["web"]["results"]
+            .as_array()
+            .map(|arr| arr.iter().take(max).map(|r| {
+                serde_json::json!({
+                    "title": r["title"].as_str().unwrap_or(""),
+                    "url": r["url"].as_str().unwrap_or(""),
+                    "snippet": r["description"].as_str().unwrap_or(""),
+                })
+            }).collect())
+            .unwrap_or_default();
+
+        Ok(serde_json::json!({
+            "query": query,
+            "provider": "brave",
+            "results": results
+        }))
+    }
+
+    async fn search_perplexity(&self, query: &str) -> ToolResult<serde_json::Value> {
+        let api_key = std::env::var("PERPLEXITY_API_KEY")
+            .map_err(|_| crate::ToolError::ExecutionFailed("PERPLEXITY_API_KEY not set".into()))?;
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build().map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let body = serde_json::json!({
+            "model": "sonar",
+            "messages": [{"role": "user", "content": query}]
+        });
+
+        let resp = client.post("https://api.perplexity.ai/chat/completions")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Perplexity failed: {}", e)))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(crate::ToolError::ExecutionFailed(
+                format!("Perplexity API error ({}): {}", status, body)
+            ));
+        }
+
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let answer = json["choices"][0]["message"]["content"]
+            .as_str().unwrap_or("").to_string();
+
+        Ok(serde_json::json!({
+            "query": query,
+            "provider": "perplexity",
+            "answer": format!("[web_content]{answer}[/web_content]"),
+        }))
     }
 }
 
@@ -981,37 +1279,47 @@ impl LinkReaderTool {
 impl Default for LinkReaderTool { fn default() -> Self { Self::new() } }
 
 fn html_to_text(html: &str) -> String {
-    let mut out = String::with_capacity(html.len() / 3);
+    // Phase 1: strip <script> and <style> blocks from the raw HTML
+    let stripped = strip_script_style(html);
+
+    // Phase 2: convert remaining HTML to plain text
+    let mut out = String::with_capacity(stripped.len() / 3);
     let mut in_tag = false;
-    let mut in_script = false;
     let mut last_was_space = false;
-    for c in html.chars() {
-        if c == '<' {
-            in_tag = true;
-            // Check for script/style start
-            let rest = &html[html.len().min(out.len())..];
-            if rest.len() > 7 {
-                let lower: String = rest.chars().take(7).collect();
-                if lower.starts_with("script") || lower.starts_with("style") {
-                    in_script = true;
-                }
-            }
-            continue;
-        }
+
+    for c in stripped.chars() {
+        if c == '<' { in_tag = true; continue; }
         if c == '>' { in_tag = false; continue; }
         if in_tag { continue; }
-        if in_script {
-            // Look for closing tag
-            if c == '/' { in_script = false; }
-            continue;
-        }
         if c.is_whitespace() {
             if !last_was_space { out.push(' '); last_was_space = true; }
         } else {
-            out.push(c); last_was_space = false;
+            out.push(c);
+            last_was_space = false;
         }
     }
     out.trim().to_string()
+}
+
+/// Remove all <script>...</script> and <style>...</style> blocks from HTML.
+fn strip_script_style(html: &str) -> String {
+    let mut result = html.to_string();
+    for tag in &["script", "style"] {
+        loop {
+            let lower = result.to_lowercase();
+            let open = format!("<{}", tag);
+            let close = format!("</{}>", tag);
+            let Some(start) = lower.find(&open) else { break };
+            let Some(end_rel) = lower[start..].find(&close) else {
+                // No closing tag — remove from open tag to end
+                result.truncate(start);
+                break;
+            };
+            let end = start + end_rel + close.len();
+            result.replace_range(start..end, "");
+        }
+    }
+    result
 }
 
 // --- MediaDescribeTool: describe image via HTTP download + base64 for vision API ---

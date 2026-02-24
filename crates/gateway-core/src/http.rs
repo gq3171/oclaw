@@ -170,6 +170,7 @@ impl HttpServer {
             .route("/api/config/full", put(routes::config_full_put_handler))
             .route("/ui/config", get(routes::config_ui_handler))
             .route("/ui/chat", get(routes::webchat_ui_handler))
+            .route("/ui/canvas", get(routes::canvas_ui_handler))
             .with_state(state.clone());
 
         // Webchat WebSocket routes (skip auth, local use)
@@ -417,10 +418,10 @@ async fn ws_handler(
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
 
-    let gateway_server = state.gateway_server.clone();
+    let state_clone = state.clone();
 
     ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_ws(socket, addr, gateway_server).await {
+        if let Err(e) = handle_ws(socket, addr, state_clone).await {
             error!("WebSocket error: {}", e);
         }
     })
@@ -429,7 +430,7 @@ async fn ws_handler(
 async fn handle_ws(
     socket: axum::extract::ws::WebSocket,
     addr: SocketAddr,
-    gateway_server: Arc<GatewayServer>,
+    state: Arc<HttpState>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut write, mut read) = socket.split();
     
@@ -446,8 +447,17 @@ async fn handle_ws(
             methods: vec![
                 "session.create".to_string(),
                 "session.list".to_string(),
-                "session.send".to_string(),
-                "session.receive".to_string(),
+                "session.get".to_string(),
+                "session.delete".to_string(),
+                "chat.send".to_string(),
+                "chat.history".to_string(),
+                "config.get".to_string(),
+                "config.set".to_string(),
+                "models.list".to_string(),
+                "channels.status".to_string(),
+                "cron.list".to_string(),
+                "cron.create".to_string(),
+                "cron.delete".to_string(),
             ],
             events: vec![
                 "tick".to_string(),
@@ -470,7 +480,7 @@ async fn handle_ws(
             auth_mode: Some(AuthMode::None),
             update_available: None,
         },
-        canvas_host_url: None,
+        canvas_host_url: Some("/ui/canvas".to_string()),
         auth: None,
         policy: Policy {
             max_payload: 1024 * 1024,
@@ -502,7 +512,7 @@ async fn handle_ws(
 
                 if let Some(data) = frame_bytes {
                     let frame: GatewayFrame = serde_json::from_slice(&data)?;
-                    if let Some(resp) = handle_frame(frame, &gateway_server).await? {
+                    if let Some(resp) = handle_frame(frame, &state).await? {
                         let json = serde_json::to_vec(&resp)?;
                         write.send(axum::extract::ws::Message::Binary(json.into())).await?;
                     }
@@ -516,35 +526,253 @@ async fn handle_ws(
 
 async fn handle_frame(
     frame: GatewayFrame,
-    gateway_server: &Arc<GatewayServer>,
+    state: &Arc<HttpState>,
 ) -> Result<Option<oclaws_protocol::frames::ResponseFrame>, Box<dyn std::error::Error + Send + Sync>> {
     match frame {
         GatewayFrame::Request(req) => {
-            let response = match req.method.as_str() {
-                "session.create" => {
-                    let payload: Option<serde_json::Value> = req.params.map(serde_json::from_value).transpose()?;
-                    let manager = gateway_server.session_manager.read().await;
-                    let key = payload.as_ref().and_then(|v| v["key"].as_str()).unwrap_or("default");
-                    let agent_id = payload.as_ref().and_then(|v| v["agentId"].as_str()).unwrap_or("default");
-                    let session = manager.create_session(key, agent_id)?;
-                    MessageHandler::new_response(&req.id, true, Some(serde_json::to_value(&session)?), None)
-                }
-                "session.list" => {
-                    let manager = gateway_server.session_manager.read().await;
-                    let sessions = manager.list_sessions()?;
-                    MessageHandler::new_response(&req.id, true, Some(serde_json::to_value(&sessions)?), None)
-                }
-                _ => MessageHandler::new_response(
-                    &req.id, false, None,
-                    Some(ErrorDetails {
-                        code: "METHOD_NOT_FOUND".to_string(),
-                        message: format!("Unknown method: {}", req.method),
-                        details: None, retryable: Some(false), retry_after_ms: None,
-                    }),
-                ),
-            };
+            let response = dispatch_rpc(&req.id, &req.method, req.params, state).await;
             Ok(Some(response))
         }
         _ => Ok(None),
     }
+}
+
+/// Unified RPC dispatch — maps method strings to handler logic.
+async fn dispatch_rpc(
+    id: &str,
+    method: &str,
+    params: Option<serde_json::Value>,
+    state: &Arc<HttpState>,
+) -> oclaws_protocol::frames::ResponseFrame {
+    let p = params.unwrap_or(serde_json::Value::Null);
+    let result = match method {
+        // ── Session RPCs ──
+        "session.create" => rpc_session_create(&p, state).await,
+        "session.list" => rpc_session_list(state).await,
+        "session.get" => rpc_session_get(&p, state).await,
+        "session.delete" => rpc_session_delete(&p, state).await,
+
+        // ── Chat RPCs ──
+        "chat.send" => rpc_chat_send(&p, state).await,
+        "chat.history" => rpc_chat_history(&p, state).await,
+
+        // ── Config RPCs ──
+        "config.get" => rpc_config_get(state).await,
+        "config.set" => rpc_config_set(&p, state).await,
+
+        // ── Models RPCs ──
+        "models.list" => rpc_models_list(state).await,
+
+        // ── Channel RPCs ──
+        "channels.status" => rpc_channels_status(state).await,
+
+        // ── Cron RPCs ──
+        "cron.list" => rpc_cron_list(state).await,
+        "cron.create" => rpc_cron_create(&p, state).await,
+        "cron.delete" => rpc_cron_delete(&p, state).await,
+
+        _ => Err(rpc_error("METHOD_NOT_FOUND", &format!("Unknown method: {}", method))),
+    };
+
+    match result {
+        Ok(val) => MessageHandler::new_response(id, true, Some(val), None),
+        Err(err) => MessageHandler::new_response(id, false, None, Some(err)),
+    }
+}
+
+fn rpc_error(code: &str, message: &str) -> ErrorDetails {
+    ErrorDetails {
+        code: code.to_string(),
+        message: message.to_string(),
+        details: None,
+        retryable: Some(false),
+        retry_after_ms: None,
+    }
+}
+
+type RpcResult = Result<serde_json::Value, ErrorDetails>;
+
+// ── Session RPCs ────────────────────────────────────────────────────────
+
+async fn rpc_session_create(p: &serde_json::Value, state: &HttpState) -> RpcResult {
+    let manager = state.gateway_server.session_manager.read().await;
+    let key = p["key"].as_str().unwrap_or("default");
+    let agent_id = p["agentId"].as_str().unwrap_or("default");
+    let session = manager.create_session(key, agent_id)
+        .map_err(|e| rpc_error("SESSION_ERROR", &e.to_string()))?;
+    serde_json::to_value(&session).map_err(|e| rpc_error("INTERNAL", &e.to_string()))
+}
+
+async fn rpc_session_list(state: &HttpState) -> RpcResult {
+    let manager = state.gateway_server.session_manager.read().await;
+    let sessions = manager.list_sessions()
+        .map_err(|e| rpc_error("SESSION_ERROR", &e.to_string()))?;
+    serde_json::to_value(&sessions).map_err(|e| rpc_error("INTERNAL", &e.to_string()))
+}
+
+async fn rpc_session_get(p: &serde_json::Value, state: &HttpState) -> RpcResult {
+    let key = p["key"].as_str()
+        .ok_or_else(|| rpc_error("INVALID_PARAMS", "Missing 'key' parameter"))?;
+    let manager = state.gateway_server.session_manager.read().await;
+    let session = manager.get_session(key)
+        .map_err(|e| rpc_error("SESSION_ERROR", &e.to_string()))?;
+    serde_json::to_value(&session).map_err(|e| rpc_error("INTERNAL", &e.to_string()))
+}
+
+async fn rpc_session_delete(p: &serde_json::Value, state: &HttpState) -> RpcResult {
+    let key = p["key"].as_str()
+        .ok_or_else(|| rpc_error("INVALID_PARAMS", "Missing 'key' parameter"))?;
+    let manager = state.gateway_server.session_manager.read().await;
+    manager.remove_session(key)
+        .map_err(|e| rpc_error("SESSION_ERROR", &e.to_string()))?;
+    Ok(serde_json::json!({"deleted": true}))
+}
+
+// ── Chat RPCs ───────────────────────────────────────────────────────────
+
+async fn rpc_chat_send(p: &serde_json::Value, state: &HttpState) -> RpcResult {
+    let message = p["message"].as_str()
+        .ok_or_else(|| rpc_error("INVALID_PARAMS", "Missing 'message' parameter"))?;
+    let session_id = p["sessionId"].as_str();
+
+    let provider = state.llm_provider.as_ref()
+        .ok_or_else(|| rpc_error("NO_PROVIDER", "No LLM provider configured"))?;
+
+    let reply = if let Some(ref registry) = state.tool_registry {
+        let executor = agent_bridge::ToolRegistryExecutor::new(registry.clone());
+        agent_bridge::agent_reply_with_session(provider, &executor, message, session_id).await
+            .unwrap_or_else(|e| format!("Agent error: {}", e))
+    } else {
+        let request = oclaws_llm_core::chat::ChatRequest {
+            model: provider.default_model().to_string(),
+            messages: vec![oclaws_llm_core::chat::ChatMessage {
+                role: oclaws_llm_core::chat::MessageRole::User,
+                content: message.to_string(),
+                name: None, tool_calls: None, tool_call_id: None,
+            }],
+            temperature: None, top_p: None, max_tokens: None,
+            stop: None, tools: None, tool_choice: None,
+            stream: None, response_format: None,
+        };
+        provider.chat(request).await
+            .map(|c| c.choices.first().map(|ch| ch.message.content.clone()).unwrap_or_default())
+            .unwrap_or_else(|e| format!("LLM error: {}", e))
+    };
+
+    Ok(serde_json::json!({"reply": reply}))
+}
+
+async fn rpc_chat_history(p: &serde_json::Value, state: &HttpState) -> RpcResult {
+    let session_id = p["sessionId"].as_str()
+        .ok_or_else(|| rpc_error("INVALID_PARAMS", "Missing 'sessionId' parameter"))?;
+    let manager = state.gateway_server.session_manager.read().await;
+    let session = manager.get_session(session_id)
+        .map_err(|e| rpc_error("SESSION_ERROR", &e.to_string()))?;
+    serde_json::to_value(&session).map_err(|e| rpc_error("INTERNAL", &e.to_string()))
+}
+
+// ── Config RPCs ─────────────────────────────────────────────────────────
+
+async fn rpc_config_get(state: &HttpState) -> RpcResult {
+    let Some(ref cfg) = state.full_config else {
+        return Err(rpc_error("NO_CONFIG", "No configuration loaded"));
+    };
+    let config = cfg.read().await;
+    serde_json::to_value(&*config).map_err(|e| rpc_error("INTERNAL", &e.to_string()))
+}
+
+async fn rpc_config_set(p: &serde_json::Value, state: &HttpState) -> RpcResult {
+    let Some(ref cfg) = state.full_config else {
+        return Err(rpc_error("NO_CONFIG", "No configuration loaded"));
+    };
+    let new_config: oclaws_config::settings::Config = serde_json::from_value(p.clone())
+        .map_err(|e| rpc_error("INVALID_PARAMS", &format!("Invalid config: {}", e)))?;
+
+    {
+        let mut config = cfg.write().await;
+        *config = new_config;
+    }
+
+    // Persist to disk if path is available
+    if let Some(ref path) = state.config_path {
+        let config = cfg.read().await;
+        let json = serde_json::to_string_pretty(&*config)
+            .map_err(|e| rpc_error("INTERNAL", &e.to_string()))?;
+        std::fs::write(path, &json)
+            .map_err(|e| rpc_error("INTERNAL", &format!("Failed to write config: {}", e)))?;
+    }
+
+    Ok(serde_json::json!({"updated": true}))
+}
+
+// ── Models RPCs ─────────────────────────────────────────────────────────
+
+async fn rpc_models_list(state: &HttpState) -> RpcResult {
+    let Some(ref provider) = state.llm_provider else {
+        return Ok(serde_json::json!({"models": []}));
+    };
+    let models = provider.list_models().await
+        .unwrap_or_else(|_| provider.supported_models());
+    Ok(serde_json::json!({
+        "models": models,
+        "default": provider.default_model(),
+    }))
+}
+
+// ── Channel RPCs ────────────────────────────────────────────────────────
+
+async fn rpc_channels_status(state: &HttpState) -> RpcResult {
+    let Some(ref cm) = state.channel_manager else {
+        return Ok(serde_json::json!({"channels": []}));
+    };
+    let mgr = cm.read().await;
+    let names = mgr.list().await;
+    let mut channels = Vec::new();
+    for name in &names {
+        if let Some(ch) = mgr.get(name).await {
+            let ch = ch.read().await;
+            let status = format!("{:?}", ch.status());
+            channels.push(serde_json::json!({
+                "name": name,
+                "type": ch.channel_type(),
+                "status": status,
+            }));
+        }
+    }
+    Ok(serde_json::json!({"channels": channels}))
+}
+
+// ── Cron RPCs ───────────────────────────────────────────────────────────
+
+async fn rpc_cron_list(state: &HttpState) -> RpcResult {
+    let Some(ref svc) = state.cron_service else {
+        return Ok(serde_json::json!({"jobs": []}));
+    };
+    let jobs = svc.list().await;
+    serde_json::to_value(&jobs)
+        .map_err(|e| rpc_error("INTERNAL", &e.to_string()))
+}
+
+async fn rpc_cron_create(p: &serde_json::Value, state: &HttpState) -> RpcResult {
+    let svc = state.cron_service.as_ref()
+        .ok_or_else(|| rpc_error("NO_CRON", "Cron service not configured"))?;
+
+    // Accept a full CronJob JSON or build one from simple params
+    let job: oclaws_cron_core::CronJob = serde_json::from_value(p.clone())
+        .map_err(|e| rpc_error("INVALID_PARAMS", &format!("Invalid job: {}", e)))?;
+
+    let created = svc.add(job).await
+        .map_err(|e| rpc_error("CRON_ERROR", &e.to_string()))?;
+    serde_json::to_value(&created)
+        .map_err(|e| rpc_error("INTERNAL", &e.to_string()))
+}
+
+async fn rpc_cron_delete(p: &serde_json::Value, state: &HttpState) -> RpcResult {
+    let svc = state.cron_service.as_ref()
+        .ok_or_else(|| rpc_error("NO_CRON", "Cron service not configured"))?;
+    let id = p["id"].as_str()
+        .ok_or_else(|| rpc_error("INVALID_PARAMS", "Missing 'id'"))?;
+    svc.remove(id).await
+        .map_err(|e| rpc_error("CRON_ERROR", &e.to_string()))?;
+    Ok(serde_json::json!({"deleted": true}))
 }

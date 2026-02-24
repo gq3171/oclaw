@@ -5,11 +5,53 @@ use axum::{
     Json,
 };
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::{info, warn, error};
 
 use crate::http::HttpState;
 use oclaws_channel_core::traits::ChannelEvent;
 use oclaws_channel_core::group_gate;
+
+// ── Webhook signature verification ──────────────────────────────────────
+
+/// Verify Slack webhook signature (HMAC-SHA256).
+fn verify_slack_signature(signing_secret: &str, timestamp: &str, body: &str, expected_sig: &str) -> bool {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let base = format!("v0:{}:{}", timestamp, body);
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(signing_secret.as_bytes()) else {
+        return false;
+    };
+    mac.update(base.as_bytes());
+    let computed = format!("v0={}", hex::encode(mac.finalize().into_bytes()));
+    constant_time_eq(computed.as_bytes(), expected_sig.as_bytes())
+}
+
+/// Verify Feishu/Lark webhook signature.
+fn verify_feishu_signature(encrypt_key: &str, timestamp: &str, body: &str, expected_sig: &str) -> bool {
+    use sha2::{Sha256, Digest};
+    let to_sign = format!("{}\n{}\n{}", timestamp, encrypt_key, body);
+    let hash = hex::encode(Sha256::digest(to_sign.as_bytes()));
+    constant_time_eq(hash.as_bytes(), expected_sig.as_bytes())
+}
+
+/// Verify Telegram secret_token header.
+fn verify_telegram_secret(expected: &str, actual: &str) -> bool {
+    constant_time_eq(expected.as_bytes(), actual.as_bytes())
+}
+
+/// Constant-time byte comparison to prevent timing attacks.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+// ── Webhook handlers ────────────────────────────────────────────────────
 
 async fn get_channel_and_forward(
     state: &HttpState,
@@ -37,8 +79,21 @@ async fn get_channel_and_forward(
 
 pub async fn telegram_webhook(
     State(state): State<Arc<HttpState>>,
+    headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Response {
+    // Verify Telegram secret_token if configured
+    if let Ok(secret) = std::env::var("TELEGRAM_WEBHOOK_SECRET") {
+        let header_token = headers
+            .get("x-telegram-bot-api-secret-token")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !verify_telegram_secret(&secret, header_token) {
+            warn!("Telegram webhook: invalid secret token");
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid secret token"}))).into_response();
+        }
+    }
+
     let event_type = if payload.get("callback_query").is_some() {
         "callback_query"
     } else {
@@ -146,8 +201,34 @@ async fn handle_telegram_reply(
 pub async fn slack_webhook(
     State(state): State<Arc<HttpState>>,
     headers: HeaderMap,
-    Json(mut payload): Json<serde_json::Value>,
+    raw_body: axum::body::Bytes,
 ) -> Response {
+    let body_str = String::from_utf8_lossy(&raw_body).to_string();
+
+    // Verify Slack signature if signing secret is configured
+    if let Ok(signing_secret) = std::env::var("SLACK_SIGNING_SECRET") {
+        let timestamp = headers
+            .get("x-slack-request-timestamp")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let signature = headers
+            .get("x-slack-signature")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        if !verify_slack_signature(&signing_secret, timestamp, &body_str, signature) {
+            warn!("Slack webhook: invalid signature");
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid signature"}))).into_response();
+        }
+    }
+
+    let mut payload: serde_json::Value = match serde_json::from_str(&body_str) {
+        Ok(v) => v,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
     // Handle Slack URL verification challenge
     if payload.get("type").and_then(|t| t.as_str()) == Some("url_verification") {
         let challenge = payload["challenge"].as_str().unwrap_or("");
@@ -193,8 +274,29 @@ pub async fn discord_webhook(
 
 pub async fn feishu_webhook(
     State(state): State<Arc<HttpState>>,
+    headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Response {
+    // Verify Feishu signature if encrypt key is configured
+    if let Ok(encrypt_key) = std::env::var("FEISHU_ENCRYPT_KEY") {
+        let timestamp = headers
+            .get("x-lark-request-timestamp")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let signature = headers
+            .get("x-lark-signature")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let body_str = serde_json::to_string(&payload).unwrap_or_default();
+
+        if !signature.is_empty()
+            && !verify_feishu_signature(&encrypt_key, timestamp, &body_str, signature)
+        {
+            warn!("Feishu webhook: invalid signature");
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid signature"}))).into_response();
+        }
+    }
+
     // Handle Feishu URL verification challenge
     if payload.get("type").and_then(|t| t.as_str()) == Some("url_verification") {
         let challenge = payload["challenge"].as_str().unwrap_or("");

@@ -11,6 +11,10 @@ use crate::compaction::{CompactionConfig, needs_compaction, compact_history};
 use crate::pruning::{PruningConfig, prune_tool_results};
 use crate::history::limit_history_turns;
 use crate::transcript_repair::repair_tool_use_result_pairing;
+use crate::context_guard::{ContextGuard, ContextGuardConfig, GuardAction};
+use crate::thinking::ThinkingConfig;
+use crate::error_classify::{classify_error, ErrorClass};
+use crate::usage::UsageAccumulator;
 
 const MAX_OVERFLOW_COMPACTION_ATTEMPTS: usize = 3;
 const TRUNCATION_SUFFIX: &str = "\n\n[Content truncated — original was too large for the model's \
@@ -90,6 +94,9 @@ pub struct Agent {
     pruning_config: Option<PruningConfig>,
     recall_config: Option<crate::auto_recall::AutoRecallConfig>,
     memory_recaller: Option<Arc<dyn crate::auto_recall::MemoryRecaller>>,
+    context_guard: Option<ContextGuard>,
+    thinking_config: Option<ThinkingConfig>,
+    usage: UsageAccumulator,
 }
 
 impl Agent {
@@ -107,7 +114,18 @@ impl Agent {
             pruning_config: None,
             recall_config: None,
             memory_recaller: None,
+            context_guard: None,
+            thinking_config: None,
+            usage: UsageAccumulator::new(),
         }
+    }
+
+    pub fn usage(&self) -> &UsageAccumulator {
+        &self.usage
+    }
+
+    pub fn reset_usage(&mut self) {
+        self.usage.reset();
     }
 
     pub fn config(&self) -> &AgentConfig {
@@ -166,6 +184,16 @@ impl Agent {
     ) -> Self {
         self.recall_config = Some(config);
         self.memory_recaller = Some(recaller);
+        self
+    }
+
+    pub fn with_context_guard(mut self, config: ContextGuardConfig) -> Self {
+        self.context_guard = Some(ContextGuard::new(config));
+        self
+    }
+
+    pub fn with_thinking(mut self, config: ThinkingConfig) -> Self {
+        self.thinking_config = Some(config);
         self
     }
 
@@ -319,8 +347,9 @@ impl Agent {
     }
 
     /// Chat with exponential backoff retry within the tool loop.
+    /// Uses error classification to decide retry vs abort.
     async fn chat_with_retry(
-        &self,
+        &mut self,
         request: ChatRequest,
     ) -> Result<oclaws_llm_core::chat::ChatCompletion, AgentError> {
         let max_retries = self.config.max_retries.unwrap_or(3);
@@ -331,13 +360,40 @@ impl Agent {
                 tokio::time::sleep(delay).await;
             }
             match self.provider.chat(request.clone()).await {
-                Ok(resp) => return Ok(resp),
+                Ok(resp) => {
+                    // Record usage if available
+                    if let Some(ref u) = resp.usage {
+                        self.usage.record(u);
+                    }
+                    return Ok(resp);
+                }
                 Err(e) => {
                     last_err = e.to_string();
-                    if Self::is_context_overflow(&last_err) {
-                        return Err(AgentError::ContextOverflow(last_err));
+                    let class = classify_error(&last_err);
+                    tracing::warn!(
+                        "Chat attempt {} failed (class={:?}): {}",
+                        attempt + 1, class, last_err
+                    );
+
+                    match class {
+                        ErrorClass::ContextOverflow => {
+                            return Err(AgentError::ContextOverflow(last_err));
+                        }
+                        ErrorClass::AuthFailure => {
+                            return Err(AgentError::AuthError(last_err));
+                        }
+                        ErrorClass::RateLimit => {
+                            // Longer backoff for rate limits
+                            let delay = std::time::Duration::from_millis(
+                                2000 * 2u64.pow(attempt as u32)
+                            );
+                            tokio::time::sleep(delay).await;
+                        }
+                        _ if !class.should_retry() => {
+                            return Err(AgentError::ModelError(last_err));
+                        }
+                        _ => {} // continue retry loop
                     }
-                    tracing::warn!("Chat attempt {} failed: {}", attempt + 1, last_err);
                 }
             }
         }
@@ -408,6 +464,20 @@ impl Agent {
 
             // Compaction check before building request
             self.try_compact().await;
+
+            // Context guard check
+            if let Some(guard) = &self.context_guard {
+                match guard.check_budget(&self.history, &self.config.model) {
+                    GuardAction::TruncateNeeded { used, budget } => {
+                        tracing::warn!("Context guard: {} tokens used, budget {}, truncating", used, budget);
+                        guard.truncate_tool_results(&mut self.history, &self.config.model);
+                    }
+                    GuardAction::Warning { used, budget } => {
+                        tracing::info!("Context guard: {} tokens used, approaching budget {}", used, budget);
+                    }
+                    GuardAction::Ok => {}
+                }
+            }
 
             let request = ChatRequest {
                 model: self.config.model.clone(),
@@ -571,6 +641,9 @@ impl Agent {
             pruning_config: None,
             recall_config: None,
             memory_recaller: None,
+            context_guard: None,
+            thinking_config: None,
+            usage: UsageAccumulator::new(),
         }
     }
 }
@@ -590,6 +663,9 @@ impl Clone for Agent {
             pruning_config: None,
             recall_config: None,
             memory_recaller: None,
+            context_guard: None,
+            thinking_config: None,
+            usage: UsageAccumulator::new(),
         }
     }
 }

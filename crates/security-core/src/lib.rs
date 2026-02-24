@@ -2,6 +2,8 @@ mod oauth;
 mod pairing;
 mod session;
 pub mod audit;
+pub mod auth_profiles;
+pub mod device_pairing;
 
 pub use oauth::{OAuthProvider, OAuthClient, OAuthToken, OAuthUser, OAuthStateStore};
 pub use audit::{AuditLog, AuditEvent, AuditEventKind};

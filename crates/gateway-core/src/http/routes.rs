@@ -1588,6 +1588,66 @@ pub async fn cron_delete_handler(
     }
 }
 
+pub async fn canvas_ui_handler() -> axum::response::Html<&'static str> {
+    axum::response::Html(CANVAS_HTML)
+}
+
+const CANVAS_HTML: &str = concat!(
+r##"<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenClaw Canvas</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f0f1a;--bg2:#161d30;--accent:#00d4ff;--border:#2a3a5c;--text:#e0e0e0;--text2:#8899aa}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:12px;padding:10px 20px;background:var(--bg2);border-bottom:1px solid var(--border)}
+.topbar .brand{font-weight:700;color:var(--accent);font-size:16px}
+.topbar .status{margin-left:auto;font-size:12px;color:var(--text2)}
+.topbar .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.dot.on{background:#4caf50}.dot.off{background:#f44336}
+.canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+canvas{background:#1a1a2e;border:1px solid var(--border);cursor:crosshair}
+.overlay{position:absolute;top:10px;right:10px;background:rgba(22,29,48,.9);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--text2)}
+</style></head><body>
+<div class="topbar"><span class="brand">OpenClaw Canvas</span>
+<span class="status"><span class="dot off" id="dot"></span><span id="st">Disconnected</span></span></div>
+<div class="canvas-wrap"><canvas id="cv"></canvas>
+<div class="overlay" id="info">Ready</div></div>
+"##,
+r##"<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d'),dot=document.getElementById('dot'),st=document.getElementById('st'),info=document.getElementById('info');
+let ws,visible=true;
+function resize(){cv.width=window.innerWidth;cv.height=window.innerHeight-44;ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,cv.width,cv.height)}
+resize();window.addEventListener('resize',resize);
+function connect(){
+const proto=location.protocol==='https:'?'wss':'ws';
+ws=new WebSocket(proto+'://'+location.host+'/webchat/ws');
+ws.onopen=()=>{dot.className='dot on';st.textContent='Connected';ws.send(JSON.stringify({type:'canvas.hello',width:cv.width,height:cv.height}))};
+ws.onclose=()=>{dot.className='dot off';st.textContent='Reconnecting...';setTimeout(connect,2000)};
+ws.onerror=()=>ws.close();
+ws.onmessage=(e)=>{try{handleCmd(JSON.parse(e.data))}catch(err){console.error(err)}};
+}
+function handleCmd(msg){
+if(!msg.type)return;
+const d=msg.data||{};
+switch(msg.type){
+case'canvas.clear':ctx.fillStyle=d.color||'#1a1a2e';ctx.fillRect(0,0,cv.width,cv.height);info.textContent='Cleared';break;
+case'canvas.rect':ctx.fillStyle=d.color||'#00d4ff';ctx.fillRect(d.x||0,d.y||0,d.w||100,d.h||100);break;
+case'canvas.circle':ctx.beginPath();ctx.arc(d.x||0,d.y||0,d.r||50,0,Math.PI*2);ctx.fillStyle=d.color||'#00d4ff';ctx.fill();break;
+case'canvas.line':ctx.beginPath();ctx.moveTo(d.x1||0,d.y1||0);ctx.lineTo(d.x2||0,d.y2||0);ctx.strokeStyle=d.color||'#00d4ff';ctx.lineWidth=d.width||2;ctx.stroke();break;
+case'canvas.text':ctx.font=(d.size||16)+'px system-ui';ctx.fillStyle=d.color||'#e0e0e0';ctx.fillText(d.text||'',d.x||0,d.y||0);break;
+case'canvas.image':if(d.src){const img=new Image();img.onload=()=>ctx.drawImage(img,d.x||0,d.y||0,d.w||img.width,d.h||img.height);img.src=d.src}break;
+case'canvas.eval':try{const r=eval(d.code);if(ws.readyState===1)ws.send(JSON.stringify({type:'canvas.eval.result',result:String(r)}))}catch(err){if(ws.readyState===1)ws.send(JSON.stringify({type:'canvas.eval.error',error:err.message}))}break;
+case'canvas.snapshot':cv.toBlob(b=>{const reader=new FileReader();reader.onload=()=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'canvas.snapshot.result',data:reader.result}))};reader.readAsDataURL(b)},d.format||'image/png',d.quality||0.9);break;
+case'canvas.navigate':if(d.url)window.location.href=d.url;break;
+case'canvas.present':visible=true;cv.style.display='block';info.textContent='Presenting';break;
+case'canvas.hide':visible=false;cv.style.display='none';info.textContent='Hidden';break;
+default:console.log('Unknown canvas cmd:',msg.type);
+}}
+connect();
+</script></body></html>"##
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;

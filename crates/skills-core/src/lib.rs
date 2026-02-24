@@ -34,7 +34,9 @@ pub mod manifest;
 pub mod discovery;
 pub mod gates;
 pub mod installer;
+pub mod workspace;
 
 pub use skill::{Skill, SkillInput, SkillOutput, SkillContext};
 pub use registry::SkillRegistry;
+pub use workspace::WorkspaceSkillLoader;
 pub use builtin::*;

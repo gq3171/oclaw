@@ -16,6 +16,10 @@ pub mod echo_detect;
 pub mod reply_dispatch;
 pub mod auto_recall;
 pub mod thread_ownership;
+pub mod context_guard;
+pub mod thinking;
+pub mod error_classify;
+pub mod usage;
 
 pub use agent::{Agent, AgentConfig, AgentState, ToolExecutor};
 pub use subagent::{Subagent, SubagentRegistry, SubagentStatus};
@@ -35,6 +39,10 @@ pub use echo_detect::EchoTracker;
 pub use reply_dispatch::{ReplyDispatcher, ReplyPayload, ReplyKind};
 pub use auto_recall::{AutoRecallConfig, RecallResult, MemoryRecaller, format_recall_context};
 pub use thread_ownership::ThreadOwnership;
+pub use context_guard::{ContextGuard, ContextGuardConfig, GuardAction};
+pub use thinking::{ThinkingConfig, ReasoningLevel, ThinkingBlock, drop_thinking_blocks, extract_thinking, supports_thinking};
+pub use error_classify::{ErrorClass, classify_error};
+pub use usage::{UsageAccumulator, UsageSummary};
 
 pub type AgentResult<T> = Result<T, AgentError>;
 

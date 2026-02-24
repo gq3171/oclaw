@@ -88,7 +88,7 @@ impl AuthState {
     pub async fn validate_password(&self, password: &str) -> bool {
         if let Some(auth) = &self.config
             && let Some(expected) = &auth.password {
-                return password == expected;
+                return constant_time_eq(password.as_bytes(), expected.as_bytes());
             }
         false
     }
@@ -255,5 +255,18 @@ pub fn compute_hmac(secret: &str, message: &str) -> String {
 }
 
 pub fn verify_hmac(secret: &str, message: &str, signature: &str) -> bool {
-    compute_hmac(secret, message) == signature
+    let computed = compute_hmac(secret, message);
+    constant_time_eq(computed.as_bytes(), signature.as_bytes())
+}
+
+/// Constant-time byte comparison to prevent timing attacks.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
