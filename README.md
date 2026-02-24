@@ -173,6 +173,158 @@ Visual configuration editor with full i18n support (English/Chinese).
 | `/webhooks/feishu` | POST | Feishu webhook |
 | `/webhooks/{channel}` | POST | Generic channel webhook |
 
+## Feature Status
+
+Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference implementation.
+
+### Gateway & Networking
+
+- [x] HTTP Server + REST API
+- [x] WebSocket Server
+- [x] TLS / SSL
+- [x] Tailscale Integration
+- [x] Webhook Support (Telegram, Slack, Discord, Feishu, Generic)
+- [x] OpenAI-Compatible API (`/v1/chat/completions`, `/v1/responses`)
+- [x] Rate Limiting
+- [x] CORS
+- [x] Prometheus Metrics (`/metrics`)
+- [x] Web Chat UI (`/ui/chat`)
+- [x] Web Config UI (`/ui/config`)
+- [ ] OpenTelemetry Tracing
+- [ ] Canvas Host (live canvas rendering)
+
+### LLM Providers
+
+- [x] Anthropic (Claude)
+- [x] OpenAI (GPT)
+- [x] Google Gemini
+- [x] Cohere
+- [x] Ollama (local)
+- [x] AWS Bedrock
+- [x] OpenRouter
+- [x] Together AI
+- [x] MiniMax
+- [ ] Hugging Face
+- [ ] vLLM
+- [ ] Qwen (Alibaba)
+- [ ] Doubao / Volcengine (ByteDance)
+- [ ] Moonshot (Kimi)
+- [ ] xAI (Grok)
+- [ ] Cloudflare AI Gateway
+- [ ] LiteLLM
+- [ ] GitHub Copilot
+
+### Messaging Channels
+
+- [x] Telegram
+- [x] Slack
+- [x] Discord
+- [x] WhatsApp
+- [x] Matrix
+- [x] Signal
+- [x] LINE
+- [x] Mattermost
+- [x] Google Chat
+- [x] Feishu (Lark)
+- [x] Nostr
+- [x] IRC
+- [x] Webchat (built-in)
+- [ ] iMessage / BlueBubbles
+- [ ] Microsoft Teams
+- [ ] Nextcloud Talk
+- [ ] Synology Chat
+- [ ] Twitch
+- [ ] Zalo
+
+### Agent & Orchestration
+
+- [x] Multi-agent Orchestration
+- [x] Subagent System
+- [x] Model Fallback Chains
+- [x] Loop Detection
+- [x] Echo Detection
+- [x] Session Persistence (Transcript)
+- [x] History Compaction & Pruning
+- [x] Tool Mutation Tracking
+- [x] Stream Chunking
+- [x] Auto-recall (Memory Integration)
+- [x] Thread Ownership
+- [x] Reply Dispatch
+- [ ] Thinking Mode (Extended Reasoning)
+- [ ] Context Window Guard
+
+### Tools & Integrations
+
+- [x] Tool Execution Framework
+- [x] Tool Scheduling
+- [x] Tool Approval Gates
+- [x] Browser Automation (CDP)
+- [x] Docker Sandbox Execution
+- [ ] Web Search (Brave / Perplexity)
+- [ ] Web Scraping (Firecrawl)
+- [ ] Playwright Integration
+
+### Storage & Memory
+
+- [x] SQLite
+- [x] PostgreSQL
+- [x] LanceDB (Vector)
+- [x] Vector Search
+- [x] Full-text Search
+- [x] Hybrid Search
+- [x] MMR Reranking
+- [x] Query Expansion
+- [x] Temporal Decay
+- [x] Semantic Memory
+- [x] Embedding Search
+- [x] File Watch Indexing
+
+### Skills & Plugins
+
+- [x] Skill Registry & Discovery
+- [x] Skill Installation
+- [x] Skill Gating
+- [x] Built-in Skills
+- [x] Plugin System (load, hooks, HTTP routes)
+- [ ] Workspace Skills
+
+### Media & Voice
+
+- [x] Image Processing
+- [x] Audio Processing
+- [x] MIME Detection
+- [x] STT (Speech-to-Text)
+- [x] TTS (Text-to-Speech)
+- [x] Audio Streaming (WebSocket)
+- [ ] ElevenLabs TTS
+- [ ] Deepgram STT
+- [ ] Voice Wake Detection
+
+### Security
+
+- [x] OAuth 2.0
+- [x] Token / Password Auth
+- [x] Device Pairing
+- [x] HMAC / SHA2 Crypto
+- [x] Audit Logging
+- [ ] Multi-key Rotation (Auth Profiles)
+
+### CLI & UI
+
+- [x] Full CLI (`start`, `config`, `wizard`, `channel`, `skill`, `doctor`, `provider`, …)
+- [x] Interactive Config Wizard
+- [x] Terminal UI (ratatui)
+- [x] Daemon Management
+- [x] System Diagnostics (`doctor`)
+- [ ] Onboarding Command
+
+### Cron & Background
+
+- [x] Cron Scheduling & Persistence
+- [x] Session Reaping
+- [x] Process Monitoring
+- [x] Signal Handling
+
 ## Architecture
 
 ```

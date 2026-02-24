@@ -46,7 +46,7 @@ struct FsHeader {
 #[command(about = "OCLAWS - Open CLAW System", long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
     
     #[arg(short, long, default_value = "info", env = "OCLAWS_LOG_LEVEL")]
     log_level: String,
@@ -239,7 +239,15 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
     
-    match cli.command {
+    let Some(command) = cli.command else {
+        // No subcommand — print help and exit
+        use clap::CommandFactory;
+        Cli::command().print_help().ok();
+        println!();
+        return Ok(());
+    };
+
+    match command {
         Commands::Start { port, host, http_only, ws_only } => {
             // 1. Load config
             let config_path = cli.config
@@ -740,8 +748,23 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Tui => {
-            let config = oclaws_tui_core::TuiConfig::default();
-            let mut app = oclaws_tui_core::TuiApp::new(config);
+            let config_path = cli.config.as_ref().map(std::path::PathBuf::from)
+                .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
+            let mut manager = ConfigManager::new(config_path);
+            let gateway_url = if manager.load().is_ok() {
+                manager.config_mut().apply_env_overrides();
+                let gw = manager.config().gateway.as_ref();
+                let port = gw.and_then(|g| g.port).unwrap_or(8080) as u16;
+                let bind = gw.and_then(|g| g.bind.clone()).unwrap_or_else(|| "127.0.0.1".to_string());
+                format!("http://{}:{}", bind, port + 1)
+            } else {
+                cli.gateway_url.clone()
+            };
+            let tui_config = oclaws_tui_core::TuiConfig {
+                gateway_url,
+                ..Default::default()
+            };
+            let mut app = oclaws_tui_core::TuiApp::new(tui_config);
             if let Err(e) = app.run().await {
                 error!("TUI error: {}", e);
                 return Err(anyhow::anyhow!(e));
@@ -981,9 +1004,10 @@ async fn telegram_poll_loop(
                 .json(&serde_json::json!({"chat_id": chat_id, "action": "typing"}))
                 .send().await;
 
-            // Call Agent with tools
+            // Call Agent with tools (session = telegram_{chat_id})
             let Some(ref provider) = llm_provider else { continue };
-            let reply = match run_agent(provider, &tool_registry, &text).await {
+            let session_key = format!("telegram_{}", chat_id);
+            let reply = match run_agent(provider, &tool_registry, &text, Some(&session_key)).await {
                 Ok(r) => r,
                 Err(e) => {
                     error!("Agent error for Telegram: {}", e);
@@ -1089,6 +1113,7 @@ async fn run_agent(
     provider: &Arc<dyn oclaws_llm_core::providers::LlmProvider>,
     registry: &Arc<oclaws_tools_core::tool::ToolRegistry>,
     input: &str,
+    session_id: Option<&str>,
 ) -> Result<String, String> {
     use oclaws_agent_core::agent::{Agent, AgentConfig};
     let model = provider.default_model().to_string();
@@ -1096,6 +1121,9 @@ async fn run_agent(
     let config = AgentConfig::new("channel-agent", &model, "default")
         .with_system_prompt(&prompt);
     let mut agent = Agent::new(config, provider.clone());
+    if let Some(sid) = session_id {
+        agent = agent.with_transcript(sid);
+    }
     agent.initialize().await.map_err(|e| e.to_string())?;
     let executor = ToolRegistryExecutor(registry.clone());
     agent.run_with_tools(input, &executor).await.map_err(|e| e.to_string())
@@ -1600,7 +1628,8 @@ async fn feishu_on_message_receive(
     } else { None };
 
     info!("Feishu: calling agent...");
-    let reply = run_agent(provider, tool_registry, &text).await?;
+    let session_key = format!("feishu_{}", chat_id);
+    let reply = run_agent(provider, tool_registry, &text, Some(&session_key)).await?;
     info!("Feishu: agent reply len={}", reply.len());
 
     // Update placeholder with actual reply, or send new message

@@ -10,7 +10,7 @@ const BASE_URL: &str = "https://open.feishu.cn/open-apis";
 pub struct FeishuChannel {
     app_id: Option<String>,
     app_secret: Option<String>,
-    tenant_access_token: Option<String>,
+    token: Arc<tokio::sync::RwLock<Option<String>>>,
     client: Option<Client>,
     status: ChannelStatus,
 }
@@ -18,7 +18,8 @@ pub struct FeishuChannel {
 impl FeishuChannel {
     pub fn new() -> Self {
         Self {
-            app_id: None, app_secret: None, tenant_access_token: None,
+            app_id: None, app_secret: None,
+            token: Arc::new(tokio::sync::RwLock::new(None)),
             client: None, status: ChannelStatus::Disconnected,
         }
     }
@@ -30,7 +31,7 @@ impl FeishuChannel {
     }
 
     /// Obtain or refresh tenant_access_token.
-    pub async fn refresh_token(&mut self) -> ChannelResult<String> {
+    pub async fn refresh_token(&self) -> ChannelResult<String> {
         let client = self.client.as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".into()))?;
         let body = serde_json::json!({
@@ -42,16 +43,22 @@ impl FeishuChannel {
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?;
         let json: serde_json::Value = resp.json().await
             .map_err(|e| ChannelError::AuthenticationError(e.to_string()))?;
-        let token = json["tenant_access_token"].as_str()
+        let new_token = json["tenant_access_token"].as_str()
             .ok_or_else(|| ChannelError::AuthenticationError(format!("Token error: {}", json)))?
             .to_string();
-        self.tenant_access_token = Some(token.clone());
-        Ok(token)
+        *self.token.write().await = Some(new_token.clone());
+        tracing::info!("Feishu token refreshed");
+        Ok(new_token)
     }
 
-    fn token(&self) -> ChannelResult<&str> {
-        self.tenant_access_token.as_deref()
+    async fn get_token(&self) -> ChannelResult<String> {
+        self.token.read().await.clone()
             .ok_or_else(|| ChannelError::AuthenticationError("No token".into()))
+    }
+
+    /// Check if a response indicates token expiry (99991663) and auto-refresh + retry.
+    fn is_token_expired(json: &serde_json::Value) -> bool {
+        json.get("code").and_then(|c| c.as_i64()) == Some(99991663)
     }
 
     fn client(&self) -> ChannelResult<&Client> {
@@ -72,11 +79,23 @@ impl FeishuChannel {
             "msg_type": msg_type,
             "content": content,
         });
+        let token = self.get_token().await?;
         let resp = self.client()?.post(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .json(&body).send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
-        resp.json::<serde_json::Value>().await.map_err(|e| ChannelError::MessageError(e.to_string()))
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            tracing::warn!("Feishu token expired, refreshing and retrying send_raw");
+            let new_token = self.refresh_token().await?;
+            let resp = self.client()?.post(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .json(&body).send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return resp.json().await.map_err(|e| ChannelError::MessageError(e.to_string()));
+        }
+        Ok(json)
     }
 
     /// Reply to a specific message.
@@ -85,28 +104,60 @@ impl FeishuChannel {
     ) -> ChannelResult<serde_json::Value> {
         let url = format!("{}/im/v1/messages/{}/reply", BASE_URL, message_id);
         let body = serde_json::json!({ "msg_type": msg_type, "content": content });
+        let token = self.get_token().await?;
         let resp = self.client()?.post(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .json(&body).send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
-        resp.json::<serde_json::Value>().await.map_err(|e| ChannelError::MessageError(e.to_string()))
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            tracing::warn!("Feishu token expired, refreshing and retrying reply_raw");
+            let new_token = self.refresh_token().await?;
+            let resp = self.client()?.post(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .json(&body).send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return resp.json().await.map_err(|e| ChannelError::MessageError(e.to_string()));
+        }
+        Ok(json)
     }
 
     /// Upload an image and return the image_key.
     pub async fn upload_image(&self, data: Vec<u8>, filename: &str) -> ChannelResult<String> {
         let url = format!("{}/im/v1/images", BASE_URL);
-        let part = reqwest::multipart::Part::bytes(data)
+        let token = self.get_token().await?;
+        let part = reqwest::multipart::Part::bytes(data.clone())
             .file_name(filename.to_string())
             .mime_str("application/octet-stream").unwrap();
         let form = reqwest::multipart::Form::new()
             .text("image_type", "message")
             .part("image", part);
         let resp = self.client()?.post(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .multipart(form).send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
         let json: serde_json::Value = resp.json().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            tracing::warn!("Feishu token expired, refreshing and retrying upload_image");
+            let new_token = self.refresh_token().await?;
+            let part = reqwest::multipart::Part::bytes(data)
+                .file_name(filename.to_string())
+                .mime_str("application/octet-stream").unwrap();
+            let form = reqwest::multipart::Form::new()
+                .text("image_type", "message")
+                .part("image", part);
+            let resp = self.client()?.post(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .multipart(form).send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            let json: serde_json::Value = resp.json().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return json["data"]["image_key"].as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| ChannelError::MessageError(format!("Upload failed: {}", json)));
+        }
         json["data"]["image_key"].as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| ChannelError::MessageError(format!("Upload failed: {}", json)))
@@ -117,7 +168,8 @@ impl FeishuChannel {
         &self, data: Vec<u8>, filename: &str, file_type: &str,
     ) -> ChannelResult<String> {
         let url = format!("{}/im/v1/files", BASE_URL);
-        let part = reqwest::multipart::Part::bytes(data)
+        let token = self.get_token().await?;
+        let part = reqwest::multipart::Part::bytes(data.clone())
             .file_name(filename.to_string())
             .mime_str("application/octet-stream").unwrap();
         let form = reqwest::multipart::Form::new()
@@ -125,11 +177,31 @@ impl FeishuChannel {
             .text("file_name", filename.to_string())
             .part("file", part);
         let resp = self.client()?.post(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .multipart(form).send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
         let json: serde_json::Value = resp.json().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            tracing::warn!("Feishu token expired, refreshing and retrying upload_file");
+            let new_token = self.refresh_token().await?;
+            let part = reqwest::multipart::Part::bytes(data)
+                .file_name(filename.to_string())
+                .mime_str("application/octet-stream").unwrap();
+            let form = reqwest::multipart::Form::new()
+                .text("file_type", file_type.to_string())
+                .text("file_name", filename.to_string())
+                .part("file", part);
+            let resp = self.client()?.post(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .multipart(form).send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            let json: serde_json::Value = resp.json().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return json["data"]["file_key"].as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| ChannelError::MessageError(format!("Upload failed: {}", json)));
+        }
         json["data"]["file_key"].as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| ChannelError::MessageError(format!("Upload failed: {}", json)))
@@ -141,51 +213,106 @@ impl FeishuChannel {
     ) -> ChannelResult<serde_json::Value> {
         let url = format!("{}/im/v1/messages/{}/reactions", BASE_URL, message_id);
         let body = serde_json::json!({ "reaction_type": { "emoji_type": emoji_type } });
+        let token = self.get_token().await?;
         let resp = self.client()?.post(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .json(&body).send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
-        resp.json::<serde_json::Value>().await.map_err(|e| ChannelError::MessageError(e.to_string()))
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            let new_token = self.refresh_token().await?;
+            let resp = self.client()?.post(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .json(&body).send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return resp.json().await.map_err(|e| ChannelError::MessageError(e.to_string()));
+        }
+        Ok(json)
     }
 
     /// Get message read status.
     pub async fn get_read_users(&self, message_id: &str) -> ChannelResult<serde_json::Value> {
         let url = format!("{}/im/v1/messages/{}/read_users", BASE_URL, message_id);
+        let token = self.get_token().await?;
         let resp = self.client()?.get(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
-        resp.json::<serde_json::Value>().await.map_err(|e| ChannelError::MessageError(e.to_string()))
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            let new_token = self.refresh_token().await?;
+            let resp = self.client()?.get(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return resp.json().await.map_err(|e| ChannelError::MessageError(e.to_string()));
+        }
+        Ok(json)
     }
 
     /// Get chat (group) info.
     pub async fn get_chat(&self, chat_id: &str) -> ChannelResult<serde_json::Value> {
         let url = format!("{}/im/v1/chats/{}", BASE_URL, chat_id);
+        let token = self.get_token().await?;
         let resp = self.client()?.get(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
-        resp.json::<serde_json::Value>().await.map_err(|e| ChannelError::MessageError(e.to_string()))
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            let new_token = self.refresh_token().await?;
+            let resp = self.client()?.get(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return resp.json().await.map_err(|e| ChannelError::MessageError(e.to_string()));
+        }
+        Ok(json)
     }
 
     /// List chats the bot has joined.
     pub async fn list_chats(&self) -> ChannelResult<serde_json::Value> {
         let url = format!("{}/im/v1/chats", BASE_URL);
+        let token = self.get_token().await?;
         let resp = self.client()?.get(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
-        resp.json::<serde_json::Value>().await.map_err(|e| ChannelError::MessageError(e.to_string()))
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            let new_token = self.refresh_token().await?;
+            let resp = self.client()?.get(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return resp.json().await.map_err(|e| ChannelError::MessageError(e.to_string()));
+        }
+        Ok(json)
     }
 
     /// Recall (delete) a message.
     pub async fn delete_message(&self, message_id: &str) -> ChannelResult<serde_json::Value> {
         let url = format!("{}/im/v1/messages/{}", BASE_URL, message_id);
+        let token = self.get_token().await?;
         let resp = self.client()?.delete(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
-        resp.json::<serde_json::Value>().await.map_err(|e| ChannelError::MessageError(e.to_string()))
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            let new_token = self.refresh_token().await?;
+            let resp = self.client()?.delete(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return resp.json().await.map_err(|e| ChannelError::MessageError(e.to_string()));
+        }
+        Ok(json)
     }
 
     /// Update (edit) a sent message.
@@ -194,11 +321,22 @@ impl FeishuChannel {
     ) -> ChannelResult<serde_json::Value> {
         let url = format!("{}/im/v1/messages/{}", BASE_URL, message_id);
         let body = serde_json::json!({ "content": content });
+        let token = self.get_token().await?;
         let resp = self.client()?.patch(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .json(&body).send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
-        resp.json::<serde_json::Value>().await.map_err(|e| ChannelError::MessageError(e.to_string()))
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            let new_token = self.refresh_token().await?;
+            let resp = self.client()?.patch(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .json(&body).send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return resp.json().await.map_err(|e| ChannelError::MessageError(e.to_string()));
+        }
+        Ok(json)
     }
 
     /// Forward a message to another chat.
@@ -209,21 +347,43 @@ impl FeishuChannel {
             "{}/im/v1/messages/{}/forward?receive_id_type={}", BASE_URL, message_id, receive_id_type
         );
         let body = serde_json::json!({ "receive_id": receive_id });
+        let token = self.get_token().await?;
         let resp = self.client()?.post(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .json(&body).send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
-        resp.json::<serde_json::Value>().await.map_err(|e| ChannelError::MessageError(e.to_string()))
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            let new_token = self.refresh_token().await?;
+            let resp = self.client()?.post(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .json(&body).send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return resp.json().await.map_err(|e| ChannelError::MessageError(e.to_string()));
+        }
+        Ok(json)
     }
 
     /// Get user info by user_id, open_id, or union_id.
     pub async fn get_user(&self, user_id: &str, id_type: &str) -> ChannelResult<serde_json::Value> {
         let url = format!("{}/contact/v3/users/{}?user_id_type={}", BASE_URL, user_id, id_type);
+        let token = self.get_token().await?;
         let resp = self.client()?.get(&url)
-            .header("Authorization", format!("Bearer {}", self.token()?))
+            .header("Authorization", format!("Bearer {}", token))
             .send().await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
-        resp.json::<serde_json::Value>().await.map_err(|e| ChannelError::MessageError(e.to_string()))
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        if Self::is_token_expired(&json) {
+            let new_token = self.refresh_token().await?;
+            let resp = self.client()?.get(&url)
+                .header("Authorization", format!("Bearer {}", new_token))
+                .send().await
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+            return resp.json().await.map_err(|e| ChannelError::MessageError(e.to_string()));
+        }
+        Ok(json)
     }
 }
 
@@ -235,7 +395,7 @@ impl Clone for FeishuChannel {
     fn clone(&self) -> Self {
         Self {
             app_id: self.app_id.clone(), app_secret: self.app_secret.clone(),
-            tenant_access_token: self.tenant_access_token.clone(),
+            token: self.token.clone(),
             client: None, status: self.status,
         }
     }
@@ -255,7 +415,7 @@ impl Channel for FeishuChannel {
 
     async fn disconnect(&mut self) -> ChannelResult<()> {
         self.client = None;
-        self.tenant_access_token = None;
+        *self.token.write().await = None;
         self.status = ChannelStatus::Disconnected;
         Ok(())
     }

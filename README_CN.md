@@ -173,6 +173,158 @@ oclaws skill setup          # 设置技能
 | `/webhooks/feishu` | POST | 飞书 Webhook |
 | `/webhooks/{channel}` | POST | 通用渠道 Webhook |
 
+## 功能状态
+
+与 [Node OpenClaw](https://github.com/nicepkg/openclaw) 参考实现对比。
+
+### 网关与网络
+
+- [x] HTTP 服务器 + REST API
+- [x] WebSocket 服务器
+- [x] TLS / SSL
+- [x] Tailscale 集成
+- [x] Webhook 支持（Telegram、Slack、Discord、飞书、通用）
+- [x] OpenAI 兼容 API（`/v1/chat/completions`、`/v1/responses`）
+- [x] 速率限制
+- [x] CORS
+- [x] Prometheus 指标（`/metrics`）
+- [x] Web 聊天界面（`/ui/chat`）
+- [x] Web 配置管理（`/ui/config`）
+- [ ] OpenTelemetry 链路追踪
+- [ ] Canvas Host（实时画布渲染）
+
+### LLM 供应商
+
+- [x] Anthropic (Claude)
+- [x] OpenAI (GPT)
+- [x] Google Gemini
+- [x] Cohere
+- [x] Ollama（本地）
+- [x] AWS Bedrock
+- [x] OpenRouter
+- [x] Together AI
+- [x] MiniMax
+- [ ] Hugging Face
+- [ ] vLLM
+- [ ] 通义千问 (Qwen)
+- [ ] 豆包 / 火山引擎 (Doubao / Volcengine)
+- [ ] Moonshot (Kimi)
+- [ ] xAI (Grok)
+- [ ] Cloudflare AI Gateway
+- [ ] LiteLLM
+- [ ] GitHub Copilot
+
+### 消息渠道
+
+- [x] Telegram
+- [x] Slack
+- [x] Discord
+- [x] WhatsApp
+- [x] Matrix
+- [x] Signal
+- [x] LINE
+- [x] Mattermost
+- [x] Google Chat
+- [x] 飞书 (Feishu / Lark)
+- [x] Nostr
+- [x] IRC
+- [x] 网页聊天（内置）
+- [ ] iMessage / BlueBubbles
+- [ ] Microsoft Teams
+- [ ] Nextcloud Talk
+- [ ] Synology Chat
+- [ ] Twitch
+- [ ] Zalo
+
+### 智能体与编排
+
+- [x] 多智能体编排
+- [x] 子智能体系统
+- [x] 模型降级链
+- [x] 循环检测
+- [x] 回声检测
+- [x] 会话持久化（Transcript）
+- [x] 历史压缩与裁剪
+- [x] 工具变更追踪
+- [x] 流式分块
+- [x] 自动召回（记忆集成）
+- [x] 线程所有权
+- [x] 回复分发
+- [ ] 思考模式（扩展推理）
+- [ ] 上下文窗口守卫
+
+### 工具与集成
+
+- [x] 工具执行框架
+- [x] 工具调度
+- [x] 工具审批门控
+- [x] 浏览器自动化（CDP）
+- [x] Docker 沙箱执行
+- [ ] 网页搜索（Brave / Perplexity）
+- [ ] 网页抓取（Firecrawl）
+- [ ] Playwright 集成
+
+### 存储与记忆
+
+- [x] SQLite
+- [x] PostgreSQL
+- [x] LanceDB（向量）
+- [x] 向量搜索
+- [x] 全文搜索
+- [x] 混合搜索
+- [x] MMR 重排序
+- [x] 查询扩展
+- [x] 时间衰减
+- [x] 语义记忆
+- [x] 嵌入搜索
+- [x] 文件监控索引
+
+### 技能与插件
+
+- [x] 技能注册与发现
+- [x] 技能安装
+- [x] 技能门控
+- [x] 内置技能
+- [x] 插件系统（加载、钩子、HTTP 路由）
+- [ ] 工作区技能
+
+### 媒体与语音
+
+- [x] 图像处理
+- [x] 音频处理
+- [x] MIME 检测
+- [x] STT（语音转文字）
+- [x] TTS（文字转语音）
+- [x] 音频流（WebSocket）
+- [ ] ElevenLabs TTS
+- [ ] Deepgram STT
+- [ ] 语音唤醒检测
+
+### 安全
+
+- [x] OAuth 2.0
+- [x] Token / 密码认证
+- [x] 设备配对
+- [x] HMAC / SHA2 加密
+- [x] 审计日志
+- [ ] 多密钥轮换（Auth Profiles）
+
+### CLI 与界面
+
+- [x] 完整 CLI（`start`、`config`、`wizard`、`channel`、`skill`、`doctor`、`provider` 等）
+- [x] 交互式配置向导
+- [x] 终端 UI（ratatui）
+- [x] 后台服务管理
+- [x] 系统诊断（`doctor`）
+- [ ] 引导命令（Onboarding）
+
+### 定时任务与后台
+
+- [x] 定时任务调度与持久化
+- [x] 会话回收
+- [x] 进程监控
+- [x] 信号处理
+
 ## 架构
 
 ```

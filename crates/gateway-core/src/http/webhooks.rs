@@ -90,9 +90,10 @@ async fn handle_telegram_reply(
     let provider = state.llm_provider.as_ref()
         .ok_or("No LLM provider configured")?;
 
+    let session_id = format!("telegram_{}", chat_id);
     let reply = if let Some(ref registry) = state.tool_registry {
         let executor = crate::http::agent_bridge::ToolRegistryExecutor::new(registry.clone());
-        crate::http::agent_bridge::agent_reply(provider, &executor, text).await
+        crate::http::agent_bridge::agent_reply_with_session(provider, &executor, text, Some(&session_id)).await
             .unwrap_or_else(|e| format!("Agent error: {}", e))
     } else {
         // Fallback: direct LLM call without tools
@@ -263,9 +264,10 @@ async fn handle_feishu_reply(
     let provider = state.llm_provider.as_ref()
         .ok_or("No LLM provider configured")?;
 
+    let session_id = format!("feishu_{}", chat_id);
     let reply = if let Some(ref registry) = state.tool_registry {
         let executor = crate::http::agent_bridge::ToolRegistryExecutor::new(registry.clone());
-        crate::http::agent_bridge::agent_reply(provider, &executor, text).await
+        crate::http::agent_bridge::agent_reply_with_session(provider, &executor, text, Some(&session_id)).await
             .unwrap_or_else(|e| format!("Agent error: {}", e))
     } else {
         let request = oclaws_llm_core::chat::ChatRequest {

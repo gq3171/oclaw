@@ -321,7 +321,8 @@ async fn handle_user_message(
     // Run agent with abort race
     let reply_fut = async {
         if let Some(ref executor) = tool_executor {
-            agent_bridge::agent_reply(provider, executor, &content).await
+            let sid = format!("webchat_{}", session_id);
+            agent_bridge::agent_reply_with_session(provider, executor, &content, Some(&sid)).await
         } else {
             // No tools — direct LLM call
             let request = oclaws_llm_core::chat::ChatRequest {

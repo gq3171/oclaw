@@ -92,10 +92,22 @@ impl ToolExecutor for ToolRegistryExecutor {
 }
 
 /// Run a single user message through the Agent with tools, returning the final reply.
+/// When `session_id` is provided, the agent loads persisted history from transcript
+/// and appends new messages — giving the conversation memory across requests.
 pub async fn agent_reply(
     provider: &Arc<dyn LlmProvider>,
     tool_executor: &ToolRegistryExecutor,
     user_input: &str,
+) -> Result<String, String> {
+    agent_reply_with_session(provider, tool_executor, user_input, None).await
+}
+
+/// Same as `agent_reply` but with an explicit session ID for history persistence.
+pub async fn agent_reply_with_session(
+    provider: &Arc<dyn LlmProvider>,
+    tool_executor: &ToolRegistryExecutor,
+    user_input: &str,
+    session_id: Option<&str>,
 ) -> Result<String, String> {
     let model = provider.default_model().to_string();
     let tool_names: Vec<String> = tool_executor.available_tools()
@@ -108,6 +120,12 @@ pub async fn agent_reply(
     let config = AgentConfig::new("channel-agent", &model, "default")
         .with_system_prompt(&prompt);
     let mut agent = Agent::new(config, provider.clone());
+
+    // Bind transcript for session persistence when session_id is provided
+    if let Some(sid) = session_id {
+        agent = agent.with_transcript(sid);
+    }
+
     agent.initialize().await.map_err(|e| e.to_string())?;
     agent.run_with_tools(user_input, tool_executor).await.map_err(|e| e.to_string())
 }
