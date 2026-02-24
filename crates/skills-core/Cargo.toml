@@ -22,3 +22,5 @@ base64.workspace = true
 rand.workspace = true
 futures-util.workspace = true
 futures.workspace = true
+serde_yaml = { workspace = true }
+dirs.workspace = true

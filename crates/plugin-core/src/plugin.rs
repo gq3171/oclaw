@@ -160,6 +160,30 @@ pub trait Plugin: Send + Sync {
     async fn hook_gateway_shutdown(&self) -> Result<(), String> {
         Ok(())
     }
+
+    // --- Compaction hooks ---
+    async fn hook_before_compaction(&self, _messages: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    async fn hook_after_compaction(&self, _summary: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    // --- Subagent hooks ---
+    async fn hook_subagent_spawning(&self, _agent_id: &str, _config: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    async fn hook_subagent_spawned(&self, _agent_id: &str) -> Result<(), String> {
+        Ok(())
+    }
+    async fn hook_subagent_ended(&self, _agent_id: &str, _result: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    // --- Reset hook ---
+    async fn hook_before_reset(&self, _session_id: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub struct PluginWrapper {

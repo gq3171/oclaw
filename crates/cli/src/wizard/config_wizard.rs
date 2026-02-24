@@ -70,10 +70,10 @@ impl ConfigWizard {
         info("=== Gateway ===");
         let gw = config.gateway.get_or_insert_with(Gateway::default);
 
-        if let Some(v) = prompt_optional("Port", gw.port.map(|p| p.to_string()).as_deref()) {
-            if let Ok(p) = v.parse::<i32>() {
-                gw.port = Some(p);
-            }
+        if let Some(v) = prompt_optional("Port", gw.port.map(|p| p.to_string()).as_deref())
+            && let Ok(p) = v.parse::<i32>()
+        {
+            gw.port = Some(p);
         }
         gw.bind = prompt_optional("Bind address", gw.bind.as_deref());
         gw.mode = prompt_optional("Mode (server/client)", gw.mode.as_deref());
@@ -139,7 +139,7 @@ impl ConfigWizard {
                 let mut p = ModelProvider {
                     provider: name.clone(), api_key: None, base_url: None,
                     model: None, max_tokens: None, temperature: None,
-                    max_concurrency: None, headers: None,
+                    max_concurrency: None, headers: None, fallback: None,
                 };
                 Self::edit_provider(&mut p);
                 providers.insert(name, p);

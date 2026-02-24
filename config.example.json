@@ -29,6 +29,11 @@
     "telegram": {
       "enabled": true,
       "botToken": "${OCLAWS_TELEGRAM_BOT_TOKEN}"
+    },
+    "feishu": {
+      "enabled": true,
+      "appId": "${OCLAWS_FEISHU_APP_ID}",
+      "appSecret": "${OCLAWS_FEISHU_APP_SECRET}"
     }
   },
 

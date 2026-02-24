@@ -22,6 +22,8 @@ struct TelegramSendMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     parse_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    reply_to_message_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reply_markup: Option<serde_json::Value>,
 }
 
@@ -68,9 +70,56 @@ impl TelegramChannel {
         self
     }
 
-    #[allow(dead_code)]
-    fn get_api_url(&self) -> String {
-        self.api_url.clone().unwrap_or_default()
+    pub async fn send_photo(&self, chat_id: &str, photo: &str, caption: Option<&str>, reply_to: Option<i64>) -> ChannelResult<serde_json::Value> {
+        let mut body = serde_json::json!({"chat_id": chat_id, "photo": photo});
+        if let Some(c) = caption { body["caption"] = c.into(); body["parse_mode"] = "Markdown".into(); }
+        if let Some(r) = reply_to { body["reply_to_message_id"] = r.into(); }
+        self.send_api_request("sendPhoto", Some(&body)).await
+    }
+
+    pub async fn send_audio(&self, chat_id: &str, audio: &str, caption: Option<&str>, reply_to: Option<i64>) -> ChannelResult<serde_json::Value> {
+        let mut body = serde_json::json!({"chat_id": chat_id, "audio": audio});
+        if let Some(c) = caption { body["caption"] = c.into(); body["parse_mode"] = "Markdown".into(); }
+        if let Some(r) = reply_to { body["reply_to_message_id"] = r.into(); }
+        self.send_api_request("sendAudio", Some(&body)).await
+    }
+
+    pub async fn send_voice(&self, chat_id: &str, voice: &str, caption: Option<&str>, reply_to: Option<i64>) -> ChannelResult<serde_json::Value> {
+        let mut body = serde_json::json!({"chat_id": chat_id, "voice": voice});
+        if let Some(c) = caption { body["caption"] = c.into(); }
+        if let Some(r) = reply_to { body["reply_to_message_id"] = r.into(); }
+        self.send_api_request("sendVoice", Some(&body)).await
+    }
+
+    pub async fn send_video(&self, chat_id: &str, video: &str, caption: Option<&str>, reply_to: Option<i64>) -> ChannelResult<serde_json::Value> {
+        let mut body = serde_json::json!({"chat_id": chat_id, "video": video});
+        if let Some(c) = caption { body["caption"] = c.into(); body["parse_mode"] = "Markdown".into(); }
+        if let Some(r) = reply_to { body["reply_to_message_id"] = r.into(); }
+        self.send_api_request("sendVideo", Some(&body)).await
+    }
+
+    pub async fn send_document(&self, chat_id: &str, document: &str, caption: Option<&str>, reply_to: Option<i64>) -> ChannelResult<serde_json::Value> {
+        let mut body = serde_json::json!({"chat_id": chat_id, "document": document});
+        if let Some(c) = caption { body["caption"] = c.into(); body["parse_mode"] = "Markdown".into(); }
+        if let Some(r) = reply_to { body["reply_to_message_id"] = r.into(); }
+        self.send_api_request("sendDocument", Some(&body)).await
+    }
+
+    pub async fn send_sticker(&self, chat_id: &str, sticker: &str, reply_to: Option<i64>) -> ChannelResult<serde_json::Value> {
+        let mut body = serde_json::json!({"chat_id": chat_id, "sticker": sticker});
+        if let Some(r) = reply_to { body["reply_to_message_id"] = r.into(); }
+        self.send_api_request("sendSticker", Some(&body)).await
+    }
+
+    pub async fn send_chat_action(&self, chat_id: &str, action: &str) -> ChannelResult<serde_json::Value> {
+        self.send_api_request("sendChatAction", Some(&serde_json::json!({"chat_id": chat_id, "action": action}))).await
+    }
+
+    pub async fn get_file(&self, file_id: &str) -> ChannelResult<String> {
+        let resp = self.send_api_request("getFile", Some(&serde_json::json!({"file_id": file_id}))).await?;
+        let path = resp.pointer("/file_path").and_then(|p| p.as_str()).unwrap_or_default();
+        let token = self.bot_token.as_deref().unwrap_or_default();
+        Ok(format!("https://api.telegram.org/file/bot{}/{}", token, path))
     }
 
     async fn send_api_request(
@@ -188,24 +237,35 @@ impl Channel for TelegramChannel {
             .cloned()
             .ok_or_else(|| ChannelError::MessageError("Chat ID not specified".to_string()))?;
 
-        let telegram_msg = TelegramSendMessage {
-            chat_id: chat_id.clone(),
-            text: message.content.clone(),
-            parse_mode: Some("Markdown".to_string()),
-            reply_markup: None,
-        };
+        let reply_to = message.metadata.get("reply_to_message_id")
+            .and_then(|v| v.parse::<i64>().ok());
 
-        let response: serde_json::Value = self.send_api_request(
-            "sendMessage",
-            Some(&serde_json::to_value(&telegram_msg).map_err(|e| ChannelError::MessageError(e.to_string()))?),
-        ).await?;
+        // Split long messages (Telegram limit: 4096 chars)
+        let chunks = split_message(&message.content, 4096);
+        let mut last_msg_id = String::new();
 
-        let message_id = response.get("message_id")
-            .and_then(|m| m.as_i64())
-            .map(|id| id.to_string())
-            .ok_or_else(|| ChannelError::MessageError("No message ID returned".to_string()))?;
+        for chunk in &chunks {
+            let telegram_msg = TelegramSendMessage {
+                chat_id: chat_id.clone(),
+                text: chunk.clone(),
+                parse_mode: Some("Markdown".to_string()),
+                reply_to_message_id: if last_msg_id.is_empty() { reply_to } else { None },
+                reply_markup: None,
+            };
 
-        Ok(format!("{}_{}", chat_id, message_id))
+            let response = self.send_api_request(
+                "sendMessage",
+                Some(&serde_json::to_value(&telegram_msg)
+                    .map_err(|e| ChannelError::MessageError(e.to_string()))?),
+            ).await?;
+
+            last_msg_id = response.get("message_id")
+                .and_then(|m| m.as_i64())
+                .map(|id| id.to_string())
+                .unwrap_or_default();
+        }
+
+        Ok(format!("{}_{}", chat_id, last_msg_id))
     }
 
     async fn list_accounts(&self) -> ChannelResult<Vec<ChannelAccount>> {
@@ -273,6 +333,42 @@ impl Channel for TelegramChannel {
         Ok(())
     }
 
+    async fn send_message_with_attachments(&self, message: &ChannelMessageWithAttachments) -> ChannelResult<String> {
+        if self.status != ChannelStatus::Connected {
+            return Err(ChannelError::ConnectionError("Not connected".to_string()));
+        }
+        let chat_id = message.message.metadata.get("chat_id")
+            .or_else(|| message.message.metadata.get("recipient"))
+            .cloned()
+            .ok_or_else(|| ChannelError::MessageError("Chat ID not specified".to_string()))?;
+        let reply_to = message.message.metadata.get("reply_to_message_id")
+            .and_then(|v| v.parse::<i64>().ok());
+        let caption = if message.message.content.is_empty() { None } else { Some(message.message.content.as_str()) };
+
+        let mut last_id = String::new();
+        for att in &message.attachments {
+            let mime = att.mime_type.as_deref().unwrap_or("");
+            let result = if mime.starts_with("image/") {
+                self.send_photo(&chat_id, &att.url, caption, reply_to).await
+            } else if mime.starts_with("video/") {
+                self.send_video(&chat_id, &att.url, caption, reply_to).await
+            } else if mime.starts_with("audio/") || mime == "application/ogg" {
+                self.send_audio(&chat_id, &att.url, caption, reply_to).await
+            } else {
+                self.send_document(&chat_id, &att.url, caption, reply_to).await
+            };
+            if let Ok(resp) = result {
+                last_id = resp.get("message_id").and_then(|m| m.as_i64())
+                    .map(|id| id.to_string()).unwrap_or_default();
+            }
+        }
+        // Send text if no attachments or text remains
+        if message.attachments.is_empty() && !message.message.content.is_empty() {
+            return self.send_message(&message.message).await;
+        }
+        Ok(format!("{}_{}", chat_id, last_id))
+    }
+
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
         Ok(Box::new(TelegramSender {
             channel: Arc::new(RwLock::new(self.clone())),
@@ -315,4 +411,25 @@ impl MessageSender for TelegramSender {
             channel.read().await.send_message(&message).await
         })
     }
+}
+
+fn split_message(text: &str, max_len: usize) -> Vec<String> {
+    if text.len() <= max_len {
+        return vec![text.to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        if remaining.len() <= max_len {
+            chunks.push(remaining.to_string());
+            break;
+        }
+        // Try to split at last newline within limit
+        let split_at = remaining[..max_len]
+            .rfind('\n')
+            .unwrap_or(max_len);
+        chunks.push(remaining[..split_at].to_string());
+        remaining = remaining[split_at..].trim_start_matches('\n');
+    }
+    chunks
 }

@@ -167,5 +167,11 @@ pub fn create_default_manifest(plugin_id: &str, name: &str, version: &str) -> Pl
         hooks: Vec::new(),
         platform: None,
         builtin: false,
+        kind: None,
+        config_schema: None,
+        ui_hints: HashMap::new(),
+        channels: Vec::new(),
+        providers: Vec::new(),
+        skills: Vec::new(),
     }
 }

@@ -5,7 +5,7 @@ use oclaws_protocol::frames::{GatewayFrame, HelloOk, ServerFeatures, ServerInfo,
 use oclaws_protocol::snapshot::{AuthMode, Snapshot, StateVersion};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinSet;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -29,9 +29,29 @@ impl GatewayServer {
 
     pub async fn start(&self) -> GatewayResult<()> {
         let addr = format!("0.0.0.0:{}", self.port);
-        let listener = TcpListener::bind(&addr).await.map_err(|e| {
-            GatewayError::ServerError(format!("Failed to bind to {}: {}", addr, e))
-        })?;
+        let listener = {
+            let sock = tokio::net::TcpSocket::new_v4().map_err(|e| {
+                GatewayError::ServerError(format!("Failed to create socket: {}", e))
+            })?;
+            sock.set_reuseaddr(true).ok();
+            #[cfg(windows)]
+            {
+                use std::os::windows::io::AsRawSocket;
+                unsafe {
+                    unsafe extern "system" { fn SetHandleInformation(h: usize, mask: u32, flags: u32) -> i32; }
+                    SetHandleInformation(sock.as_raw_socket() as usize, 1, 0);
+                }
+            }
+            let addr: SocketAddr = addr.parse().map_err(|e| {
+                GatewayError::ServerError(format!("Invalid address: {}", e))
+            })?;
+            sock.bind(addr).map_err(|e| {
+                GatewayError::ServerError(format!("Failed to bind to {}: {}", addr, e))
+            })?;
+            sock.listen(1024).map_err(|e| {
+                GatewayError::ServerError(format!("Failed to listen: {}", e))
+            })?
+        };
 
         info!("Gateway server listening on {}", addr);
 
@@ -321,7 +341,7 @@ mod tests {
     #[tokio::test]
     async fn test_ws_handshake_hello_ok() {
         let server = GatewayServer::new(0);
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let session_manager = Arc::clone(&server.session_manager);

@@ -22,9 +22,18 @@ pub use together::TogetherProvider;
 pub use bedrock::BedrockProvider;
 pub use mock::MockLlmProvider;
 
+use std::collections::HashMap;
 use crate::chat::{ChatRequest, ChatCompletion, StreamChunk};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::{LlmError, LlmResult};
+
+#[derive(Debug, Clone, Default)]
+pub struct ProviderDefaults {
+    pub model: Option<String>,
+    pub max_tokens: Option<i32>,
+    pub temperature: Option<f64>,
+    pub headers: Option<HashMap<String, String>>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -73,10 +82,10 @@ pub trait LlmProvider: Send + Sync {
 pub struct LlmFactory;
 
 impl LlmFactory {
-    pub fn create(provider_type: ProviderType, api_key: &str, base_url: Option<&str>) -> LlmResult<Box<dyn LlmProvider>> {
+    pub fn create(provider_type: ProviderType, api_key: &str, base_url: Option<&str>, defaults: ProviderDefaults) -> LlmResult<Box<dyn LlmProvider>> {
         match provider_type {
-            ProviderType::OpenAi => Ok(Box::new(OpenAiProvider::new(api_key, base_url)?)),
-            ProviderType::Anthropic => Ok(Box::new(AnthropicProvider::new(api_key, base_url)?)),
+            ProviderType::OpenAi => Ok(Box::new(OpenAiProvider::new(api_key, base_url, defaults)?)),
+            ProviderType::Anthropic => Ok(Box::new(AnthropicProvider::new(api_key, base_url, defaults)?)),
             ProviderType::Ollama => Ok(Box::new(OllamaProvider::new(base_url.unwrap_or("http://localhost:11434"))?)),
             ProviderType::Google => Ok(Box::new(GoogleProvider::new(api_key)?)),
             ProviderType::Cohere => Ok(Box::new(CohereProvider::new(api_key)?)),

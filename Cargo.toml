@@ -19,6 +19,8 @@ members = [
     "crates/tui-core",
     "crates/media-core",
     "crates/daemon-core",
+    "crates/cron-core",
+    "crates/memory-core",
 ]
 resolver = "2"
 
@@ -50,16 +52,18 @@ sha2 = "0.10"
 hmac = "0.12"
 hex = "0.4"
 base64 = "0.22"
+urlencoding = "2"
+serde_yaml = "0.9"
 rand = "0.9"
 rustls = "0.23"
 webpki-roots = "0.26"
 native-tls = "0.2"
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 tower = "0.5"
 hyper = { version = "1.5", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
-tokio-tungstenite = "0.26"
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 futures-channel = "0.3"
 futures = "0.3"
 axum = { version = "0.8", features = ["ws"] }
@@ -79,6 +83,7 @@ async-stream = "0.3"
 cron = "0.15"
 tiktoken-rs = "0.6"
 dotenvy = "0.15"
+prost = "0.13"
 
 # Workspace member crates
 oclaws-protocol = { path = "crates/protocol" }
@@ -99,6 +104,8 @@ oclaws-security-core = { path = "crates/security-core" }
 oclaws-tui-core = { path = "crates/tui-core" }
 oclaws-media-core = { path = "crates/media-core" }
 oclaws-daemon-core = { path = "crates/daemon-core" }
+oclaws-cron-core = { path = "crates/cron-core" }
+oclaws-memory-core = { path = "crates/memory-core" }
 
 [profile.release]
 lto = "thin"

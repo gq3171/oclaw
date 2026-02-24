@@ -12,7 +12,7 @@ pub struct TogetherProvider {
 
 impl TogetherProvider {
     pub fn new(api_key: &str) -> LlmResult<Self> {
-        let inner = OpenAiProvider::new(api_key, Some("https://api.together.xyz/v1"))?;
+        let inner = OpenAiProvider::new(api_key, Some("https://api.together.xyz/v1"), Default::default())?;
         Ok(Self { inner })
     }
 }

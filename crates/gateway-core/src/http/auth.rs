@@ -51,10 +51,20 @@ struct RateLimitState {
 
 impl AuthState {
     pub fn new(auth: Option<GatewayAuth>) -> Self {
+        let mut tokens = HashMap::new();
+        if let Some(ref a) = auth
+            && let Some(ref t) = a.token
+        {
+            tokens.insert(t.clone(), TokenInfo {
+                created_at: Instant::now(),
+                ttl: Duration::from_secs(365 * 24 * 3600),
+                scopes: vec!["*".to_string()],
+            });
+        }
         Self {
-            config: auth.clone(),
-            rate_limiter: Arc::new(RwLock::new(RateLimiter::new(auth.and_then(|a| a.rate_limit)))),
-            tokens: Arc::new(RwLock::new(HashMap::new())),
+            rate_limiter: Arc::new(RwLock::new(RateLimiter::new(auth.as_ref().and_then(|a| a.rate_limit.clone())))),
+            config: auth,
+            tokens: Arc::new(RwLock::new(tokens)),
             device_sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }

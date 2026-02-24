@@ -3,12 +3,38 @@ pub mod subagent;
 pub mod model_fallback;
 pub mod auth;
 pub mod loop_detect;
+pub mod transcript;
+pub mod history;
+pub mod compaction;
+pub mod pruning;
+pub mod transcript_repair;
+pub mod tool_mutation;
+pub mod command_poll;
+pub mod auth_cooldown;
+pub mod stream_chunker;
+pub mod echo_detect;
+pub mod reply_dispatch;
+pub mod auto_recall;
+pub mod thread_ownership;
 
 pub use agent::{Agent, AgentConfig, AgentState, ToolExecutor};
 pub use subagent::{Subagent, SubagentRegistry, SubagentStatus};
-pub use model_fallback::{ModelFallback, ModelChain, FallbackConfig};
+pub use model_fallback::{ModelFallback, ModelChain, FallbackConfig, ModelCandidate, CooldownTracker, FallbackAttempt, FallbackResult, run_with_fallback};
 pub use auth::{AuthManager, AuthProvider, ProviderCredentials};
-pub use loop_detect::LoopDetector;
+pub use loop_detect::{LoopDetector, LoopLevel, LoopDetectionResult};
+pub use transcript::Transcript;
+pub use history::limit_history_turns;
+pub use compaction::{CompactionConfig, CompactionResult, compact_history, needs_compaction};
+pub use pruning::{PruningConfig, prune_tool_results};
+pub use transcript_repair::{repair_tool_use_result_pairing, sanitize_tool_call_inputs, repair_jsonl_lines};
+pub use tool_mutation::{is_mutating_tool_call, build_tool_action_fingerprint, MutationTracker};
+pub use command_poll::CommandPollTracker;
+pub use auth_cooldown::AuthCooldownTracker;
+pub use stream_chunker::{StreamChunker, ChunkingConfig, BreakPreference};
+pub use echo_detect::EchoTracker;
+pub use reply_dispatch::{ReplyDispatcher, ReplyPayload, ReplyKind};
+pub use auto_recall::{AutoRecallConfig, RecallResult, MemoryRecaller, format_recall_context};
+pub use thread_ownership::ThreadOwnership;
 
 pub type AgentResult<T> = Result<T, AgentError>;
 
@@ -37,6 +63,9 @@ pub enum AgentError {
     
     #[error("Rate limited: {0}")]
     RateLimited(String),
+
+    #[error("Context overflow: {0}")]
+    ContextOverflow(String),
 }
 
 impl serde::Serialize for AgentError {

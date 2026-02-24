@@ -9,6 +9,7 @@ use tracing::{info, error};
 
 use crate::http::HttpState;
 use oclaws_channel_core::traits::ChannelEvent;
+use oclaws_channel_core::group_gate;
 
 async fn get_channel_and_forward(
     state: &HttpState,
@@ -44,12 +45,101 @@ pub async fn telegram_webhook(
         "message"
     };
     info!("Telegram webhook: {}", event_type);
+
+    // Extract chat_id, text, and chat type from Telegram update
+    let (chat_id, text, is_group) = if event_type == "message" {
+        let cid = payload.pointer("/message/chat/id").and_then(|v| v.as_i64());
+        let txt = payload.pointer("/message/text").and_then(|v| v.as_str());
+        let chat_type = payload.pointer("/message/chat/type").and_then(|v| v.as_str()).unwrap_or("private");
+        let group = chat_type == "group" || chat_type == "supergroup";
+        (cid, txt.map(|s| s.to_string()), group)
+    } else {
+        (None, None, false)
+    };
+
+    if let (Some(chat_id), Some(text)) = (chat_id, text) {
+        let is_echo = state.echo_tracker.lock().await.has(&text);
+        // Telegram: check for @bot mention in text for group gating
+        let has_mention = text.contains('@');
+        let should = group_gate::should_process(is_group, state.group_activation, has_mention);
+
+        if !is_echo && should {
+            let state_clone = state.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_telegram_reply(&state_clone, chat_id, &text).await {
+                    error!("Failed to handle Telegram reply: {}", e);
+                }
+            });
+        }
+    }
+
+    // Still forward event for logging
     let event = ChannelEvent {
         event_type: event_type.to_string(),
         channel: "telegram".to_string(),
         payload,
     };
     get_channel_and_forward(&state, "telegram", event).await
+}
+
+async fn handle_telegram_reply(
+    state: &HttpState,
+    chat_id: i64,
+    text: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let provider = state.llm_provider.as_ref()
+        .ok_or("No LLM provider configured")?;
+
+    let reply = if let Some(ref registry) = state.tool_registry {
+        let executor = crate::http::agent_bridge::ToolRegistryExecutor::new(registry.clone());
+        crate::http::agent_bridge::agent_reply(provider, &executor, text).await
+            .unwrap_or_else(|e| format!("Agent error: {}", e))
+    } else {
+        // Fallback: direct LLM call without tools
+        let request = oclaws_llm_core::chat::ChatRequest {
+            model: provider.default_model().to_string(),
+            messages: vec![oclaws_llm_core::chat::ChatMessage {
+                role: oclaws_llm_core::chat::MessageRole::User,
+                content: text.to_string(),
+                name: None, tool_calls: None, tool_call_id: None,
+            }],
+            temperature: None, top_p: None, max_tokens: None,
+            stop: None, tools: None, tool_choice: None,
+            stream: None, response_format: None,
+        };
+        provider.chat(request).await
+            .map(|c| c.choices.first().map(|ch| ch.message.content.clone()).unwrap_or_default())
+            .unwrap_or_else(|e| format!("LLM error: {}", e))
+    };
+
+    // Echo tracking — remember our reply so we skip it on re-receive
+    state.echo_tracker.lock().await.remember(&reply);
+
+    // Send reply via channel
+    let manager = state.channel_manager.as_ref()
+        .ok_or("No channel manager")?;
+    let mgr = manager.read().await;
+    let channel = mgr.get("telegram").await
+        .ok_or("Telegram channel not found")?;
+
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("chat_id".to_string(), chat_id.to_string());
+
+    let msg = oclaws_channel_core::traits::ChannelMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        channel: "telegram".to_string(),
+        sender: "bot".to_string(),
+        content: reply.to_string(),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        metadata,
+    };
+
+    let ch = channel.read().await;
+    ch.send_message(&msg).await
+        .map_err(|e| format!("Send error: {}", e))?;
+
+    info!("Replied to Telegram chat {}", chat_id);
+    Ok(())
 }
 
 pub async fn slack_webhook(
@@ -98,6 +188,127 @@ pub async fn discord_webhook(
         payload,
     };
     get_channel_and_forward(&state, "discord", event).await
+}
+
+pub async fn feishu_webhook(
+    State(state): State<Arc<HttpState>>,
+    Json(payload): Json<serde_json::Value>,
+) -> Response {
+    // Handle Feishu URL verification challenge
+    if payload.get("type").and_then(|t| t.as_str()) == Some("url_verification") {
+        let challenge = payload["challenge"].as_str().unwrap_or("");
+        return Json(serde_json::json!({"challenge": challenge})).into_response();
+    }
+
+    // Extract event type
+    let event_type = payload.pointer("/header/event_type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("event");
+    info!("Feishu webhook: {}", event_type);
+
+    // Handle im.message.receive_v1
+    if event_type == "im.message.receive_v1" {
+        let chat_id = payload.pointer("/event/message/chat_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let message_id = payload.pointer("/event/message/message_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let msg_type = payload.pointer("/event/message/message_type").and_then(|v| v.as_str()).unwrap_or("text");
+        let chat_type = payload.pointer("/event/message/chat_type").and_then(|v| v.as_str()).unwrap_or("p2p");
+        let is_group = chat_type == "group";
+        let has_mention = payload.pointer("/event/message/mentions")
+            .and_then(|v| v.as_array())
+            .is_some_and(|arr| !arr.is_empty());
+
+        let text = if msg_type == "text" {
+            payload.pointer("/event/message/content")
+                .and_then(|v| v.as_str())
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .and_then(|v| v["text"].as_str().map(|s| s.to_string()))
+        } else {
+            Some(format!("[{}消息]", msg_type))
+        };
+
+        if let (Some(chat_id), Some(text)) = (chat_id, text) {
+            // Echo detection — skip own messages
+            let is_echo = state.echo_tracker.lock().await.has(&text);
+            // Group gating
+            let should = group_gate::should_process(is_group, state.group_activation, has_mention);
+
+            if !is_echo && should {
+                let state_clone = state.clone();
+                let message_id = message_id.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = handle_feishu_reply(&state_clone, &chat_id, message_id.as_deref(), &text).await {
+                        error!("Failed to handle Feishu reply: {}", e);
+                    }
+                });
+            } else if !should {
+                info!("Feishu: skipping group message (not mentioned)");
+            }
+        }
+    }
+
+    let event = ChannelEvent {
+        event_type: event_type.to_string(),
+        channel: "feishu".to_string(),
+        payload,
+    };
+    get_channel_and_forward(&state, "feishu", event).await
+}
+
+async fn handle_feishu_reply(
+    state: &HttpState,
+    chat_id: &str,
+    message_id: Option<&str>,
+    text: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let provider = state.llm_provider.as_ref()
+        .ok_or("No LLM provider configured")?;
+
+    let reply = if let Some(ref registry) = state.tool_registry {
+        let executor = crate::http::agent_bridge::ToolRegistryExecutor::new(registry.clone());
+        crate::http::agent_bridge::agent_reply(provider, &executor, text).await
+            .unwrap_or_else(|e| format!("Agent error: {}", e))
+    } else {
+        let request = oclaws_llm_core::chat::ChatRequest {
+            model: provider.default_model().to_string(),
+            messages: vec![oclaws_llm_core::chat::ChatMessage {
+                role: oclaws_llm_core::chat::MessageRole::User,
+                content: text.to_string(),
+                name: None, tool_calls: None, tool_call_id: None,
+            }],
+            temperature: None, top_p: None, max_tokens: None,
+            stop: None, tools: None, tool_choice: None,
+            stream: None, response_format: None,
+        };
+        provider.chat(request).await
+            .map(|c| c.choices.first().map(|ch| ch.message.content.clone()).unwrap_or_default())
+            .unwrap_or_else(|e| format!("LLM error: {}", e))
+    };
+
+    state.echo_tracker.lock().await.remember(&reply);
+
+    let manager = state.channel_manager.as_ref().ok_or("No channel manager")?;
+    let mgr = manager.read().await;
+    let channel = mgr.get("feishu").await.ok_or("Feishu channel not found")?;
+
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("chat_id".to_string(), chat_id.to_string());
+    if let Some(mid) = message_id {
+        metadata.insert("message_id".to_string(), mid.to_string());
+    }
+
+    let msg = oclaws_channel_core::traits::ChannelMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        channel: "feishu".to_string(),
+        sender: "bot".to_string(),
+        content: reply,
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        metadata,
+    };
+
+    let ch = channel.read().await;
+    ch.send_message(&msg).await.map_err(|e| format!("Send error: {}", e))?;
+    info!("Replied to Feishu chat {}", chat_id);
+    Ok(())
 }
 
 pub async fn generic_webhook(

@@ -20,3 +20,5 @@ async-trait.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
+dirs.workspace = true
+rand.workspace = true

@@ -45,7 +45,7 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approvals: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub session: Option<serde_json::Value>,
+    pub session: Option<SessionConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cron: Option<Cron>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,6 +62,10 @@ pub struct Config {
     pub talk: Option<Talk>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gateway: Option<Gateway>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugins: Option<PluginsConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory: Option<MemoryConfig>,
 }
 
 impl Config {
@@ -152,6 +156,16 @@ impl Config {
                 .slack.get_or_insert(SlackChannel { enabled: None, bot_token: None, signing_secret: None, channel_ids: None, webhook_url: None })
                 .signing_secret = Some(v);
         }
+        if let Ok(v) = std::env::var("OCLAWS_FEISHU_APP_ID") {
+            self.channels.get_or_insert_with(Channels::default)
+                .feishu.get_or_insert(FeishuChannel { enabled: None, app_id: None, app_secret: None, verification_token: None, encrypt_key: None })
+                .app_id = Some(v);
+        }
+        if let Ok(v) = std::env::var("OCLAWS_FEISHU_APP_SECRET") {
+            self.channels.get_or_insert_with(Channels::default)
+                .feishu.get_or_insert(FeishuChannel { enabled: None, app_id: None, app_secret: None, verification_token: None, encrypt_key: None })
+                .app_secret = Some(v);
+        }
 
         // Dynamic per-provider API keys: OCLAWS_PROVIDER_{NAME}_API_KEY
         for (key, value) in std::env::vars() {
@@ -165,7 +179,7 @@ impl Config {
                     .or_insert(ModelProvider {
                         provider: name, api_key: None, base_url: None,
                         model: None, max_tokens: None, temperature: None,
-                        max_concurrency: None, headers: None,
+                        max_concurrency: None, headers: None, fallback: None,
                     })
                     .api_key = Some(value);
             }
@@ -407,6 +421,8 @@ pub struct AuthCooldowns {
 pub struct ModelsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub providers: Option<HashMap<String, ModelProvider>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<FallbackSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -427,6 +443,8 @@ pub struct ModelProvider {
     pub max_concurrency: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -522,6 +540,8 @@ pub struct Channels {
     pub google_chat: Option<GoogleChatChannel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mattermost: Option<MattermostChannel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feishu: Option<FeishuChannel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -566,6 +586,21 @@ pub struct TelegramChannel {
     pub bot_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeishuChannel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypt_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -925,6 +960,123 @@ pub struct HttpEndpoint {
     pub enabled: Option<bool>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history_limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persist: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<CompactionSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pruning: Option<PruningSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset: Option<SessionResetConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactionSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reserve_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_recent_tokens: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PruningSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soft_trim_max_chars: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hard_clear_max_chars: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_last_assistants: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionResetConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_minutes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load: Option<PluginLoadConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slots: Option<PluginSlots>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub entries: HashMap<String, PluginEntryConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginLoadConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSlots {
+    pub memory: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginEntryConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub config: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FallbackSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cooldown_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_delay_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vector_weight: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_weight: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_index: Option<bool>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -994,6 +1146,7 @@ mod tests {
             temperature: Some(0.7),
             max_concurrency: Some(10),
             headers: None,
+            fallback: None,
         };
 
         let json = serde_json::to_string(&provider).unwrap();

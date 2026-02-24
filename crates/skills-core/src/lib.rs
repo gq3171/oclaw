@@ -30,6 +30,10 @@ impl serde::Serialize for SkillError {
 pub mod skill;
 pub mod registry;
 pub mod builtin;
+pub mod manifest;
+pub mod discovery;
+pub mod gates;
+pub mod installer;
 
 pub use skill::{Skill, SkillInput, SkillOutput, SkillContext};
 pub use registry::SkillRegistry;

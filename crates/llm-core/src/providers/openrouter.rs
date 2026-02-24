@@ -12,7 +12,7 @@ pub struct OpenRouterProvider {
 
 impl OpenRouterProvider {
     pub fn new(api_key: &str) -> LlmResult<Self> {
-        let inner = OpenAiProvider::new(api_key, Some("https://openrouter.ai/api/v1"))?;
+        let inner = OpenAiProvider::new(api_key, Some("https://openrouter.ai/api/v1"), Default::default())?;
         Ok(Self { inner })
     }
 }

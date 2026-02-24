@@ -12,9 +12,13 @@ pub mod nostr;
 pub mod irc;
 pub mod google_chat;
 pub mod mattermost;
+pub mod feishu;
 pub mod manager;
+pub mod group_gate;
+pub mod draft_stream;
 
 pub use traits::*;
+pub use draft_stream::{DraftStreamLoop, DraftStreamHandle};
 pub use router::{
     MessageType, Attachment, MessageContent, Message,
     MessageSender as RouterMessageSender, MessageRecipient, MessageReaction,

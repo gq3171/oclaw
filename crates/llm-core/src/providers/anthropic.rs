@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::chat::{ChatMessage, ChatRequest, ChatCompletion, MessageRole};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
@@ -12,15 +12,20 @@ pub struct AnthropicProvider {
     api_key: String,
     base_url: String,
     default_model_name: String,
+    default_max_tokens: i32,
+    default_temperature: Option<f64>,
 }
 
 impl AnthropicProvider {
-    pub fn new(api_key: &str, base_url: Option<&str>) -> LlmResult<Self> {
+    pub fn new(api_key: &str, base_url: Option<&str>, defaults: crate::providers::ProviderDefaults) -> LlmResult<Self> {
+        let model = defaults.model.unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string());
         Ok(Self {
             client: Client::new(),
             api_key: api_key.to_string(),
             base_url: base_url.unwrap_or("https://api.anthropic.com").trim_end_matches('/').to_string(),
-            default_model_name: "claude-3-5-sonnet-20241022".to_string(),
+            default_max_tokens: defaults.max_tokens.unwrap_or(4096),
+            default_temperature: defaults.temperature,
+            default_model_name: model,
         })
     }
 }
@@ -34,30 +39,37 @@ impl LlmProvider for AnthropicProvider {
     async fn chat(&self, request: ChatRequest) -> LlmResult<ChatCompletion> {
         let url = format!("{}/v1/messages", self.base_url);
 
-        #[derive(Serialize)]
-        struct AnthropicMessage {
-            role: String,
-            content: String,
-        }
-
         let system_prompt = request.messages.iter()
             .find(|m| m.role == MessageRole::System)
             .map(|m| m.content.clone());
 
-        let messages: Vec<AnthropicMessage> = request.messages.iter()
+        // Build messages with tool support
+        let messages: Vec<serde_json::Value> = request.messages.iter()
             .filter(|m| m.role != MessageRole::System)
-            .map(|m| AnthropicMessage {
-                role: if m.role == MessageRole::User { "user" } else { "assistant" }.to_string(),
-                content: m.content.clone(),
-            }).collect();
+            .map(anthropic_message)
+            .collect();
 
         let mut body = serde_json::json!({
             "model": request.model,
-            "messages": serde_json::to_value(&messages).unwrap_or_default(),
-            "max_tokens": request.max_tokens.unwrap_or(4096),
+            "messages": messages,
+            "max_tokens": request.max_tokens.unwrap_or(self.default_max_tokens),
         });
+        if let Some(t) = request.temperature.or(self.default_temperature) {
+            body["temperature"] = serde_json::json!(t);
+        }
         if let Some(sp) = system_prompt {
             body["system"] = serde_json::Value::String(sp);
+        }
+        // Add tools
+        if let Some(ref tools) = request.tools {
+            let tools_json: Vec<serde_json::Value> = tools.iter().map(|t| {
+                serde_json::json!({
+                    "name": t.function.name,
+                    "description": t.function.description,
+                    "input_schema": t.function.parameters,
+                })
+            }).collect();
+            body["tools"] = serde_json::Value::Array(tools_json);
         }
 
         let response = self.client
@@ -70,49 +82,16 @@ impl LlmProvider for AnthropicProvider {
             .await
             .map_err(|e| LlmError::NetworkError(e.to_string()))?;
 
-        if response.status().is_success() {
-            #[derive(Deserialize)]
-            struct AnthropicResponse {
-                id: String,
-                content: Vec<ContentBlock>,
-                model: String,
-            }
-
-            #[derive(Deserialize)]
-            struct ContentBlock {
-                text: Option<String>,
-            }
-
-            let resp: AnthropicResponse = response.json()
-                .await
-                .map_err(|e| LlmError::ParseError(e.to_string()))?;
-
-            let content = resp.content.first()
-                .and_then(|c| c.text.clone())
-                .unwrap_or_default();
-
-            Ok(ChatCompletion {
-                id: resp.id,
-                object: "chat.completion".to_string(),
-                created: chrono::Utc::now().timestamp(),
-                model: resp.model,
-                choices: vec![crate::chat::ChatChoice {
-                    index: 0,
-                    message: ChatMessage {
-                        role: MessageRole::Assistant,
-                        content,
-                        name: None,
-                        tool_calls: None,
-                        tool_call_id: None,
-                    },
-                    finish_reason: Some("stop".to_string()),
-                }],
-                usage: None,
-                system_fingerprint: None,
-            })
-        } else {
-            Err(LlmError::ApiError(format!("HTTP {}", response.status())))
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(LlmError::ApiError(format!("HTTP {} : {}", status, text)));
         }
+
+        let resp: serde_json::Value = response.json().await
+            .map_err(|e| LlmError::ParseError(e.to_string()))?;
+
+        parse_anthropic_response(resp)
     }
 
     async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<crate::chat::StreamChunk>>> {
@@ -135,9 +114,12 @@ impl LlmProvider for AnthropicProvider {
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": serde_json::to_value(&messages).unwrap_or_default(),
-            "max_tokens": request.max_tokens.unwrap_or(4096),
+            "max_tokens": request.max_tokens.unwrap_or(self.default_max_tokens),
             "stream": true,
         });
+        if let Some(t) = request.temperature.or(self.default_temperature) {
+            body["temperature"] = serde_json::json!(t);
+        }
         if let Some(sp) = system_prompt {
             body["system"] = serde_json::Value::String(sp);
         }
@@ -214,10 +196,119 @@ impl LlmProvider for AnthropicProvider {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        vec!["claude-3-5-sonnet-20241022".to_string(), "claude-3-opus-20240229".to_string()]
+        let mut models = vec!["claude-3-5-sonnet-20241022".to_string(), "claude-3-opus-20240229".to_string()];
+        if !models.contains(&self.default_model_name) {
+            models.insert(0, self.default_model_name.clone());
+        }
+        models
     }
 
     fn default_model(&self) -> &str {
         &self.default_model_name
     }
+}
+
+/// Convert a ChatMessage to Anthropic API message format.
+fn anthropic_message(m: &ChatMessage) -> serde_json::Value {
+    let role = match m.role {
+        MessageRole::User => "user",
+        MessageRole::Tool => "user",
+        _ => "assistant",
+    };
+
+    // Tool result → user message with tool_result content block
+    if m.role == MessageRole::Tool
+        && let Some(ref id) = m.tool_call_id
+    {
+        return serde_json::json!({
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": id,
+                "content": m.content,
+            }]
+        });
+    }
+
+    // Assistant message with tool_calls → tool_use content blocks
+    if let Some(ref tcs) = m.tool_calls {
+        let mut content: Vec<serde_json::Value> = Vec::new();
+        if !m.content.is_empty() {
+            content.push(serde_json::json!({"type": "text", "text": m.content}));
+        }
+        for tc in tcs {
+            let input: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                .unwrap_or(serde_json::json!({}));
+            content.push(serde_json::json!({
+                "type": "tool_use",
+                "id": tc.id,
+                "name": tc.function.name,
+                "input": input,
+            }));
+        }
+        return serde_json::json!({"role": "assistant", "content": content});
+    }
+
+    serde_json::json!({"role": role, "content": m.content})
+}
+
+/// Parse Anthropic response JSON into ChatCompletion, extracting tool_use blocks.
+fn parse_anthropic_response(resp: serde_json::Value) -> LlmResult<ChatCompletion> {
+    use crate::chat::*;
+
+    let id = resp["id"].as_str().unwrap_or("").to_string();
+    let model = resp["model"].as_str().unwrap_or("").to_string();
+    let stop_reason = resp["stop_reason"].as_str().unwrap_or("stop");
+
+    let content_blocks = resp["content"].as_array()
+        .ok_or_else(|| LlmError::ParseError("missing content".into()))?;
+
+    let mut text_parts = Vec::new();
+    let mut tool_calls = Vec::new();
+
+    for block in content_blocks {
+        match block["type"].as_str() {
+            Some("text") => {
+                if let Some(t) = block["text"].as_str() {
+                    text_parts.push(t.to_string());
+                }
+            }
+            Some("tool_use") => {
+                if let (Some(tc_id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) {
+                    let args = serde_json::to_string(&block["input"]).unwrap_or_default();
+                    tool_calls.push(ToolCall {
+                        id: tc_id.to_string(),
+                        type_: "function".to_string(),
+                        function: ToolCallFunction {
+                            name: name.to_string(),
+                            arguments: args,
+                        },
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let finish = if stop_reason == "tool_use" { "tool_calls" } else { "stop" };
+
+    Ok(ChatCompletion {
+        id,
+        object: "chat.completion".to_string(),
+        created: chrono::Utc::now().timestamp(),
+        model,
+        choices: vec![ChatChoice {
+            index: 0,
+            message: ChatMessage {
+                role: MessageRole::Assistant,
+                content: text_parts.join(""),
+                name: None,
+                tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+                tool_call_id: None,
+            },
+            finish_reason: Some(finish.to_string()),
+        }],
+        usage: None,
+        system_fingerprint: None,
+    })
 }

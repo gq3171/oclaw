@@ -14,12 +14,45 @@ pub struct PluginManifest {
     pub license: Option<String>,
     pub entry_point: String,
     pub dependencies: HashMap<String, String>,
+    #[serde(default)]
     pub optional_dependencies: HashMap<String, String>,
+    #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
     pub hooks: Vec<HookDefinition>,
     pub platform: Option<PlatformRequirements>,
+    #[serde(default)]
     pub builtin: bool,
+    /// Plugin kind — e.g. "memory" for memory-slot plugins.
+    pub kind: Option<String>,
+    /// JSON Schema for plugin config validation.
+    pub config_schema: Option<serde_json::Value>,
+    /// UI hints for config fields.
+    #[serde(default)]
+    pub ui_hints: HashMap<String, UiHint>,
+    /// Channel IDs this plugin provides.
+    #[serde(default)]
+    pub channels: Vec<String>,
+    /// Provider IDs this plugin provides.
+    #[serde(default)]
+    pub providers: Vec<String>,
+    /// Skill directories this plugin provides.
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UiHint {
+    pub label: Option<String>,
+    pub help: Option<String>,
+    #[serde(default)]
+    pub advanced: bool,
+    #[serde(default)]
+    pub sensitive: bool,
+    pub placeholder: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

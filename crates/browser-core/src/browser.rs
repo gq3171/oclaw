@@ -5,6 +5,7 @@ use crate::page::Page;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub struct BrowserProfile {
@@ -30,9 +31,46 @@ pub struct BrowserManager {
 }
 
 impl BrowserManager {
+    /// Discover the browser WebSocket debugger URL from the CDP HTTP endpoint.
+    async fn discover_ws_url(cdp_url: &str) -> BrowserResult<String> {
+        // If already a full devtools WS path, use as-is
+        if cdp_url.starts_with("ws://") && cdp_url.contains("/devtools/") {
+            return Ok(cdp_url.to_string());
+        }
+
+        // Derive HTTP base from whatever URL form was given
+        let base = cdp_url
+            .replace("ws://", "http://")
+            .replace("wss://", "https://")
+            .trim_end_matches('/')
+            .to_string();
+
+        let version_url = format!("{}/json/version", base);
+        debug!("Discovering CDP WebSocket URL from {}", version_url);
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .map_err(|e| BrowserError::ConnectionError(e.to_string()))?;
+
+        let resp = client.get(&version_url).send().await
+            .map_err(|e| BrowserError::ConnectionError(format!("CDP discovery failed: {}", e)))?;
+
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| BrowserError::ConnectionError(format!("CDP discovery parse error: {}", e)))?;
+
+        json.get("webSocketDebuggerUrl")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| BrowserError::ConnectionError(
+                "CDP /json/version missing webSocketDebuggerUrl".into()
+            ))
+    }
+
     pub async fn new(cdp_url: &str) -> BrowserResult<Self> {
-        let connection = CdpConnection::connect(cdp_url).await?;
-        
+        let ws_url = Self::discover_ws_url(cdp_url).await?;
+        let connection = CdpConnection::connect(&ws_url).await?;
+
         let browser = Self {
             cdp_url: cdp_url.to_string(),
             connection: Some(connection),

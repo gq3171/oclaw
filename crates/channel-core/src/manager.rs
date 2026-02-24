@@ -11,6 +11,7 @@ use crate::nostr::NostrChannel;
 use crate::irc::IrcChannel;
 use crate::google_chat::GoogleChatChannel;
 use crate::mattermost::MattermostChannel;
+use crate::feishu::FeishuChannel as FeishuCh;
 use oclaws_config::settings::Channels;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -182,6 +183,14 @@ impl ChannelManager {
                     }
                     
                     manager.register("mattermost".to_string(), channel).await;
+                }
+
+        if let Some(feishu) = &config.feishu
+            && feishu.enabled.unwrap_or(false)
+                && let (Some(app_id), Some(app_secret)) = (&feishu.app_id, &feishu.app_secret) {
+                    let channel = FeishuCh::new()
+                        .with_config(app_id, app_secret);
+                    manager.register("feishu".to_string(), channel).await;
                 }
 
         manager

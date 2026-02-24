@@ -6,3 +6,4 @@ Cargo.lock
 *.d
 *.lock
 nul
+.env
