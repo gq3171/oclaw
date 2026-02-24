@@ -1,10 +1,10 @@
-# OpenClaw (oclaw)
+# oclaw
 
 [English](README.md)
 
 一个用 Rust 编写的模块化 AI 智能体网关框架。单一二进制文件，零外部依赖，开箱即用。
 
-## 为什么选择 OpenClaw
+## 为什么选择 oclaw
 
 - **单一二进制** — 一个 `oclaws` 文件搞定一切。不需要 Node.js、Python 或 Docker，单文件即可部署到任何环境。
 - **极致性能** — 纯 Rust 编写，异步优先架构。以极低的内存占用处理数千并发连接（Release 二进制仅 ~28MB）。
@@ -25,7 +25,7 @@
 
 ```bash
 # 克隆并构建
-git clone https://github.com/anthropics/oclaw.git
+git clone https://github.com/gq3171/oclaw.git
 cd oclaw
 cargo build --release
 

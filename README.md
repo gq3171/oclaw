@@ -1,10 +1,10 @@
-# OpenClaw (oclaw)
+# oclaw
 
 [中文文档](README_CN.md)
 
 A modular AI agent gateway framework written in Rust. Single binary, zero external dependencies, production-ready.
 
-## Why OpenClaw
+## Why oclaw
 
 - **Single Binary** — One `oclaws` binary does everything. No Node.js, no Python, no Docker required. Deploy anywhere with a single file.
 - **Blazing Fast** — Written in pure Rust with async-first architecture. Handles thousands of concurrent connections with minimal memory footprint (~28MB release binary).
@@ -25,7 +25,7 @@ A modular AI agent gateway framework written in Rust. Single binary, zero extern
 
 ```bash
 # Clone and build
-git clone https://github.com/anthropics/oclaw.git
+git clone https://github.com/gq3171/oclaw.git
 cd oclaw
 cargo build --release
 
