@@ -1,33 +1,42 @@
 # OpenClaw (oclaw)
 
-一个用 Rust 编写的模块化 AI 智能体网关框架。提供 WebSocket/HTTP 网关服务、多供应商 LLM 集成、多渠道消息通信、插件/技能扩展、定时任务、记忆系统和终端 UI。
+[English](README.md)
 
-## 特性
+一个用 Rust 编写的模块化 AI 智能体网关框架。单一二进制文件，零外部依赖，开箱即用。
 
-- **网关** — HTTP + WebSocket 服务器，支持 TLS、速率限制、安全头、优雅关闭
-- **多模型** — Anthropic、OpenAI、Google、Cohere、Ollama、AWS Bedrock、OpenRouter、Together AI、MiniMax，支持模型降级链
-- **渠道** — Telegram、Slack、Discord、Matrix、Signal、LINE、Mattermost、Google Chat、飞书、MS Teams
-- **智能体** — 子智能体编排、工具执行、循环检测、回声检测、上下文压缩、自动记忆召回
-- **存储** — SQLite、PostgreSQL、向量搜索 (LanceDB)、全文搜索、混合搜索、时间衰减排序
-- **记忆** — 长期记忆管理、嵌入向量搜索、文件监控自动索引
-- **安全** — OAuth 2.0 (Google/Discord/GitHub/Slack)、CSRF 防护、HMAC 验证、TLS 证书校验
-- **扩展** — 插件系统（含 HTTP 路由注册）、技能注册与模式匹配、沙箱执行
-- **定时任务** — Cron 调度、并发控制、持久化存储、Webhook 触发
-- **可观测性** — Prometheus 指标、结构化 JSON 日志、健康检查、系统诊断
-- **界面** — Web 聊天 UI、Web 配置管理 UI、终端 UI (ratatui)
+## 为什么选择 OpenClaw
+
+- **单一二进制** — 一个 `oclaws` 文件搞定一切。不需要 Node.js、Python 或 Docker，单文件即可部署到任何环境。
+- **极致性能** — 纯 Rust 编写，异步优先架构。以极低的内存占用处理数千并发连接（Release 二进制仅 ~28MB）。
+- **9 大 LLM 供应商** — Anthropic、OpenAI、Google、Cohere、Ollama、AWS Bedrock、OpenRouter、Together AI、MiniMax。一行配置切换供应商，供应商故障时自动降级。
+- **13 个消息渠道** — Telegram、Slack、Discord、WhatsApp、Matrix、Signal、LINE、Mattermost、Google Chat、飞书、Nostr、IRC、网页聊天。将 AI 接入任何平台。
+- **内置 Web 界面** — 聊天界面和完整配置管理 UI 内嵌在二进制文件中，无需额外部署前端。
+- **OpenAI 兼容 API** — 直接替代 OpenAI 的 `/v1/chat/completions` 和 `/v1/responses` 端点，兼容所有 OpenAI 客户端。
+- **企业级特性** — OAuth 2.0、速率限制、TLS、Prometheus 指标、OpenTelemetry、结构化日志、健康检查、定时任务、插件系统。
+- **中英文配置界面** — 可视化配置编辑器，完整中英文支持。在浏览器中编辑所有设置，即时保存生效。
 
 ## 快速开始
 
 ### 前置要求
 
 - Rust 1.85+（edition 2024）
-- SQLite（内置）或 PostgreSQL（可选）
 
-### 构建与运行
+### 安装与运行
 
 ```bash
-cargo build --workspace
-cargo run -p oclaw-cli -- start --port 8080
+# 克隆并构建
+git clone https://github.com/anthropics/oclaw.git
+cd oclaw
+cargo build --release
+
+# 初始化配置
+./target/release/oclaws config init
+
+# 或使用交互式向导
+./target/release/oclaws wizard
+
+# 启动网关
+./target/release/oclaws start --port 8080
 ```
 
 启动后可访问：
@@ -46,36 +55,25 @@ cp .env.example .env
 # 编辑 .env 填入你的 API Key 和 Token
 ```
 
-`.env.example` 示例：
-
-```env
-OCLAWS_PROVIDER_MINIMAX_API_KEY=your-api-key
-OCLAWS_TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
-OCLAWS_FEISHU_APP_ID=your-feishu-app-id
-OCLAWS_FEISHU_APP_SECRET=your-feishu-app-secret
-OCLAWS_GATEWAY_AUTH_TOKEN=your-random-token-here
-```
-
 ### 配置
-
-```bash
-# 初始化配置
-cargo run -p oclaw-cli -- config init
-
-# 交互式配置向导
-cargo run -p oclaw-cli -- wizard
-
-# 设置渠道 / 供应商 / 技能
-cargo run -p oclaw-cli -- channel setup
-cargo run -p oclaw-cli -- provider setup
-cargo run -p oclaw-cli -- skill setup
-```
 
 配置文件位置：`~/.oclaws/config.json`（Linux/macOS）或 `%APPDATA%\oclaws\config.json`（Windows）。
 
-完整配置参考请查看 [`config.example.json`](config.example.json)。
+三种配置方式：
 
-也可通过 Web 配置管理界面在线编辑：启动网关后访问 `http://127.0.0.1:8081/ui/config`。
+1. **Web 界面** — 访问 `http://127.0.0.1:8081/ui/config`，所有字段预渲染的可视化编辑器
+2. **CLI 向导** — 运行 `oclaws wizard` 进行交互式配置
+3. **JSON 文件** — 直接编辑 `config.json`，参考 [`config.example.json`](config.example.json)
+
+```bash
+# CLI 配置命令
+oclaws config init          # 创建默认配置
+oclaws config show          # 显示当前配置
+oclaws config validate      # 验证配置
+oclaws channel setup        # 设置消息渠道
+oclaws provider setup       # 设置 LLM 供应商
+oclaws skill setup          # 设置技能
+```
 
 ## Web 界面
 
@@ -83,8 +81,8 @@ cargo run -p oclaw-cli -- skill setup
 
 内嵌的 Web 聊天界面，无需额外前端部署，启动网关即可使用。
 
-功能：
-- 与 LLM 实时对话，支持工具调用展示
+- 与 LLM 实时对话，支持流式响应
+- 工具调用可视化，可折叠的工具卡片
 - Markdown 渲染（代码块、引用、列表、链接，代码一键复制）
 - 会话管理 — 顶部下拉切换/新建会话
 - 模型切换 — 顶部下拉切换当前模型
@@ -94,7 +92,14 @@ cargo run -p oclaw-cli -- skill setup
 
 ### 配置管理 UI (`/ui/config`)
 
-可视化编辑 `config.json` 的全部字段，支持中英文切换，保存后即时生效。
+可视化配置编辑器，完整中英文支持。
+
+- 9 个配置页面：网关、模型、频道、会话、浏览器、定时任务、记忆、日志、高级设置
+- 所有字段预渲染 — 无需手动添加配置项
+- 供应商管理，支持添加/删除和类型选择
+- 频道卡片，支持启用/禁用开关和独立配置
+- 配置导入/导出为 JSON
+- 实时保存并验证
 
 ## CLI 命令
 
@@ -123,6 +128,51 @@ cargo run -p oclaw-cli -- skill setup
 --gateway-url <URL>    网关地址（默认：http://127.0.0.1:8081）
 ```
 
+## API 端点
+
+### OpenAI 兼容接口
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/v1/chat/completions` | POST | 聊天补全（支持流式和非流式） |
+| `/v1/responses` | POST | 响应 API |
+
+### 网关管理
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/health` | GET | 存活检查 |
+| `/ready` | GET | 就绪检查（含组件健康状态） |
+| `/ws` | GET | WebSocket 协议连接 |
+| `/webchat/ws` | GET | Web 聊天 WebSocket |
+| `/agent/status` | GET | 智能体状态 |
+| `/sessions` | GET | 列出会话 |
+| `/sessions/{key}` | DELETE | 删除会话 |
+| `/config` | GET | 获取网关配置 |
+| `/config/reload` | POST | 重新加载配置 |
+| `/models` | GET | 列出可用模型 |
+| `/metrics` | GET | Prometheus 指标 |
+| `/cron/jobs` | GET/POST | 列出/创建定时任务 |
+| `/cron/jobs/{id}` | DELETE | 删除定时任务 |
+| `/api/config/full` | GET/PUT | 读取/写入完整配置 |
+
+### Web 界面
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/ui/chat` | GET | Web 聊天界面 |
+| `/ui/config` | GET | Web 配置管理界面 |
+
+### Webhooks
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/webhooks/telegram` | POST | Telegram Webhook |
+| `/webhooks/slack` | POST | Slack Webhook |
+| `/webhooks/discord` | POST | Discord Webhook |
+| `/webhooks/feishu` | POST | 飞书 Webhook |
+| `/webhooks/{channel}` | POST | 通用渠道 Webhook |
+
 ## 架构
 
 ```
@@ -132,7 +182,7 @@ crates/
 ├── gateway-core/   # HTTP + WebSocket 服务器、中间件、Webhook、Web UI
 ├── agent-core/     # 智能体编排、子智能体、模型降级、回声检测、上下文压缩
 ├── llm-core/       # 多供应商 LLM 集成（9 个供应商）
-├── channel-core/   # 消息渠道适配器（10 个渠道）
+├── channel-core/   # 消息渠道适配器（13 个渠道）
 ├── tools-core/     # 工具执行框架
 ├── storage-core/   # 数据库抽象层 (SQLite/PG/向量)、时间衰减、查询扩展
 ├── memory-core/    # 长期记忆管理、嵌入搜索、文件监控
@@ -146,7 +196,7 @@ crates/
 ├── voice-core/     # 音频流 (STT/TTS)
 ├── media-core/     # 图像/音频处理
 ├── browser-core/   # 浏览器自动化
-├── tui-core/       # 终端 UI
+├── tui-core/       # 终端 UI (ratatui)
 └── daemon-core/    # 后台服务
 ```
 
@@ -158,34 +208,6 @@ cargo test -p oclaws-security-core       # 测试单个 crate
 cargo clippy --workspace --all-features -- -D warnings
 cargo fmt --all -- --check
 ```
-
-## API 端点
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/health` | GET | 存活检查 |
-| `/ready` | GET | 就绪检查（含组件健康状态） |
-| `/ws` | GET | WebSocket 协议连接 |
-| `/webchat/ws` | GET | Web 聊天 WebSocket |
-| `/v1/chat/completions` | POST | OpenAI 兼容聊天 API |
-| `/v1/responses` | POST | 响应 API |
-| `/agent/status` | GET | 智能体状态 |
-| `/sessions` | GET | 列出会话 |
-| `/sessions/{key}` | DELETE | 删除会话 |
-| `/config` | GET | 获取网关配置 |
-| `/config/reload` | POST | 重新加载配置 |
-| `/models` | GET | 列出可用模型 |
-| `/metrics` | GET | Prometheus 指标 |
-| `/cron/jobs` | GET/POST | 列出/创建定时任务 |
-| `/cron/jobs/{id}` | DELETE | 删除定时任务 |
-| `/api/config/full` | GET/PUT | 读取/写入完整配置 |
-| `/ui/chat` | GET | Web 聊天界面 |
-| `/ui/config` | GET | Web 配置管理界面 |
-| `/webhooks/telegram` | POST | Telegram Webhook |
-| `/webhooks/slack` | POST | Slack Webhook |
-| `/webhooks/discord` | POST | Discord Webhook |
-| `/webhooks/feishu` | POST | 飞书 Webhook |
-| `/webhooks/{channel}` | POST | 通用渠道 Webhook |
 
 ## 许可证
 

@@ -436,243 +436,677 @@ pub async fn webchat_ui_handler() -> axum::response::Html<&'static str> {
     axum::response::Html(WEBCHAT_HTML)
 }
 
-const CONFIG_UI_HTML: &str = r##"<!DOCTYPE html>
+const CONFIG_UI_HTML: &str = concat!(
+r##"<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OCLAWS Config</title>
+<title>OpenClaw Config</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#0f0f1a;color:#e0e0e0;padding:20px;min-height:100vh}
-.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
-h1{color:#00d4ff;font-size:1.5rem}
-#lang-btn{padding:6px 14px;background:#16213e;border:1px solid #0f3460;border-radius:6px;color:#00d4ff;cursor:pointer;font-size:13px}
-#lang-btn:hover{background:#0f3460}
-.tabs{display:flex;gap:4px;margin-bottom:0;flex-wrap:wrap}
-.tab{padding:10px 18px;background:#16213e;border:1px solid #0f3460;border-bottom:none;border-radius:8px 8px 0 0;cursor:pointer;color:#8899aa;transition:all .2s;font-size:14px}
-.tab:hover{background:#1a2744;color:#c0c0c0}
-.tab.active{background:#1e2d4a;color:#00d4ff;border-color:#00d4ff;border-bottom-color:transparent}
-.panel{display:none;background:#1e2d4a;border:1px solid #0f3460;border-radius:0 8px 8px 8px;padding:20px;max-height:68vh;overflow-y:auto}
-.panel.active{display:block}
-.panel::-webkit-scrollbar{width:6px}
-.panel::-webkit-scrollbar-thumb{background:#0f3460;border-radius:3px}
-.field{margin-bottom:14px;position:relative}
-.field label{display:block;font-size:12px;color:#6b7f99;margin-bottom:4px;letter-spacing:.3px}
-.field input,.field textarea,.field select{width:100%;padding:9px 12px;background:#141825;border:1px solid #2a3a5c;border-radius:6px;color:#e0e0e0;font-family:'SF Mono',Monaco,monospace;font-size:13px;transition:border-color .2s}
-.field input:focus,.field textarea:focus{outline:none;border-color:#00d4ff}
-.field input[type=checkbox]{width:auto;accent-color:#00d4ff}
+:root{--bg:#0f0f1a;--bg2:#161d30;--bg3:#1e2d4a;--bg4:#141825;--bg5:#19223a;--accent:#00d4ff;--accent2:#0f3460;--border:#2a3a5c;--text:#e0e0e0;--text2:#8899aa;--text3:#6b7f99;--ok:#4caf50;--err:#f44336;--warn:#ff9800}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+a{color:var(--accent)}
+.topbar{display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--bg2);border-bottom:1px solid var(--bg3);flex-shrink:0}
+.topbar .brand{font-weight:700;color:var(--accent);font-size:16px}
+.topbar .spacer{flex:1}
+.topbar-btn{padding:5px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text2);cursor:pointer;font-size:12px;transition:all .2s}
+.topbar-btn:hover{color:var(--accent);border-color:var(--accent)}
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--bg3);overflow-y:auto;flex-shrink:0;padding:8px 0}
+.sidebar::-webkit-scrollbar{width:4px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--accent2);border-radius:2px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;color:var(--text2);font-size:13px;transition:all .15s;border-left:3px solid transparent}
+.nav-item:hover{background:rgba(0,212,255,.04);color:var(--text)}
+.nav-item.active{background:rgba(0,212,255,.08);color:var(--accent);border-left-color:var(--accent)}
+.nav-item .icon{font-size:16px;width:20px;text-align:center}
+.nav-item .badge{margin-left:auto;background:var(--accent2);color:var(--text3);font-size:10px;padding:1px 6px;border-radius:8px}
+.main{flex:1;overflow-y:auto;padding:24px 32px}
+.main::-webkit-scrollbar{width:6px}
+.main::-webkit-scrollbar-thumb{background:var(--accent2);border-radius:3px}
+.page{display:none}
+.page.active{display:block}
+.page-title{font-size:18px;font-weight:600;color:var(--accent);margin-bottom:4px}
+.page-desc{font-size:13px;color:var(--text3);margin-bottom:20px}
+.card{background:var(--bg5);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;transition:box-shadow .2s}
+.card:hover{box-shadow:0 2px 12px rgba(0,212,255,.06)}
+.card-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.card-title{font-size:14px;font-weight:600;color:var(--text)}
+.card-desc{font-size:12px;color:var(--text3)}
+.card-badge{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:500}
+.card-badge.on{background:#1a3a2e;color:var(--ok)}
+.card-badge.off{background:#2a2020;color:var(--text3)}
+.field{margin-bottom:14px}
+.field-row{display:flex;gap:12px;margin-bottom:14px}
+.field-row .field{flex:1;margin-bottom:0}
+.field label{display:block;font-size:12px;color:var(--text3);margin-bottom:4px;letter-spacing:.3px}
+.field .hint{font-size:11px;color:var(--text3);margin-top:2px;opacity:.7}
+.field input,.field textarea,.field select{width:100%;padding:8px 12px;background:var(--bg4);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'SF Mono',Monaco,monospace;font-size:13px;transition:border-color .2s}
+.field input:focus,.field textarea:focus,.field select:focus{outline:none;border-color:var(--accent)}
+.field input.err{border-color:var(--err)}
 .field textarea{min-height:60px;resize:vertical}
-.pwd-wrap{position:relative}.pwd-wrap input{padding-right:36px}
-.pwd-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:#6b7f99;cursor:pointer;font-size:16px;padding:2px 4px}
-.pwd-toggle:hover{color:#00d4ff}
-.section{margin:12px 0;padding:14px;border:1px solid #2a3a5c;border-radius:8px;background:#19223a;transition:box-shadow .2s}
-.section:hover{box-shadow:0 2px 12px rgba(0,212,255,.06)}
-.section-title{font-size:13px;font-weight:600;color:#00d4ff;margin-bottom:10px}
-.sub-group{margin:16px 0;padding:12px;border-left:3px solid #0f3460;background:#161d30;border-radius:0 6px 6px 0}
-.sub-group-title{font-size:13px;font-weight:600;color:#7eb8da;margin-bottom:4px}
-.sub-group-desc{font-size:11px;color:#5a6f8a;margin-bottom:10px}
-.add-row{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
-.add-row input,.add-row select{flex:1;min-width:100px;padding:7px 10px;background:#141825;border:1px solid #2a3a5c;border-radius:6px;color:#e0e0e0;font-size:13px}
-.btn-sm{padding:7px 14px;background:#0f3460;border:1px solid #1a4a80;border-radius:6px;color:#00d4ff;cursor:pointer;font-size:12px;white-space:nowrap;transition:all .2s}
-.btn-sm:hover{background:#1a4a80}
-.btn-add-provider{margin-top:12px;padding:9px 18px;background:linear-gradient(135deg,#0f3460,#1a4a80);border:1px solid rgba(0,212,255,.2);border-radius:6px;color:#00d4ff;cursor:pointer;font-size:13px;font-weight:600;transition:all .2s}
-.btn-add-provider:hover{background:linear-gradient(135deg,#1a4a80,#245090);box-shadow:0 2px 8px rgba(0,212,255,.15)}
-.btn-enable{padding:6px 14px;background:#1a3a2e;border:1px solid #2a5a4e;border-radius:6px;color:#4caf50;cursor:pointer;font-size:12px;transition:all .2s}
-.btn-enable:hover{background:#2a5a4e}
-#save-btn{display:block;margin:20px auto;padding:12px 44px;background:linear-gradient(135deg,#00b8d4,#00d4ff);color:#0f0f1a;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;transition:all .2s;letter-spacing:.5px}
-#save-btn:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(0,212,255,.3)}
-#save-btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
+.field select{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7f99' d='M6 8L1 3h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+.toggle-wrap{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.toggle-wrap label{margin-bottom:0;font-size:13px;color:var(--text);cursor:pointer}
+.toggle{position:relative;width:40px;height:22px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle .slider{position:absolute;inset:0;background:var(--border);border-radius:11px;cursor:pointer;transition:.2s}
+.toggle .slider:before{content:'';position:absolute;height:16px;width:16px;left:3px;bottom:3px;background:#888;border-radius:50%;transition:.2s}
+.toggle input:checked+.slider{background:var(--accent)}
+.toggle input:checked+.slider:before{transform:translateX(18px);background:#fff}
+.pwd-wrap{position:relative}
+.pwd-wrap input{padding-right:36px}
+.pwd-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text3);cursor:pointer;font-size:15px;padding:2px 4px}
+.pwd-toggle:hover{color:var(--accent)}
+.tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.tag{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;background:var(--accent2);border-radius:4px;font-size:12px;color:var(--text2)}
+.tag .x{cursor:pointer;color:var(--text3);font-size:14px}
+.tag .x:hover{color:var(--err)}
+.btn{padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;border:1px solid var(--border);transition:all .2s}
+.btn-primary{background:linear-gradient(135deg,#00b8d4,var(--accent));color:var(--bg);border:none;font-weight:600}
+.btn-primary:hover{box-shadow:0 2px 12px rgba(0,212,255,.3);transform:translateY(-1px)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn-secondary{background:var(--accent2);color:var(--accent);border-color:rgba(0,212,255,.2)}
+.btn-secondary:hover{background:#1a4a80}
+.btn-danger{background:#3a1a1a;color:var(--err);border-color:rgba(244,67,54,.3)}
+.btn-danger:hover{background:#4a2020}
+.btn-ghost{background:transparent;color:var(--text2);border-color:transparent}
+.btn-ghost:hover{color:var(--accent);background:rgba(0,212,255,.05)}
+.btn-row{display:flex;gap:8px;margin-top:12px}
+.provider-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.channel-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.ch-card{background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:14px;transition:all .2s}
+.ch-card:hover{border-color:rgba(0,212,255,.3)}
+.ch-card.enabled{border-color:rgba(76,175,80,.3)}
+.ch-card-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.ch-card-head .ch-icon{font-size:20px;width:28px;text-align:center}
+.ch-card-head .ch-name{font-weight:600;font-size:14px;color:var(--text)}
+.ch-card-head .spacer{flex:1}
+.section-divider{border:none;border-top:1px solid var(--border);margin:20px 0}
+.empty-state{text-align:center;padding:40px 20px;color:var(--text3)}
+.empty-state .icon{font-size:32px;margin-bottom:8px;opacity:.5}
+.empty-state p{font-size:14px}
+.footer-bar{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--bg2);border-top:1px solid var(--bg3);flex-shrink:0}
+.footer-bar .status{font-size:12px;color:var(--text3)}
 #toast{position:fixed;top:20px;right:20px;z-index:999;pointer-events:none}
-.toast-item{padding:12px 20px;border-radius:8px;margin-bottom:8px;font-size:13px;animation:slideIn .3s ease;pointer-events:auto}
-.toast-ok{background:#1a3a2e;border:1px solid #4caf50;color:#4caf50}
-.toast-err{background:#3a1a1a;border:1px solid #f44336;color:#f44336}
+.toast-item{padding:12px 20px;border-radius:8px;margin-bottom:8px;font-size:13px;animation:slideIn .3s ease;pointer-events:auto;backdrop-filter:blur(8px)}
+.toast-ok{background:rgba(26,58,46,.95);border:1px solid var(--ok);color:var(--ok)}
+.toast-err{background:rgba(58,26,26,.95);border:1px solid var(--err);color:var(--err)}
 @keyframes slideIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}
 @keyframes slideOut{from{opacity:1}to{opacity:0;transform:translateX(40px)}}
-.modal-bg{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100}
-.modal{background:#1e2d4a;border:1px solid #0f3460;border-radius:10px;padding:24px;min-width:340px;max-width:90vw}
-.modal h3{color:#00d4ff;margin-bottom:16px;font-size:15px}
+.modal-bg{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(2px)}
+.modal{background:var(--bg3);border:1px solid var(--accent2);border-radius:12px;padding:24px;min-width:380px;max-width:90vw;max-height:80vh;overflow-y:auto}
+.modal h3{color:var(--accent);margin-bottom:16px;font-size:16px}
 .modal .field{margin-bottom:12px}
-.modal-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
-.modal-btns button{padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;border:1px solid #2a3a5c}
-.modal-btns .btn-ok{background:#00d4ff;color:#0f0f1a;border-color:#00d4ff;font-weight:600}
-.modal-btns .btn-cancel{background:#16213e;color:#8899aa}
-@media(max-width:600px){body{padding:10px}.tab{padding:7px 10px;font-size:12px}.panel{padding:12px}#save-btn{width:100%}}
+.modal-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+@media(max-width:768px){.sidebar{display:none}.layout{flex-direction:column}.main{padding:16px}}
 </style></head><body>
-<div class="header"><h1 id="title">OCLAWS Configuration</h1><button id="lang-btn" onclick="toggleLang()">中文</button></div>
-<div class="tabs" id="tabs"></div>
-<div id="panels"></div>
-<button id="save-btn" onclick="save()">Save</button>
+<div class="topbar">
+  <span class="brand">OpenClaw</span>
+  <span class="spacer"></span>
+  <button class="topbar-btn" id="lang-btn" onclick="toggleLang()">中文</button>
+  <button class="topbar-btn" id="export-btn" onclick="exportCfg()">Export</button>
+  <button class="topbar-btn" id="import-btn" onclick="document.getElementById('import-file').click()">Import</button>
+  <input type="file" id="import-file" accept=".json" style="display:none" onchange="importCfg(event)">
+  <button class="btn btn-primary" id="save-btn" onclick="save()">Save</button>
+</div>
+<div class="layout">
+<div class="sidebar" id="sidebar"></div>
+<div class="main" id="main"></div>
+</div>
+<div class="footer-bar"><span class="status" id="status-bar">Loading...</span></div>
 <div id="toast"></div>
-<script>
-let lang="en",cfg={};
+"##,
+// --- CONFIG_UI script part 1: i18n + schema ---
+r##"<script>
+let lang='en',cfg={},currentPage='gateway';
 const I={en:{
-title:"OCLAWS Configuration",save:"Save",saving:"Saving...",saved:"Saved!",
-addField:"Add Field",addProvider:"Add Provider",enable:"Enable",cancel:"Cancel",confirm:"OK",
-key:"Key",providerName:"Provider Name",
-tabs:["Gateway","Models","Channels","Browser","Cron","Logging","Settings"],
-subGroups:{diagnostics:"Diagnostics / OTel",talk:"Voice (Talk)",web:"Web / Reconnect",ui:"UI",auth:"Auth",update:"Update",env:"Environment Variables",media:"Media",canvasHost:"Canvas Host",discovery:"Service Discovery"},
-subDescs:{diagnostics:"OpenTelemetry tracing and diagnostic settings",talk:"Voice streaming and audio configuration",web:"WebSocket reconnection and web server settings",ui:"Terminal UI and display preferences",auth:"Authentication configuration",update:"Auto-update and version check settings",env:"Environment variable overrides",media:"Image and audio processing settings",canvasHost:"Canvas host configuration",discovery:"Service discovery and registration"},
-errPrefix:"Error: ",loadErr:"Load error: ",fieldExists:"Field already exists",providerExists:"Provider already exists"
+title:'OpenClaw Configuration',save:'Save',saving:'Saving...',saved:'Configuration saved',
+cancel:'Cancel',confirm:'OK',delete:'Delete',enable:'Enable',disable:'Disable',
+addProvider:'Add Provider',removeProvider:'Remove',providerName:'Provider Name',
+providerType:'Provider Type',selectType:'Select type...',
+errPrefix:'Error: ',loadErr:'Failed to load config: ',
+noProviders:'No providers configured yet',noChannels:'No channels enabled',
+exportOk:'Config exported',importOk:'Config imported',importErr:'Invalid config file',
+export:'Export',import:'Import',
+nav:{gateway:'Gateway',models:'Models',channels:'Channels',session:'Session',browser:'Browser',cron:'Cron Jobs',memory:'Memory',logging:'Logging',advanced:'Advanced'},
+navDesc:{gateway:'Server, auth, TLS, proxy',models:'LLM providers and fallback',channels:'Messaging integrations',session:'History and compaction',browser:'Browser automation',cron:'Scheduled tasks',memory:'Memory and embeddings',logging:'Log levels and output',advanced:'Diagnostics, voice, plugins'},
+providerTypes:['anthropic','openai','google','cohere','ollama','bedrock','openrouter','together','minimax'],
+channelNames:{webchat:'Webchat',whatsapp:'WhatsApp',telegram:'Telegram',discord:'Discord',slack:'Slack',signal:'Signal',line:'LINE',matrix:'Matrix',nostr:'Nostr',irc:'IRC',google_chat:'Google Chat',mattermost:'Mattermost',feishu:'Feishu'},
 },zh:{
-title:"OCLAWS 配置管理",save:"保存",saving:"保存中...",saved:"保存成功！",
-addField:"添加字段",addProvider:"添加 Provider",enable:"启用",cancel:"取消",confirm:"确定",
-key:"键名",providerName:"Provider 名称",
-tabs:["网关","模型","频道","浏览器","定时任务","日志","其他设置"],
-subGroups:{diagnostics:"诊断 / OTel",talk:"语音 (Talk)",web:"Web / 重连",ui:"界面",auth:"认证",update:"更新",env:"环境变量",media:"媒体",canvasHost:"Canvas 主机",discovery:"服务发现"},
-subDescs:{diagnostics:"OpenTelemetry 链路追踪与诊断设置",talk:"语音流与音频配置",web:"WebSocket 重连与 Web 服务器设置",ui:"终端界面与显示偏好",auth:"认证配置",update:"自动更新与版本检查",env:"环境变量覆盖",media:"图片与音频处理设置",canvasHost:"Canvas 主机配置",discovery:"服务发现与注册"},
-errPrefix:"错误：",loadErr:"加载失败：",fieldExists:"字段已存在",providerExists:"Provider 已存在"
+title:'OpenClaw 配置管理',save:'保存',saving:'保存中...',saved:'配置已保存',
+cancel:'取消',confirm:'确定',delete:'删除',enable:'启用',disable:'禁用',
+addProvider:'添加供应商',removeProvider:'移除',providerName:'供应商名称',
+providerType:'供应商类型',selectType:'选择类型...',
+errPrefix:'错误：',loadErr:'加载配置失败：',
+noProviders:'尚未配置任何供应商',noChannels:'尚未启用任何频道',
+exportOk:'配置已导出',importOk:'配置已导入',importErr:'无效的配置文件',
+export:'导出',import:'导入',
+nav:{gateway:'网关',models:'模型',channels:'频道',session:'会话',browser:'浏览器',cron:'定时任务',memory:'记忆',logging:'日志',advanced:'高级设置'},
+navDesc:{gateway:'服务器、认证、TLS、代理',models:'LLM 供应商与降级链',channels:'消息平台集成',session:'历史记录与压缩',browser:'浏览器自动化',cron:'定时任务调度',memory:'记忆与向量搜索',logging:'日志级别与输出',advanced:'诊断、语音、插件'},
+providerTypes:['anthropic','openai','google','cohere','ollama','bedrock','openrouter','together','minimax'],
+channelNames:{webchat:'网页聊天',whatsapp:'WhatsApp',telegram:'Telegram',discord:'Discord',slack:'Slack',signal:'Signal',line:'LINE',matrix:'Matrix',nostr:'Nostr',irc:'IRC',google_chat:'Google Chat',mattermost:'Mattermost',feishu:'飞书'},
+labels:{
+'Server':'服务器','Authentication':'认证','TLS / HTTPS':'TLS / HTTPS','Control UI':'控制面板','Tailscale':'Tailscale',
+'Fallback Settings':'降级设置','Session Settings':'会话设置','Compaction':'上下文压缩','Pruning':'消息裁剪','Auto Reset':'自动重置',
+'Browser Automation':'浏览器自动化','SSRF Policy':'SSRF 策略','Cron Settings':'定时任务设置','Long-term Memory':'长期记忆',
+'Logging':'日志','Diagnostics / OpenTelemetry':'诊断 / OpenTelemetry','Voice (Talk)':'语音 (Talk)','Web / Reconnect':'Web / 重连',
+'UI Settings':'界面设置','Service Discovery':'服务发现','Plugins':'插件','Update':'更新',
+'Port':'端口','Bind Address':'绑定地址','Mode':'模式','Custom Bind Host':'自定义绑定主机',
+'Auth Mode':'认证模式','Token':'令牌','Password':'密码','Allow Tailscale':'允许 Tailscale',
+'Enable TLS':'启用 TLS','Auto-generate Certificate':'自动生成证书','Certificate Path':'证书路径','Key Path':'密钥路径','CA Path':'CA 路径',
+'Enable Control UI':'启用控制面板','Base Path':'基础路径','Allowed Origins':'允许的来源','Reset on Exit':'退出时重置',
+'Provider Type':'供应商类型','API Key':'API 密钥','Base URL':'基础 URL','Default Model':'默认模型',
+'Max Tokens':'最大令牌数','Temperature':'温度','Max Concurrency':'最大并发数','Fallback Chain':'降级链',
+'Enable Fallback':'启用降级','Cooldown (seconds)':'冷却时间（秒）','Retry Delay (ms)':'重试延迟（毫秒）',
+'Username':'用户名','Bot Token':'机器人令牌','API URL':'API 地址','Guild ID':'服务器 ID','Channel IDs':'频道 ID',
+'Signing Secret':'签名密钥','Webhook URL':'Webhook 地址',
+'Phone Number ID':'电话号码 ID','API Token':'API 令牌','Business Account ID':'商业账户 ID','Webhook Verify Token':'Webhook 验证令牌',
+'Phone Number':'电话号码','Signal CLI Path':'Signal CLI 路径',
+'Channel Access Token':'频道访问令牌','Channel Secret':'频道密钥','User ID':'用户 ID',
+'Homeserver':'主服务器','Access Token':'访问令牌','Device ID':'设备 ID','Room ID':'房间 ID',
+'Relay URLs':'中继地址','Private Key':'私钥','Public Key':'公钥',
+'Server':'服务器','Nickname':'昵称','Channels':'频道',
+'Space Name':'空间名称','Service Account JSON':'服务账户 JSON',
+'Server URL':'服务器地址','Team ID':'团队 ID','Channel ID':'频道 ID',
+'App ID':'应用 ID','App Secret':'应用密钥','Verification Token':'验证令牌','Encrypt Key':'加密密钥',
+'History Limit':'历史记录上限','Persist Sessions':'持久化会话',
+'Enable Compaction':'启用压缩','Reserve Tokens':'保留令牌数','Keep Recent Tokens':'保留最近令牌数',
+'Enable Pruning':'启用裁剪','Soft Trim Max Chars':'软裁剪最大字符数','Hard Clear Max Chars':'硬清除最大字符数','Keep Last N Assistants':'保留最近 N 条助手消息',
+'Idle Reset (minutes)':'空闲重置（分钟）',
+'Enable Browser':'启用浏览器','Headless Mode':'无头模式','No Sandbox':'无沙箱','Attach Only':'仅附加','Enable Evaluate':'启用执行',
+'CDP URL':'CDP 地址','Executable Path':'可执行文件路径','Remote CDP Timeout (ms)':'远程 CDP 超时（毫秒）','Default Profile':'默认配置',
+'Allow Private Network':'允许私有网络','Allowed Hostnames':'允许的主机名',
+'Enable Cron':'启用定时任务','Store Path':'存储路径','Max Concurrent Runs':'最大并发数','Webhook Token':'Webhook 令牌',
+'Enable Memory':'启用记忆','Embedding Provider':'嵌入供应商','Embedding Model':'嵌入模型','Database Path':'数据库路径',
+'Vector Weight':'向量权重','Text Weight':'文本权重','Auto Index':'自动索引',
+'Log Level':'日志级别','Console Level':'控制台级别','Console Style':'控制台样式','Log File Path':'日志文件路径',
+'Redact Sensitive':'脱敏处理','Redact Patterns':'脱敏规则',
+'Enable Diagnostics':'启用诊断','Enable OTel':'启用 OTel','OTel Endpoint':'OTel 端点','Traces':'链路追踪','Metrics':'指标','Logs':'日志',
+'Service Name':'服务名称','Sample Rate':'采样率',
+'Voice ID':'语音 ID','Model ID':'模型 ID','Output Format':'输出格式','Interrupt on Speech':'语音打断',
+'Enable Web':'启用 Web','Heartbeat (seconds)':'心跳间隔（秒）','Initial (ms)':'初始值（毫秒）','Max (ms)':'最大值（毫秒）',
+'Factor':'退避因子','Max Attempts':'最大重试次数',
+'Seam Color':'主题色','Assistant Name':'助手名称','Assistant Avatar':'助手头像',
+'Wide Area Discovery':'广域发现','mDNS Mode':'mDNS 模式',
+'Enable Plugins':'启用插件','Allow List':'允许列表','Deny List':'拒绝列表',
+'Update Channel':'更新通道','Check on Start':'启动时检查',
+},
 }};
-const t=k=>I[lang][k]||k;
-const TAB_KEYS=[["gateway"],["models"],["channels"],["browser"],["cron"],["logging"],["diagnostics","talk","web","ui","auth","update","env","media","canvasHost","discovery"]];
-const CHANNELS=["telegram","slack","discord","matrix","irc","webhook"];
-function toggleLang(){lang=lang==="en"?"zh":"en";document.getElementById("lang-btn").textContent=lang==="en"?"中文":"EN";render()}
-function toast(msg,ok){const d=document.getElementById("toast"),el=document.createElement("div");el.className="toast-item "+(ok?"toast-ok":"toast-err");el.textContent=msg;d.appendChild(el);setTimeout(()=>{el.style.animation="slideOut .3s ease forwards";setTimeout(()=>el.remove(),300)},2500)}
-function isSensitive(k){return/token|key|password|secret|api_key/i.test(k)}
-function makeField(path,val,parent){
-const div=document.createElement("div");div.className="field";
-const lbl=document.createElement("label");lbl.textContent=path;div.appendChild(lbl);
-const key=path.split(".").pop();
-if(val===null||val===undefined){
-const inp=document.createElement("input");inp.type="text";inp.dataset.path=path;inp.value="";div.appendChild(inp);
-}else if(typeof val==="boolean"){
-const inp=document.createElement("input");inp.type="checkbox";inp.checked=val;inp.dataset.path=path;div.appendChild(inp);
-}else if(typeof val==="number"){
-const inp=document.createElement("input");inp.type="number";inp.value=val;inp.step="any";inp.dataset.path=path;div.appendChild(inp);
-}else if(typeof val==="string"){
-if(isSensitive(key)){
-const w=document.createElement("div");w.className="pwd-wrap";
-const inp=document.createElement("input");inp.type="password";inp.value=val;inp.dataset.path=path;
-const btn=document.createElement("button");btn.type="button";btn.className="pwd-toggle";btn.innerHTML="&#128065;";
-btn.onclick=()=>{inp.type=inp.type==="password"?"text":"password"};
-w.appendChild(inp);w.appendChild(btn);div.appendChild(w);
+const t=k=>{const parts=k.split('.');let v=I[lang];for(const p of parts){v=v?.[p];if(v===undefined)return k}return v};
+const tl=s=>{if(lang==='zh'&&I.zh.labels[s])return I.zh.labels[s];return s};
+const NAV_ICONS={gateway:'\u2699',models:'\u2B22',channels:'\u260E',session:'\u23F3',browser:'\u{1F310}',cron:'\u23F0',memory:'\u{1F9E0}',logging:'\u{1F4CB}',advanced:'\u2699'};
+const CH_ICONS={webchat:'\u{1F4AC}',whatsapp:'\u{1F4F1}',telegram:'\u2708',discord:'\u{1F3AE}',slack:'\u{1F4E8}',signal:'\u{1F510}',line:'\u{1F49A}',matrix:'\u{1F504}',nostr:'\u{1F4E1}',irc:'\u{1F4BB}',google_chat:'\u{1F4AC}',mattermost:'\u{1F4AC}',feishu:'\u{1F426}'};
+function toggleLang(){lang=lang==='en'?'zh':'en';document.getElementById('lang-btn').textContent=lang==='en'?'中文':'EN';renderAll()}
+function toast(msg,ok){const d=document.getElementById('toast'),el=document.createElement('div');el.className='toast-item '+(ok?'toast-ok':'toast-err');el.textContent=msg;d.appendChild(el);setTimeout(()=>{el.style.animation='slideOut .3s ease forwards';setTimeout(()=>el.remove(),300)},2500)}
+function isSensitive(k){return/token|key|password|secret|api_key|signing/i.test(k)}
+function gp(obj,path){const parts=path.split('.');let c=obj;for(const p of parts){if(c==null)return undefined;c=c[p]}return c}
+function sp(obj,path,val){const parts=path.split('.');let c=obj;for(let i=0;i<parts.length-1;i++){if(c[parts[i]]==null)c[parts[i]]={};c=c[parts[i]]}c[parts[parts.length-1]]=val}
+function dp(obj,path){const parts=path.split('.');let c=obj;for(let i=0;i<parts.length-1;i++){if(c==null)return;c=c[parts[i]]}if(c)delete c[parts[parts.length-1]]}
+function mkInput(path,label,type,opts){
+const d=document.createElement('div');d.className='field';
+if(label){const l=document.createElement('label');l.textContent=tl(label);d.appendChild(l)}
+const val=gp(cfg,path);
+if(type==='toggle'){
+const w=document.createElement('div');w.className='toggle-wrap';
+const tog=document.createElement('label');tog.className='toggle';
+const inp=document.createElement('input');inp.type='checkbox';inp.checked=!!val;inp.dataset.path=path;inp.dataset.type='bool';
+const sl=document.createElement('span');sl.className='slider';
+tog.appendChild(inp);tog.appendChild(sl);w.appendChild(tog);
+const lb=document.createElement('label');lb.textContent=tl(label)||'';lb.style.cursor='pointer';lb.onclick=()=>{inp.checked=!inp.checked};
+w.appendChild(lb);d.innerHTML='';d.appendChild(w);
+}else if(type==='select'){
+const sel=document.createElement('select');sel.dataset.path=path;
+(opts?.options||[]).forEach(o=>{const op=document.createElement('option');op.value=o;op.textContent=o;if(val===o)op.selected=true;sel.appendChild(op)});
+d.appendChild(sel);
+}else if(type==='password'){
+const w=document.createElement('div');w.className='pwd-wrap';
+const inp=document.createElement('input');inp.type='password';inp.value=val||'';inp.dataset.path=path;inp.placeholder=opts?.placeholder||'';
+const btn=document.createElement('button');btn.type='button';btn.className='pwd-toggle';btn.innerHTML='&#128065;';
+btn.onclick=()=>{inp.type=inp.type==='password'?'text':'password'};
+w.appendChild(inp);w.appendChild(btn);d.appendChild(w);
+}else if(type==='number'){
+const inp=document.createElement('input');inp.type='number';inp.value=val!=null?val:'';inp.step=opts?.step||'any';inp.dataset.path=path;inp.placeholder=opts?.placeholder||'';
+d.appendChild(inp);
+}else if(type==='textarea'){
+const ta=document.createElement('textarea');ta.value=val!=null?(typeof val==='string'?val:JSON.stringify(val,null,2)):'';ta.dataset.path=path;ta.dataset.type=opts?.arrayMode?'array':'text';ta.placeholder=opts?.placeholder||'';
+d.appendChild(ta);
 }else{
-const inp=document.createElement("input");inp.type="text";inp.value=val;inp.dataset.path=path;div.appendChild(inp);
-}}else if(Array.isArray(val)){
-const ta=document.createElement("textarea");ta.value=JSON.stringify(val,null,2);ta.dataset.path=path;ta.dataset.type="array";div.appendChild(ta);
-}else if(typeof val==="object"){
-const sec=document.createElement("div");sec.className="section";
-const st=document.createElement("div");st.className="section-title";st.textContent=key;sec.appendChild(st);
-for(const[k,v] of Object.entries(val))makeField(path+"."+k,v,sec);
-parent.appendChild(sec);return;
+const inp=document.createElement('input');inp.type='text';inp.value=val||'';inp.dataset.path=path;inp.placeholder=opts?.placeholder||'';
+d.appendChild(inp);
 }
-parent.appendChild(div);
+if(opts?.hint){const h=document.createElement('div');h.className='hint';h.textContent=opts.hint;d.appendChild(h)}
+return d;
 }
-function addFieldRow(parentPath,container){
-const row=document.createElement("div");row.className="add-row";
-const inp=document.createElement("input");inp.placeholder=t("key");
-const sel=document.createElement("select");
-["string","number","bool","array"].forEach(tp=>{const o=document.createElement("option");o.value=tp;o.textContent=tp;sel.appendChild(o)});
-const btn=document.createElement("button");btn.className="btn-sm";btn.textContent="+ "+t("addField");
-btn.onclick=()=>{
-const k=inp.value.trim();if(!k)return;
-const fullPath=parentPath?parentPath+"."+k:k;
-if(document.querySelector('[data-path="'+fullPath+'"]')){toast(t("fieldExists"),false);return}
-const defaults={string:"",number:0,bool:false,array:[]};
-setPath(cfg,fullPath,defaults[sel.value]);
-makeField(fullPath,defaults[sel.value],container.querySelector(".section")||container);
-inp.value="";
-};
-row.appendChild(inp);row.appendChild(sel);row.appendChild(btn);return row;
-}
+function mkRow(fields){const r=document.createElement('div');r.className='field-row';fields.forEach(f=>r.appendChild(f));return r}
 function showModal(title,fields,onOk){
-const bg=document.createElement("div");bg.className="modal-bg";
-const m=document.createElement("div");m.className="modal";
-const h=document.createElement("h3");h.textContent=title;m.appendChild(h);
+const bg=document.createElement('div');bg.className='modal-bg';
+const m=document.createElement('div');m.className='modal';
+const h=document.createElement('h3');h.textContent=title;m.appendChild(h);
 const inputs={};
 fields.forEach(f=>{
-const d=document.createElement("div");d.className="field";
-const l=document.createElement("label");l.textContent=f.label;d.appendChild(l);
-const i=document.createElement("input");i.type="text";i.placeholder=f.placeholder||"";d.appendChild(i);
-inputs[f.key]=i;m.appendChild(d);
+const d=document.createElement('div');d.className='field';
+const l=document.createElement('label');l.textContent=f.label;d.appendChild(l);
+if(f.type==='select'){
+const sel=document.createElement('select');(f.options||[]).forEach(o=>{const op=document.createElement('option');op.value=o;op.textContent=o;sel.appendChild(op)});
+inputs[f.key]=sel;d.appendChild(sel);
+}else{const i=document.createElement('input');i.type=f.type||'text';i.placeholder=f.placeholder||'';inputs[f.key]=i;d.appendChild(i)}
+m.appendChild(d);
 });
-const btns=document.createElement("div");btns.className="modal-btns";
-const cBtn=document.createElement("button");cBtn.className="btn-cancel";cBtn.textContent=t("cancel");cBtn.onclick=()=>bg.remove();
-const oBtn=document.createElement("button");oBtn.className="btn-ok";oBtn.textContent=t("confirm");
-oBtn.onclick=()=>{const vals={};for(const[k,i] of Object.entries(inputs))vals[k]=i.value.trim();if(onOk(vals))bg.remove()};
+const btns=document.createElement('div');btns.className='modal-btns';
+const cBtn=document.createElement('button');cBtn.className='btn btn-ghost';cBtn.textContent=t('cancel');cBtn.onclick=()=>bg.remove();
+const oBtn=document.createElement('button');oBtn.className='btn btn-primary';oBtn.textContent=t('confirm');
+oBtn.onclick=()=>{const vals={};for(const[k,i] of Object.entries(inputs))vals[k]=(i.value||'').trim();if(onOk(vals))bg.remove()};
 btns.appendChild(cBtn);btns.appendChild(oBtn);m.appendChild(btns);
 bg.appendChild(m);bg.onclick=e=>{if(e.target===bg)bg.remove()};
 document.body.appendChild(bg);
 }
-function render(){
-document.getElementById("title").textContent=t("title");
-document.getElementById("save-btn").textContent=t("save");
-const tabsEl=document.getElementById("tabs"),panelsEl=document.getElementById("panels");
-tabsEl.innerHTML="";panelsEl.innerHTML="";
-const tabNames=t("tabs");
-tabNames.forEach((name,i)=>{
-const tab=document.createElement("div");tab.className="tab"+(i===0?" active":"");tab.textContent=name;
-tab.onclick=()=>{document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));tab.classList.add("active");document.querySelectorAll(".panel").forEach(p=>p.classList.remove("active"));document.getElementById("p-"+i).classList.add("active")};
-tabsEl.appendChild(tab);
-const panel=document.createElement("div");panel.className="panel"+(i===0?" active":"");panel.id="p-"+i;
-const keys=TAB_KEYS[i];
-if(i===6){
-keys.forEach(key=>{
-const sg=document.createElement("div");sg.className="sub-group";
-const sgt=document.createElement("div");sgt.className="sub-group-title";sgt.textContent=t("subGroups")[key]||key;sg.appendChild(sgt);
-const sgd=document.createElement("div");sgd.className="sub-group-desc";sgd.textContent=t("subDescs")[key]||"";sg.appendChild(sgd);
-if(cfg[key]&&typeof cfg[key]==="object"){for(const[k,v] of Object.entries(cfg[key]))makeField(key+"."+k,v,sg)}
-sg.appendChild(addFieldRow(key,sg));panel.appendChild(sg);
-});
-}else{
-keys.forEach(key=>{
-if(cfg[key]!==undefined&&cfg[key]!==null&&typeof cfg[key]==="object"){
-const sec=document.createElement("div");sec.className="section";
-const st=document.createElement("div");st.className="section-title";st.textContent=key;sec.appendChild(st);
-for(const[k,v] of Object.entries(cfg[key]))makeField(key+"."+k,v,sec);
-panel.appendChild(sec);
-}else if(cfg[key]!==undefined){makeField(key,cfg[key],panel)}
-});
-if(i===1){
-const btn=document.createElement("button");btn.className="btn-add-provider";btn.textContent="+ "+t("addProvider");
-btn.onclick=()=>showModal(t("addProvider"),[{key:"name",label:t("providerName"),placeholder:"e.g. openai"}],vals=>{
-if(!vals.name)return false;if(!cfg.models)cfg.models={};
-if(cfg.models[vals.name]){toast(t("providerExists"),false);return false}
-cfg.models[vals.name]={};render();return true;
-});panel.appendChild(btn);
-}
-if(i===2){
-CHANNELS.forEach(ch=>{
-if(!cfg.channels||!cfg.channels[ch]){
-const row=document.createElement("div");row.className="add-row";row.style.marginBottom="8px";
-const lbl=document.createElement("span");lbl.style.cssText="color:#6b7f99;font-size:13px;min-width:80px";lbl.textContent=ch;
-const btn=document.createElement("button");btn.className="btn-enable";btn.textContent=t("enable")+" "+ch;
-btn.onclick=()=>{if(!cfg.channels)cfg.channels={};cfg.channels[ch]={enabled:true};render()};
-row.appendChild(lbl);row.appendChild(btn);panel.appendChild(row);
-}});
-}
-panel.appendChild(addFieldRow(keys[0],panel));
-}
-panelsEl.appendChild(panel);
+// --- Sidebar + page rendering ---
+function renderSidebar(){
+const sb=document.getElementById('sidebar');sb.innerHTML='';
+const pages=['gateway','models','channels','session','browser','cron','memory','logging','advanced'];
+pages.forEach(p=>{
+const el=document.createElement('div');el.className='nav-item'+(p===currentPage?' active':'');
+el.innerHTML='<span class="icon">'+(NAV_ICONS[p]||'')+'</span><span>'+t('nav.'+p)+'</span>';
+el.onclick=()=>{currentPage=p;renderSidebar();renderPage()};
+sb.appendChild(el);
 });
 }
-function setPath(obj,path,val){
-const parts=path.split(".");let cur=obj;
-for(let i=0;i<parts.length-1;i++){if(cur[parts[i]]===undefined||cur[parts[i]]===null)cur[parts[i]]={};cur=cur[parts[i]]}
-cur[parts[parts.length-1]]=val;
+function renderPage(){
+const main=document.getElementById('main');main.innerHTML='';
+const pg=document.createElement('div');pg.className='page active';
+const renderers={gateway:pgGateway,models:pgModels,channels:pgChannels,session:pgSession,browser:pgBrowser,cron:pgCron,memory:pgMemory,logging:pgLogging,advanced:pgAdvanced};
+const fn=renderers[currentPage];if(fn)fn(pg);
+main.appendChild(pg);
+document.getElementById('status-bar').textContent=t('nav.'+currentPage)+' — '+t('navDesc.'+currentPage);
 }
+function renderAll(){renderSidebar();renderPage();document.getElementById('save-btn').textContent=t('save');document.getElementById('export-btn').textContent=t('export');document.getElementById('import-btn').textContent=t('import')}
+function pgTitle(pg,key){
+const h=document.createElement('div');h.className='page-title';h.textContent=t('nav.'+key);pg.appendChild(h);
+const d=document.createElement('div');d.className='page-desc';d.textContent=t('navDesc.'+key);pg.appendChild(d);
+}
+// --- Page: Gateway ---
+function pgGateway(pg){
+pgTitle(pg,'gateway');
+if(!cfg.gateway)cfg.gateway={};
+const c=document.createElement('div');c.className='card';
+const ch=document.createElement('div');ch.className='card-header';
+const ct=document.createElement('div');ct.className='card-title';ct.textContent=tl('Server');c.appendChild(ch);ch.appendChild(ct);
+c.appendChild(mkRow([mkInput('gateway.port','Port','number',{placeholder:'8080'}),mkInput('gateway.bind','Bind Address','text',{placeholder:'0.0.0.0'})]));
+c.appendChild(mkInput('gateway.mode','Mode','select',{options:['normal','http-only','ws-only']}));
+c.appendChild(mkInput('gateway.customBindHost','Custom Bind Host','text',{placeholder:'Optional custom hostname'}));
+pg.appendChild(c);
+// Auth
+const ac=document.createElement('div');ac.className='card';
+const ah=document.createElement('div');ah.className='card-header';
+const at=document.createElement('div');at.className='card-title';at.textContent=tl('Authentication');ac.appendChild(ah);ah.appendChild(at);
+if(!cfg.gateway.auth)cfg.gateway.auth={};
+ac.appendChild(mkInput('gateway.auth.mode','Auth Mode','select',{options:['none','token','password','device']}));
+ac.appendChild(mkInput('gateway.auth.token','Token','password',{placeholder:'Bearer token for API access'}));
+ac.appendChild(mkInput('gateway.auth.password','Password','password',{placeholder:'Password for password auth mode'}));
+ac.appendChild(mkInput('gateway.auth.allowTailscale','Allow Tailscale','toggle'));
+pg.appendChild(ac);
+// TLS
+const tc=document.createElement('div');tc.className='card';
+const th2=document.createElement('div');th2.className='card-header';
+const tt=document.createElement('div');tt.className='card-title';tt.textContent=tl('TLS / HTTPS');tc.appendChild(th2);th2.appendChild(tt);
+if(!cfg.gateway.tls)cfg.gateway.tls={};
+tc.appendChild(mkInput('gateway.tls.enabled','Enable TLS','toggle'));
+tc.appendChild(mkInput('gateway.tls.autoGenerate','Auto-generate Certificate','toggle'));
+tc.appendChild(mkRow([mkInput('gateway.tls.certPath','Certificate Path','text',{placeholder:'/path/to/cert.pem'}),mkInput('gateway.tls.keyPath','Key Path','text',{placeholder:'/path/to/key.pem'})]));
+tc.appendChild(mkInput('gateway.tls.caPath','CA Path','text',{placeholder:'Optional CA bundle path'}));
+pg.appendChild(tc);
+// Control UI
+const uc=document.createElement('div');uc.className='card';
+const uh=document.createElement('div');uh.className='card-header';
+const ut2=document.createElement('div');ut2.className='card-title';ut2.textContent=tl('Control UI');uc.appendChild(uh);uh.appendChild(ut2);
+if(!cfg.gateway.controlUi)cfg.gateway.controlUi={};
+uc.appendChild(mkInput('gateway.controlUi.enabled','Enable Control UI','toggle'));
+uc.appendChild(mkInput('gateway.controlUi.basePath','Base Path','text',{placeholder:'/ui'}));
+uc.appendChild(mkInput('gateway.controlUi.allowedOrigins','Allowed Origins','textarea',{placeholder:'["http://localhost:3000"]',arrayMode:true}));
+pg.appendChild(uc);
+// Tailscale
+const tsc=document.createElement('div');tsc.className='card';
+const tsh=document.createElement('div');tsh.className='card-header';
+const tst=document.createElement('div');tst.className='card-title';tst.textContent=tl('Tailscale');tsc.appendChild(tsh);tsh.appendChild(tst);
+if(!cfg.gateway.tailscale)cfg.gateway.tailscale={};
+tsc.appendChild(mkInput('gateway.tailscale.mode','Mode','select',{options:['','funnel','serve']}));
+tsc.appendChild(mkInput('gateway.tailscale.resetOnExit','Reset on Exit','toggle'));
+pg.appendChild(tsc);
+}
+// --- Page: Models ---
+function pgModels(pg){
+pgTitle(pg,'models');
+if(!cfg.models)cfg.models={};
+if(!cfg.models.providers)cfg.models.providers={};
+const providers=cfg.models.providers;
+const grid=document.createElement('div');grid.className='provider-grid';
+for(const[name,prov] of Object.entries(providers)){
+const c=document.createElement('div');c.className='card';
+const ch2=document.createElement('div');ch2.className='card-header';
+const ct2=document.createElement('div');ct2.className='card-title';ct2.textContent=name;
+const badge=document.createElement('span');badge.className='card-badge on';badge.textContent=prov.provider||'unknown';
+const spacer=document.createElement('div');spacer.style.flex='1';
+const delBtn=document.createElement('button');delBtn.className='btn btn-danger';delBtn.textContent=t('removeProvider');delBtn.style.fontSize='11px';delBtn.style.padding='4px 10px';
+delBtn.onclick=()=>{delete providers[name];renderAll()};
+ch2.appendChild(ct2);ch2.appendChild(badge);ch2.appendChild(spacer);ch2.appendChild(delBtn);c.appendChild(ch2);
+const base='models.providers.'+name;
+c.appendChild(mkInput(base+'.provider','Provider Type','select',{options:t('providerTypes')}));
+c.appendChild(mkInput(base+'.apiKey','API Key','password',{placeholder:'sk-...'}));
+c.appendChild(mkInput(base+'.baseUrl','Base URL','text',{placeholder:'Optional custom endpoint'}));
+c.appendChild(mkInput(base+'.model','Default Model','text',{placeholder:'e.g. gpt-4, claude-3-opus'}));
+c.appendChild(mkRow([mkInput(base+'.maxTokens','Max Tokens','number',{placeholder:'4096'}),mkInput(base+'.temperature','Temperature','number',{placeholder:'0.7',step:'0.1'})]));
+c.appendChild(mkInput(base+'.maxConcurrency','Max Concurrency','number',{placeholder:'10'}));
+c.appendChild(mkInput(base+'.fallback','Fallback Chain','textarea',{placeholder:'["provider2","provider3"]',arrayMode:true}));
+grid.appendChild(c);
+}
+pg.appendChild(grid);
+if(!Object.keys(providers).length){
+const empty=document.createElement('div');empty.className='empty-state';empty.innerHTML='<div class="icon">\u2B22</div><p>'+t('noProviders')+'</p>';
+pg.appendChild(empty);
+}
+const addBtn=document.createElement('button');addBtn.className='btn btn-secondary';addBtn.textContent='+ '+t('addProvider');addBtn.style.marginTop='12px';
+addBtn.onclick=()=>showModal(t('addProvider'),[
+{key:'name',label:t('providerName'),placeholder:'e.g. my-openai'},
+{key:'type',label:t('providerType'),type:'select',options:t('providerTypes')}
+],vals=>{
+if(!vals.name)return false;
+if(providers[vals.name]){toast(t('providerName')+(lang==='zh'?' 已存在':' exists'),false);return false}
+providers[vals.name]={provider:vals.type||'openai'};renderAll();return true;
+});
+pg.appendChild(addBtn);
+// Fallback settings
+const fc=document.createElement('div');fc.className='card';fc.style.marginTop='16px';
+const fh=document.createElement('div');fh.className='card-header';
+const ft=document.createElement('div');ft.className='card-title';ft.textContent=tl('Fallback Settings');fc.appendChild(fh);fh.appendChild(ft);
+if(!cfg.models.fallback)cfg.models.fallback={};
+fc.appendChild(mkInput('models.fallback.enabled','Enable Fallback','toggle'));
+fc.appendChild(mkRow([mkInput('models.fallback.cooldownSecs','Cooldown (seconds)','number',{placeholder:'60'}),mkInput('models.fallback.retryDelayMs','Retry Delay (ms)','number',{placeholder:'1000'})]));
+pg.appendChild(fc);
+}
+"##,
+// --- CONFIG_UI script part 2: channels + session pages ---
+r##"
+// --- Page: Channels ---
+function pgChannels(pg){
+pgTitle(pg,'channels');
+if(!cfg.channels)cfg.channels={};
+const CHSCHEMA={
+webchat:{fields:[{k:'auth.username',l:'Username',t:'text'},{k:'auth.password',l:'Password',t:'password'}]},
+telegram:{fields:[{k:'botToken',l:'Bot Token',t:'password'},{k:'apiUrl',l:'API URL',t:'text',p:'https://api.telegram.org'}]},
+discord:{fields:[{k:'botToken',l:'Bot Token',t:'password'},{k:'guildId',l:'Guild ID',t:'text'},{k:'channelIds',l:'Channel IDs',t:'textarea',arr:true}]},
+slack:{fields:[{k:'botToken',l:'Bot Token',t:'password'},{k:'signingSecret',l:'Signing Secret',t:'password'},{k:'channelIds',l:'Channel IDs',t:'textarea',arr:true},{k:'webhookUrl',l:'Webhook URL',t:'text'}]},
+whatsapp:{fields:[{k:'phoneNumberId',l:'Phone Number ID',t:'text'},{k:'apiToken',l:'API Token',t:'password'},{k:'businessAccountId',l:'Business Account ID',t:'text'},{k:'webhookVerifyToken',l:'Webhook Verify Token',t:'password'}]},
+signal:{fields:[{k:'phoneNumber',l:'Phone Number',t:'text'},{k:'apiUrl',l:'API URL',t:'text'},{k:'signalCliPath',l:'Signal CLI Path',t:'text'}]},
+line:{fields:[{k:'channelAccessToken',l:'Channel Access Token',t:'password'},{k:'channelSecret',l:'Channel Secret',t:'password'},{k:'userId',l:'User ID',t:'text'}]},
+matrix:{fields:[{k:'homeserver',l:'Homeserver',t:'text',p:'https://matrix.org'},{k:'userId',l:'User ID',t:'text'},{k:'accessToken',l:'Access Token',t:'password'},{k:'deviceId',l:'Device ID',t:'text'},{k:'roomId',l:'Room ID',t:'text'}]},
+nostr:{fields:[{k:'relayUrls',l:'Relay URLs',t:'textarea',arr:true},{k:'privateKey',l:'Private Key',t:'password'},{k:'publicKey',l:'Public Key',t:'text'}]},
+irc:{fields:[{k:'server',l:'Server',t:'text'},{k:'port',l:'Port',t:'number'},{k:'nick',l:'Nickname',t:'text'},{k:'password',l:'Password',t:'password'},{k:'channels',l:'Channels',t:'textarea',arr:true}]},
+google_chat:{fields:[{k:'spaceName',l:'Space Name',t:'text'},{k:'serviceAccountJson',l:'Service Account JSON',t:'password'}]},
+mattermost:{fields:[{k:'serverUrl',l:'Server URL',t:'text'},{k:'accessToken',l:'Access Token',t:'password'},{k:'teamId',l:'Team ID',t:'text'},{k:'channelId',l:'Channel ID',t:'text'}]},
+feishu:{fields:[{k:'appId',l:'App ID',t:'text'},{k:'appSecret',l:'App Secret',t:'password'},{k:'verificationToken',l:'Verification Token',t:'password'},{k:'encryptKey',l:'Encrypt Key',t:'password'}]}
+};
+const grid=document.createElement('div');grid.className='channel-grid';
+for(const[chKey,schema] of Object.entries(CHSCHEMA)){
+const chCfg=cfg.channels[chKey];
+const enabled=chCfg?.enabled;
+const card=document.createElement('div');card.className='ch-card'+(enabled?' enabled':'');
+const head=document.createElement('div');head.className='ch-card-head';
+head.innerHTML='<span class="ch-icon">'+(CH_ICONS[chKey]||'')+'</span><span class="ch-name">'+(t('channelNames.'+chKey)||chKey)+'</span><span class="spacer"></span>';
+const tog=document.createElement('label');tog.className='toggle';
+const inp=document.createElement('input');inp.type='checkbox';inp.checked=!!enabled;
+inp.onchange=()=>{
+if(inp.checked){if(!cfg.channels[chKey])cfg.channels[chKey]={};cfg.channels[chKey].enabled=true}
+else if(cfg.channels[chKey])cfg.channels[chKey].enabled=false;
+renderAll();
+};
+const sl=document.createElement('span');sl.className='slider';
+tog.appendChild(inp);tog.appendChild(sl);head.appendChild(tog);card.appendChild(head);
+if(enabled){
+const base='channels.'+chKey;
+schema.fields.forEach(f=>{
+const fType=f.t==='password'?'password':f.t==='number'?'number':f.t==='textarea'?'textarea':'text';
+card.appendChild(mkInput(base+'.'+f.k,tl(f.l),fType,{placeholder:f.p||'',arrayMode:f.arr}));
+});
+}
+grid.appendChild(card);
+}
+pg.appendChild(grid);
+}
+// --- Page: Session ---
+function pgSession(pg){
+pgTitle(pg,'session');
+if(!cfg.session)cfg.session={};
+const c=document.createElement('div');c.className='card';
+const ch=document.createElement('div');ch.className='card-header';
+const ct=document.createElement('div');ct.className='card-title';ct.textContent=tl('Session Settings');c.appendChild(ch);ch.appendChild(ct);
+c.appendChild(mkInput('session.historyLimit','History Limit','number',{placeholder:'100'}));
+c.appendChild(mkInput('session.persist','Persist Sessions','toggle'));
+pg.appendChild(c);
+// Compaction
+if(!cfg.session.compaction)cfg.session.compaction={};
+const cc=document.createElement('div');cc.className='card';
+const cch=document.createElement('div');cch.className='card-header';
+const cct=document.createElement('div');cct.className='card-title';cct.textContent=tl('Compaction');cc.appendChild(cch);cch.appendChild(cct);
+cc.appendChild(mkInput('session.compaction.enabled','Enable Compaction','toggle'));
+cc.appendChild(mkRow([mkInput('session.compaction.reserveTokens','Reserve Tokens','number',{placeholder:'2000'}),mkInput('session.compaction.keepRecentTokens','Keep Recent Tokens','number',{placeholder:'4000'})]));
+pg.appendChild(cc);
+// Pruning
+if(!cfg.session.pruning)cfg.session.pruning={};
+const pc=document.createElement('div');pc.className='card';
+const pch=document.createElement('div');pch.className='card-header';
+const pct=document.createElement('div');pct.className='card-title';pct.textContent=tl('Pruning');pc.appendChild(pch);pch.appendChild(pct);
+pc.appendChild(mkInput('session.pruning.enabled','Enable Pruning','toggle'));
+pc.appendChild(mkRow([mkInput('session.pruning.softTrimMaxChars','Soft Trim Max Chars','number',{placeholder:'50000'}),mkInput('session.pruning.hardClearMaxChars','Hard Clear Max Chars','number',{placeholder:'100000'})]));
+pc.appendChild(mkInput('session.pruning.keepLastAssistants','Keep Last N Assistants','number',{placeholder:'3'}));
+pg.appendChild(pc);
+// Reset
+if(!cfg.session.reset)cfg.session.reset={};
+const rc=document.createElement('div');rc.className='card';
+const rch=document.createElement('div');rch.className='card-header';
+const rct=document.createElement('div');rct.className='card-title';rct.textContent=tl('Auto Reset');rc.appendChild(rch);rch.appendChild(rct);
+rc.appendChild(mkInput('session.reset.idleMinutes','Idle Reset (minutes)','number',{placeholder:'30'}));
+pg.appendChild(rc);
+}
+"##,
+// --- CONFIG_UI script part 3: browser + cron + memory + logging pages ---
+r##"
+// --- Page: Browser ---
+function pgBrowser(pg){
+pgTitle(pg,'browser');
+if(!cfg.browser)cfg.browser={};
+const c=document.createElement('div');c.className='card';
+const ch=document.createElement('div');ch.className='card-header';
+const ct=document.createElement('div');ct.className='card-title';ct.textContent=tl('Browser Automation');c.appendChild(ch);ch.appendChild(ct);
+c.appendChild(mkInput('browser.enabled','Enable Browser','toggle'));
+c.appendChild(mkInput('browser.headless','Headless Mode','toggle'));
+c.appendChild(mkInput('browser.noSandbox','No Sandbox','toggle'));
+c.appendChild(mkInput('browser.attachOnly','Attach Only','toggle'));
+c.appendChild(mkInput('browser.evaluateEnabled','Enable Evaluate','toggle'));
+c.appendChild(mkInput('browser.cdpUrl','CDP URL','text',{placeholder:'ws://localhost:9222'}));
+c.appendChild(mkInput('browser.executablePath','Executable Path','text',{placeholder:'/usr/bin/chromium'}));
+c.appendChild(mkInput('browser.remoteCdpTimeoutMs','Remote CDP Timeout (ms)','number',{placeholder:'30000'}));
+c.appendChild(mkInput('browser.defaultProfile','Default Profile','text'));
+pg.appendChild(c);
+// SSRF Policy
+if(!cfg.browser.ssrfPolicy)cfg.browser.ssrfPolicy={};
+const sc=document.createElement('div');sc.className='card';
+const sh=document.createElement('div');sh.className='card-header';
+const st=document.createElement('div');st.className='card-title';st.textContent=tl('SSRF Policy');sc.appendChild(sh);sh.appendChild(st);
+sc.appendChild(mkInput('browser.ssrfPolicy.allowPrivateNetwork','Allow Private Network','toggle'));
+sc.appendChild(mkInput('browser.ssrfPolicy.allowedHostnames','Allowed Hostnames','textarea',{placeholder:'["example.com"]',arrayMode:true}));
+pg.appendChild(sc);
+}
+// --- Page: Cron ---
+function pgCron(pg){
+pgTitle(pg,'cron');
+if(!cfg.cron)cfg.cron={};
+const c=document.createElement('div');c.className='card';
+const ch=document.createElement('div');ch.className='card-header';
+const ct=document.createElement('div');ct.className='card-title';ct.textContent=tl('Cron Settings');c.appendChild(ch);ch.appendChild(ct);
+c.appendChild(mkInput('cron.enabled','Enable Cron','toggle'));
+c.appendChild(mkInput('cron.store','Store Path','text',{placeholder:'~/.oclaws/cron.json'}));
+c.appendChild(mkInput('cron.maxConcurrentRuns','Max Concurrent Runs','number',{placeholder:'5'}));
+c.appendChild(mkInput('cron.webhook','Webhook URL','text',{placeholder:'https://...'}));
+c.appendChild(mkInput('cron.webhookToken','Webhook Token','password'));
+pg.appendChild(c);
+}
+// --- Page: Memory ---
+function pgMemory(pg){
+pgTitle(pg,'memory');
+if(!cfg.memory)cfg.memory={};
+const c=document.createElement('div');c.className='card';
+const ch=document.createElement('div');ch.className='card-header';
+const ct=document.createElement('div');ct.className='card-title';ct.textContent=tl('Long-term Memory');c.appendChild(ch);ch.appendChild(ct);
+c.appendChild(mkInput('memory.enabled','Enable Memory','toggle'));
+c.appendChild(mkInput('memory.provider','Embedding Provider','select',{options:['','openai','anthropic','cohere','ollama']}));
+c.appendChild(mkInput('memory.apiKey','API Key','password',{placeholder:'Key for embedding provider'}));
+c.appendChild(mkInput('memory.model','Embedding Model','text',{placeholder:'text-embedding-3-small'}));
+c.appendChild(mkInput('memory.dbPath','Database Path','text',{placeholder:'~/.oclaws/memory.db'}));
+c.appendChild(mkRow([mkInput('memory.vectorWeight','Vector Weight','number',{placeholder:'0.7',step:'0.1'}),mkInput('memory.textWeight','Text Weight','number',{placeholder:'0.3',step:'0.1'})]));
+c.appendChild(mkInput('memory.autoIndex','Auto Index','toggle'));
+pg.appendChild(c);
+}
+// --- Page: Logging ---
+function pgLogging(pg){
+pgTitle(pg,'logging');
+if(!cfg.logging)cfg.logging={};
+const c=document.createElement('div');c.className='card';
+const ch=document.createElement('div');ch.className='card-header';
+const ct=document.createElement('div');ct.className='card-title';ct.textContent=tl('Logging');c.appendChild(ch);ch.appendChild(ct);
+c.appendChild(mkInput('logging.level','Log Level','select',{options:['trace','debug','info','warn','error']}));
+c.appendChild(mkInput('logging.consoleLevel','Console Level','select',{options:['','trace','debug','info','warn','error']}));
+c.appendChild(mkInput('logging.consoleStyle','Console Style','select',{options:['','text','json','pretty']}));
+c.appendChild(mkInput('logging.file','Log File Path','text',{placeholder:'/var/log/oclaws.log'}));
+c.appendChild(mkInput('logging.redactSensitive','Redact Sensitive','select',{options:['','true','false','partial']}));
+c.appendChild(mkInput('logging.redactPatterns','Redact Patterns','textarea',{placeholder:'["sk-.*","token-.*"]',arrayMode:true}));
+pg.appendChild(c);
+}
+"##,
+// --- CONFIG_UI script part 4: advanced page + save/load/init ---
+r##"
+// --- Page: Advanced ---
+function pgAdvanced(pg){
+pgTitle(pg,'advanced');
+// Diagnostics
+if(!cfg.diagnostics)cfg.diagnostics={};
+const dc=document.createElement('div');dc.className='card';
+const dh=document.createElement('div');dh.className='card-header';
+const dt=document.createElement('div');dt.className='card-title';dt.textContent=tl('Diagnostics / OpenTelemetry');dc.appendChild(dh);dh.appendChild(dt);
+dc.appendChild(mkInput('diagnostics.enabled','Enable Diagnostics','toggle'));
+if(!cfg.diagnostics.otel)cfg.diagnostics.otel={};
+dc.appendChild(mkInput('diagnostics.otel.enabled','Enable OTel','toggle'));
+dc.appendChild(mkInput('diagnostics.otel.endpoint','OTel Endpoint','text',{placeholder:'http://localhost:4318'}));
+dc.appendChild(mkRow([mkInput('diagnostics.otel.traces','Traces','toggle'),mkInput('diagnostics.otel.metrics','Metrics','toggle'),mkInput('diagnostics.otel.logs','Logs','toggle')]));
+dc.appendChild(mkInput('diagnostics.otel.serviceName','Service Name','text',{placeholder:'oclaws'}));
+dc.appendChild(mkInput('diagnostics.otel.sampleRate','Sample Rate','number',{placeholder:'1.0',step:'0.1'}));
+pg.appendChild(dc);
+// Talk / Voice
+if(!cfg.talk)cfg.talk={};
+const tc=document.createElement('div');tc.className='card';
+const th=document.createElement('div');th.className='card-header';
+const tt=document.createElement('div');tt.className='card-title';tt.textContent=tl('Voice (Talk)');tc.appendChild(th);th.appendChild(tt);
+tc.appendChild(mkInput('talk.voiceId','Voice ID','text'));
+tc.appendChild(mkInput('talk.modelId','Model ID','text'));
+tc.appendChild(mkInput('talk.outputFormat','Output Format','text',{placeholder:'mp3'}));
+tc.appendChild(mkInput('talk.apiKey','API Key','password'));
+tc.appendChild(mkInput('talk.interruptOnSpeech','Interrupt on Speech','toggle'));
+pg.appendChild(tc);
+// Web / Reconnect
+if(!cfg.web)cfg.web={};
+const wc=document.createElement('div');wc.className='card';
+const wh=document.createElement('div');wh.className='card-header';
+const wt=document.createElement('div');wt.className='card-title';wt.textContent=tl('Web / Reconnect');wc.appendChild(wh);wh.appendChild(wt);
+wc.appendChild(mkInput('web.enabled','Enable Web','toggle'));
+wc.appendChild(mkInput('web.heartbeatSeconds','Heartbeat (seconds)','number',{placeholder:'30'}));
+if(!cfg.web.reconnect)cfg.web.reconnect={};
+wc.appendChild(mkRow([mkInput('web.reconnect.initialMs','Initial (ms)','number',{placeholder:'1000'}),mkInput('web.reconnect.maxMs','Max (ms)','number',{placeholder:'60000'})]));
+wc.appendChild(mkRow([mkInput('web.reconnect.factor','Factor','number',{placeholder:'2.0',step:'0.1'}),mkInput('web.reconnect.maxAttempts','Max Attempts','number',{placeholder:'10'})]));
+pg.appendChild(wc);
+// UI
+if(!cfg.ui)cfg.ui={};
+const uic=document.createElement('div');uic.className='card';
+const uih=document.createElement('div');uih.className='card-header';
+const uit=document.createElement('div');uit.className='card-title';uit.textContent=tl('UI Settings');uic.appendChild(uih);uih.appendChild(uit);
+uic.appendChild(mkInput('ui.seamColor','Seam Color','text',{placeholder:'#00d4ff'}));
+if(!cfg.ui.assistant)cfg.ui.assistant={};
+uic.appendChild(mkInput('ui.assistant.name','Assistant Name','text',{placeholder:'OpenClaw'}));
+uic.appendChild(mkInput('ui.assistant.avatar','Assistant Avatar','text',{placeholder:'URL or emoji'}));
+pg.appendChild(uic);
+// Discovery
+if(!cfg.discovery)cfg.discovery={};
+const disc=document.createElement('div');disc.className='card';
+const dish=document.createElement('div');dish.className='card-header';
+const dist=document.createElement('div');dist.className='card-title';dist.textContent=tl('Service Discovery');disc.appendChild(dish);dish.appendChild(dist);
+if(!cfg.discovery.wideArea)cfg.discovery.wideArea={};
+if(!cfg.discovery.mdns)cfg.discovery.mdns={};
+disc.appendChild(mkInput('discovery.wideArea.enabled','Wide Area Discovery','toggle'));
+disc.appendChild(mkInput('discovery.mdns.mode','mDNS Mode','select',{options:['','off','listen','announce']}));
+pg.appendChild(disc);
+// Plugins
+if(!cfg.plugins)cfg.plugins={};
+const plc=document.createElement('div');plc.className='card';
+const plh=document.createElement('div');plh.className='card-header';
+const plt=document.createElement('div');plt.className='card-title';plt.textContent=tl('Plugins');plc.appendChild(plh);plh.appendChild(plt);
+plc.appendChild(mkInput('plugins.enabled','Enable Plugins','toggle'));
+plc.appendChild(mkInput('plugins.allow','Allow List','textarea',{placeholder:'["plugin-a","plugin-b"]',arrayMode:true}));
+plc.appendChild(mkInput('plugins.deny','Deny List','textarea',{placeholder:'["plugin-x"]',arrayMode:true}));
+pg.appendChild(plc);
+// Update
+if(!cfg.update)cfg.update={};
+const upc=document.createElement('div');upc.className='card';
+const uph=document.createElement('div');uph.className='card-header';
+const upt=document.createElement('div');upt.className='card-title';upt.textContent=tl('Update');upc.appendChild(uph);uph.appendChild(upt);
+upc.appendChild(mkInput('update.channel','Update Channel','select',{options:['','stable','beta','nightly']}));
+upc.appendChild(mkInput('update.checkOnStart','Check on Start','toggle'));
+pg.appendChild(upc);
+}
+// --- Collect form values into cfg ---
 function collect(){
 const out=JSON.parse(JSON.stringify(cfg));
-document.querySelectorAll("[data-path]").forEach(el=>{
+document.querySelectorAll('[data-path]').forEach(el=>{
 const p=el.dataset.path;let v;
-if(el.type==="checkbox")v=el.checked;
-else if(el.type==="number")v=el.value===""?null:Number(el.value);
-else if(el.dataset.type==="array"){try{v=JSON.parse(el.value)}catch{v=el.value.split("\n").filter(Boolean)}}
-else v=el.value===""?null:el.value;
-if(v!==null)setPath(out,p,v);
+if(el.dataset.type==='bool'||el.type==='checkbox')v=el.checked;
+else if(el.type==='number')v=el.value===''?undefined:Number(el.value);
+else if(el.dataset.type==='array'){try{v=JSON.parse(el.value)}catch{v=el.value.split('\n').map(s=>s.trim()).filter(Boolean)}}
+else v=el.value===''?undefined:el.value;
+if(v!==undefined)sp(out,p,v);
 });
-return out;
+// Clean empty objects
+function prune(o){if(!o||typeof o!=='object')return o;for(const k of Object.keys(o)){o[k]=prune(o[k]);if(o[k]&&typeof o[k]==='object'&&!Array.isArray(o[k])&&!Object.keys(o[k]).length)delete o[k]}return o}
+return prune(out);
 }
+// --- Save ---
 async function save(){
-const btn=document.getElementById("save-btn");
-btn.disabled=true;btn.textContent=t("saving");
+const btn=document.getElementById('save-btn');
+btn.disabled=true;btn.textContent=t('saving');
 try{
-const r=await fetch("/api/config/full",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(collect())});
+const data=collect();
+const r=await fetch('/api/config/full',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
 const j=await r.json();
-if(r.ok){toast(t("saved"),true)}
-else{toast(t("errPrefix")+(j.errors||[j.error]).join(", "),false)}
-}catch(e){toast(t("errPrefix")+e,false)}
-btn.disabled=false;btn.textContent=t("save");
+if(r.ok){cfg=data;toast(t('saved'),true)}
+else{toast(t('errPrefix')+(j.errors||[j.error]).join(', '),false)}
+}catch(e){toast(t('errPrefix')+e,false)}
+btn.disabled=false;btn.textContent=t('save');
 }
-fetch("/api/config/full").then(r=>r.json()).then(j=>{cfg=j;render()}).catch(e=>toast(t("loadErr")+e,false));
-</script></body></html>"##;
+// --- Export / Import ---
+function exportCfg(){
+const data=JSON.stringify(collect(),null,2);
+const blob=new Blob([data],{type:'application/json'});
+const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='oclaws-config.json';a.click();
+URL.revokeObjectURL(a.href);toast(t('exportOk'),true);
+}
+function importCfg(e){
+const file=e.target.files[0];if(!file)return;
+const reader=new FileReader();
+reader.onload=ev=>{
+try{cfg=JSON.parse(ev.target.result);renderAll();toast(t('importOk'),true)}
+catch{toast(t('importErr'),false)}
+};
+reader.readAsText(file);e.target.value='';
+}
+// --- Init ---
+fetch('/api/config/full').then(r=>r.json()).then(j=>{cfg=j;renderAll();document.getElementById('status-bar').textContent=lang==='zh'?'配置已加载':'Config loaded'}).catch(e=>toast(t('loadErr')+e,false));
+</script></body></html>"##,
+);
 
 const WEBCHAT_HTML: &str = concat!(
 r##"<!DOCTYPE html>
