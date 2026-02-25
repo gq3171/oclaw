@@ -128,6 +128,22 @@ impl Channel for NextcloudChannel {
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
         Ok(Box::new(NextcloudSender { channel: Arc::new(RwLock::new(self.clone())) }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // Nextcloud Talk: /object/message, /object/conversation/token
+        let text = payload.pointer("/object/message")
+            .and_then(|v| v.as_str())?;
+        let chat_id = payload.pointer("/object/conversation/token")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: chat_id.to_string(),
+            is_group: true,
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
 }
 
 struct NextcloudSender {

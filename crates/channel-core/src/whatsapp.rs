@@ -1,4 +1,5 @@
 use crate::traits::*;
+use crate::types::*;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -248,6 +249,143 @@ impl Channel for WhatsAppChannel {
         }
         
         Ok(())
+    }
+
+    fn capabilities(&self) -> ChannelCapabilities {
+        ChannelCapabilities {
+            reactions: true,
+            media: true,
+            polls: true,
+            ..Default::default()
+        }
+    }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // WhatsApp Cloud API: /entry/0/changes/0/value/messages/0
+        let msg = payload.pointer("/entry/0/changes/0/value/messages/0")?;
+        let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+        let text = if msg_type == "text" {
+            msg.pointer("/text/body").and_then(|v| v.as_str()).map(|s| s.to_string())
+        } else if msg_type == "interactive" {
+            msg.pointer("/interactive/button_reply/title")
+                .or_else(|| msg.pointer("/interactive/list_reply/title"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        } else {
+            Some(format!("[{}]", msg_type))
+        }?;
+        let mut metadata = HashMap::new();
+        metadata.insert("recipient".to_string(), from.to_string());
+        Some(WebhookMessage {
+            text,
+            chat_id: from.to_string(),
+            is_group: false,
+            has_mention: false,
+            metadata,
+        })
+    }
+
+    async fn send_reaction(&self, message_id: &str, emoji: &str, _metadata: &HashMap<String, String>) -> ChannelResult<()> {
+        let recipient = _metadata.get("recipient")
+            .ok_or_else(|| ChannelError::MessageError("Recipient required for reaction".into()))?;
+        let phone_number_id = self.phone_number_id.as_ref()
+            .ok_or_else(|| ChannelError::ConfigError("Phone number ID not set".into()))?;
+        let body = serde_json::json!({
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": recipient,
+            "type": "reaction",
+            "reaction": {
+                "message_id": message_id,
+                "emoji": emoji,
+            }
+        });
+        self.send_api_request("POST", &format!("/{}/messages", phone_number_id), Some(&body)).await?;
+        Ok(())
+    }
+
+    async fn send_media(&self, target: &str, media: &ChannelMedia) -> ChannelResult<String> {
+        let phone_number_id = self.phone_number_id.as_ref()
+            .ok_or_else(|| ChannelError::ConfigError("Phone number ID not set".into()))?;
+        let media_type_str = match media.media_type {
+            MediaType::Photo => "image",
+            MediaType::Audio => "audio",
+            MediaType::Voice => "audio",
+            MediaType::Video => "video",
+            MediaType::Document | MediaType::File => "document",
+            MediaType::Sticker => "sticker",
+        };
+        let media_obj = match &media.data {
+            MediaData::Url(u) => serde_json::json!({"link": u}),
+            MediaData::FileId(id) => serde_json::json!({"id": id}),
+            MediaData::Bytes(_) => return Err(ChannelError::UnsupportedOperation(
+                "WhatsApp send_media with raw bytes not supported".into(),
+            )),
+        };
+        let mut body = serde_json::json!({
+            "messaging_product": "whatsapp",
+            "to": target,
+            "type": media_type_str,
+            media_type_str: media_obj,
+        });
+        if let Some(caption) = &media.caption
+            && let Some(obj) = body.get_mut(media_type_str).and_then(|o| o.as_object_mut())
+        {
+            obj.insert("caption".to_string(), serde_json::Value::String(caption.clone()));
+        }
+        let resp = self.send_api_request("POST", &format!("/{}/messages", phone_number_id), Some(&body)).await?;
+        Ok(resp.get("messages")
+            .and_then(|m| m.as_array())
+            .and_then(|a| a.first())
+            .and_then(|m| m.get("id"))
+            .and_then(|id| id.as_str())
+            .unwrap_or_default()
+            .to_string())
+    }
+
+    async fn download_media(&self, media_id: &str) -> ChannelResult<Vec<u8>> {
+        let info = self.send_api_request("GET", &format!("/{}", media_id), None).await?;
+        let url = info.get("url").and_then(|u| u.as_str())
+            .ok_or_else(|| ChannelError::MessageError("No download URL in response".into()))?;
+        let token = self.api_token.as_ref()
+            .ok_or_else(|| ChannelError::AuthenticationError("API token not set".into()))?;
+        let client = self.client.as_ref()
+            .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".into()))?;
+        let bytes = client.get(url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send().await
+            .map_err(|e| ChannelError::ConnectionError(e.to_string()))?
+            .bytes().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        Ok(bytes.to_vec())
+    }
+
+    async fn send_poll(&self, target: &str, poll: &PollRequest) -> ChannelResult<String> {
+        let phone_number_id = self.phone_number_id.as_ref()
+            .ok_or_else(|| ChannelError::ConfigError("Phone number ID not set".into()))?;
+        let buttons: Vec<serde_json::Value> = poll.options.iter()
+            .take(3)
+            .map(|o| serde_json::json!({"type": "reply", "reply": {"id": o, "title": o}}))
+            .collect();
+        let body = serde_json::json!({
+            "messaging_product": "whatsapp",
+            "to": target,
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": poll.question},
+                "action": {"buttons": buttons},
+            }
+        });
+        let resp = self.send_api_request("POST", &format!("/{}/messages", phone_number_id), Some(&body)).await?;
+        Ok(resp.get("messages")
+            .and_then(|m| m.as_array())
+            .and_then(|a| a.first())
+            .and_then(|m| m.get("id"))
+            .and_then(|id| id.as_str())
+            .unwrap_or_default()
+            .to_string())
     }
 
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {

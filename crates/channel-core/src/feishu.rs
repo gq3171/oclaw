@@ -1,4 +1,5 @@
 use crate::traits::*;
+use crate::types::*;
 use async_trait::async_trait;
 use reqwest::Client;
 use std::collections::HashMap;
@@ -440,13 +441,16 @@ impl Channel for FeishuChannel {
             message.content.clone()
         };
 
-        // Update mode: if update_message_id is set, try editing that message
+        // Update mode: if update_message_id is set, try editing that message.
+        // NOTE: Feishu PATCH API only supports "interactive" (card) messages.
+        // For text/post/image etc., skip the update and send a new message instead.
         if let Some(mid) = message.metadata.get("update_message_id") {
-            if let Ok(json) = self.update_message(mid, &content).await {
-                if json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1) == 0 {
-                    return Ok(mid.clone());
-                }
-                tracing::warn!("Feishu update_message failed: {}", json);
+            if msg_type == "interactive"
+                && let Ok(json) = self.update_message(mid, &content).await {
+                    if json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1) == 0 {
+                        return Ok(mid.clone());
+                    }
+                    tracing::warn!("Feishu update_message failed: {}", json);
             }
             // Fallback: send new message (don't delete placeholder to avoid "撤回" notification)
             let json = self.send_raw(receive_id, receive_id_type, msg_type, &content).await?;
@@ -470,6 +474,58 @@ impl Channel for FeishuChannel {
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Feishu event: {:?}", event);
         Ok(())
+    }
+
+    fn capabilities(&self) -> ChannelCapabilities {
+        ChannelCapabilities {
+            reactions: true,
+            threads: true,
+            media: true,
+            editing: true,
+            deletion: true,
+            directory: true,
+            ..Default::default()
+        }
+    }
+
+    async fn send_reaction(&self, message_id: &str, emoji: &str, _metadata: &HashMap<String, String>) -> ChannelResult<()> {
+        self.add_reaction(message_id, emoji).await?;
+        Ok(())
+    }
+
+    async fn send_thread_reply(&self, thread_id: &str, message: &ChannelMessage) -> ChannelResult<String> {
+        let msg_type = message.metadata.get("msg_type").map(|s| s.as_str()).unwrap_or("text");
+        let content = if msg_type == "text" {
+            serde_json::json!({"text": message.content}).to_string()
+        } else {
+            message.content.clone()
+        };
+        let json = self.reply_raw(thread_id, msg_type, &content).await?;
+        Ok(json["data"]["message_id"].as_str().unwrap_or("sent").to_string())
+    }
+
+    async fn edit_message(&self, message_id: &str, content: &str) -> ChannelResult<()> {
+        self.update_message(message_id, content).await?;
+        Ok(())
+    }
+
+    async fn delete_message(&self, message_id: &str) -> ChannelResult<()> {
+        self.delete_message(message_id).await?;
+        Ok(())
+    }
+
+    async fn list_groups(&self) -> ChannelResult<Vec<GroupInfo>> {
+        let json = self.list_chats().await?;
+        let items = json["data"]["items"].as_array()
+            .ok_or_else(|| ChannelError::MessageError("No items in response".into()))?;
+        Ok(items.iter().filter_map(|c| {
+            Some(GroupInfo {
+                id: c.get("chat_id")?.as_str()?.to_string(),
+                name: c.get("name")?.as_str()?.to_string(),
+                member_count: c.get("member_count").and_then(|n| n.as_u64()).map(|n| n as u32),
+                group_type: ChatType::Group,
+            })
+        }).collect())
     }
 
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {

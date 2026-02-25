@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::pin::Pin;
 
+use crate::types::{ChannelCapabilities, ChannelMedia, ChatType, GroupInfo, PollRequest};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelMessage {
@@ -133,10 +135,118 @@ pub trait Channel: Send + Sync {
     }
 
     async fn list_accounts(&self) -> ChannelResult<Vec<ChannelAccount>>;
-    
+
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()>;
-    
+
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>>;
+
+    // ── Adapter methods (Phase 1) ──────────────────────────────────
+
+    /// Declare what this channel supports.
+    fn capabilities(&self) -> ChannelCapabilities {
+        ChannelCapabilities::default()
+    }
+
+    /// The chat type this channel instance represents, if known.
+    fn chat_type(&self) -> Option<ChatType> {
+        None
+    }
+
+    /// Remove a previously-sent reaction.
+    async fn remove_reaction(&self, _message_id: &str, _emoji: &str) -> ChannelResult<()> {
+        Err(ChannelError::UnsupportedOperation("reactions".into()))
+    }
+
+    /// Reply inside a thread.
+    async fn send_thread_reply(&self, _thread_id: &str, _message: &ChannelMessage) -> ChannelResult<String> {
+        Err(ChannelError::UnsupportedOperation("threads".into()))
+    }
+
+    /// Create a new thread from an existing message.
+    async fn create_thread(&self, _message_id: &str, _name: Option<&str>) -> ChannelResult<String> {
+        Err(ChannelError::UnsupportedOperation("threads".into()))
+    }
+
+    /// Send a media attachment (photo, audio, video, document, etc.).
+    async fn send_media(&self, _target: &str, _media: &ChannelMedia) -> ChannelResult<String> {
+        Err(ChannelError::UnsupportedOperation("media".into()))
+    }
+
+    /// Download media by its platform-specific ID.
+    async fn download_media(&self, _media_id: &str) -> ChannelResult<Vec<u8>> {
+        Err(ChannelError::UnsupportedOperation("media".into()))
+    }
+
+    /// Edit an already-sent message.
+    async fn edit_message(&self, _message_id: &str, _content: &str) -> ChannelResult<()> {
+        Err(ChannelError::UnsupportedOperation("editing".into()))
+    }
+
+    /// Delete a message.
+    async fn delete_message(&self, _message_id: &str) -> ChannelResult<()> {
+        Err(ChannelError::UnsupportedOperation("deletion".into()))
+    }
+
+    /// List members of a group/channel.
+    async fn list_members(&self, _group_id: &str) -> ChannelResult<Vec<ChannelAccount>> {
+        Err(ChannelError::UnsupportedOperation("directory".into()))
+    }
+
+    /// List groups/channels visible to the bot.
+    async fn list_groups(&self) -> ChannelResult<Vec<GroupInfo>> {
+        Err(ChannelError::UnsupportedOperation("directory".into()))
+    }
+
+    /// Send a poll.
+    async fn send_poll(&self, _target: &str, _poll: &PollRequest) -> ChannelResult<String> {
+        Err(ChannelError::UnsupportedOperation("polls".into()))
+    }
+
+    /// Parse an incoming webhook payload into a `WebhookMessage`.
+    /// Each channel should override this to extract text and chat_id
+    /// from its own platform-specific JSON format.
+    /// Default implementation tries common field names.
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // Try common text fields
+        let text = payload.get("text").and_then(|v| v.as_str())
+            .or_else(|| payload.get("content").and_then(|v| v.as_str()))
+            .or_else(|| payload.get("message").and_then(|v| v.as_str()))
+            .or_else(|| payload.get("body").and_then(|v| v.as_str()))
+            .or_else(|| payload.pointer("/message/text").and_then(|v| v.as_str()))
+            .or_else(|| payload.pointer("/data/text").and_then(|v| v.as_str()))?;
+
+        // Try common chat_id fields
+        let chat_id = payload.get("chat_id").and_then(|v| v.as_str())
+            .or_else(|| payload.get("channel_id").and_then(|v| v.as_str()))
+            .or_else(|| payload.get("room_id").and_then(|v| v.as_str()))
+            .or_else(|| payload.get("conversation_id").and_then(|v| v.as_str()))
+            .or_else(|| payload.get("user_id").and_then(|v| v.as_str()))
+            .or_else(|| payload.get("from").and_then(|v| v.as_str()))
+            .unwrap_or("default");
+
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: chat_id.to_string(),
+            is_group: false,
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
+}
+
+/// Parsed webhook message for pipeline processing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookMessage {
+    /// The user's text content.
+    pub text: String,
+    /// Chat/conversation identifier for session tracking.
+    pub chat_id: String,
+    /// Whether this is a group conversation.
+    pub is_group: bool,
+    /// Whether the bot was explicitly mentioned.
+    pub has_mention: bool,
+    /// Extra metadata to pass through to the pipeline.
+    pub metadata: HashMap<String, String>,
 }
 
 pub trait MessageSender: Send + Sync {
@@ -151,7 +261,7 @@ pub enum ChannelError {
     NotFound(String),
     RateLimitError(String),
     ConfigError(String),
-    ConfigurationError(String),
+    UnsupportedOperation(String),
 }
 
 impl std::fmt::Display for ChannelError {
@@ -163,7 +273,7 @@ impl std::fmt::Display for ChannelError {
             Self::NotFound(s) => write!(f, "Not found: {}", s),
             Self::RateLimitError(s) => write!(f, "Rate limit: {}", s),
             Self::ConfigError(s) => write!(f, "Config error: {}", s),
-            Self::ConfigurationError(s) => write!(f, "Configuration error: {}", s),
+            Self::UnsupportedOperation(s) => write!(f, "Unsupported operation: {}", s),
         }
     }
 }

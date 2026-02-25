@@ -15,3 +15,6 @@ anyhow.workspace = true
 tracing.workspace = true
 dirs.workspace = true
 cron.workspace = true
+async-trait.workspace = true
+sha2.workspace = true
+reqwest.workspace = true

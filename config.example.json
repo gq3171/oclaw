@@ -1,15 +1,85 @@
 {
+  "meta": {
+    "lastTouchedVersion": "0.1.0",
+    "lastTouchedAt": "2025-01-01"
+  },
+
   "gateway": {
     "port": 8080,
+    "mode": "normal",
     "bind": "0.0.0.0",
+    "customBindHost": null,
+    "controlUi": {
+      "enabled": true,
+      "basePath": "/ui",
+      "root": "./ui/dist",
+      "allowedOrigins": ["http://localhost:3000"],
+      "allowInsecureAuth": false,
+      "dangerouslyDisableDeviceAuth": false
+    },
     "auth": {
       "mode": "token",
-      "token": "${OCLAWS_GATEWAY_AUTH_TOKEN}"
+      "token": "${OCLAWS_GATEWAY_AUTH_TOKEN}",
+      "password": "${OCLAWS_GATEWAY_AUTH_PASSWORD}",
+      "allowTailscale": false,
+      "rateLimit": {
+        "maxAttempts": 5,
+        "windowMs": 60000,
+        "lockoutMs": 300000,
+        "exemptLoopback": true
+      },
+      "trustedProxy": {
+        "userHeader": "X-Forwarded-User",
+        "requiredHeaders": ["X-Forwarded-For"],
+        "allowUsers": []
+      }
+    },
+    "trustedProxies": [],
+    "allowRealIpFallback": false,
+    "tools": {
+      "deny": [],
+      "allow": []
+    },
+    "channelHealthCheckMinutes": 5,
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    },
+    "remote": {
+      "url": null,
+      "transport": "ws",
+      "token": null,
+      "password": null,
+      "tlsFingerprint": null,
+      "sshTarget": null,
+      "sshIdentity": null
+    },
+    "reload": {
+      "mode": "watch",
+      "debounceMs": 1000
+    },
+    "tls": {
+      "enabled": false,
+      "autoGenerate": false,
+      "certPath": null,
+      "keyPath": null,
+      "caPath": null
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": { "enabled": true },
+        "responses": { "enabled": true }
+      }
     }
   },
 
   "logging": {
-    "level": "info"
+    "level": "info",
+    "file": null,
+    "consoleLevel": "info",
+    "consoleStyle": "pretty",
+    "redactSensitive": "partial",
+    "redactPatterns": ["sk-[a-zA-Z0-9]+", "Bearer [a-zA-Z0-9]+"]
   },
 
   "models": {
@@ -20,40 +90,313 @@
         "baseUrl": "https://api.minimaxi.com/anthropic",
         "model": "MiniMax-Text-01",
         "maxTokens": 4096,
+        "temperature": 0.7,
+        "maxConcurrency": 10,
+        "headers": {},
+        "fallback": ["openai"]
+      },
+      "openai": {
+        "provider": "openai",
+        "apiKey": "${OCLAWS_PROVIDER_OPENAI_API_KEY}",
+        "baseUrl": "https://api.openai.com/v1",
+        "model": "gpt-4o",
+        "maxTokens": 4096,
         "temperature": 0.7
+      },
+      "ollama": {
+        "provider": "ollama",
+        "baseUrl": "http://localhost:11434",
+        "model": "llama3"
       }
+    },
+    "fallback": {
+      "enabled": true,
+      "cooldownSecs": 60,
+      "retryDelayMs": 1000
     }
   },
 
   "channels": {
+    "webchat": {
+      "enabled": true,
+      "auth": {
+        "username": "admin",
+        "password": "${OCLAWS_WEBCHAT_PASSWORD}"
+      }
+    },
     "telegram": {
       "enabled": true,
-      "botToken": "${OCLAWS_TELEGRAM_BOT_TOKEN}"
+      "botToken": "${OCLAWS_TELEGRAM_BOT_TOKEN}",
+      "apiUrl": null
+    },
+    "discord": {
+      "enabled": false,
+      "botToken": "${OCLAWS_DISCORD_BOT_TOKEN}",
+      "guildId": null,
+      "channelIds": []
+    },
+    "slack": {
+      "enabled": false,
+      "botToken": "${OCLAWS_SLACK_BOT_TOKEN}",
+      "signingSecret": "${OCLAWS_SLACK_SIGNING_SECRET}",
+      "channelIds": [],
+      "webhookUrl": null
     },
     "feishu": {
       "enabled": true,
       "appId": "${OCLAWS_FEISHU_APP_ID}",
-      "appSecret": "${OCLAWS_FEISHU_APP_SECRET}"
+      "appSecret": "${OCLAWS_FEISHU_APP_SECRET}",
+      "verificationToken": null,
+      "encryptKey": "${FEISHU_ENCRYPT_KEY}"
+    },
+    "whatsapp": {
+      "enabled": false,
+      "phoneNumberId": null,
+      "apiToken": null,
+      "businessAccountId": null,
+      "webhookVerifyToken": null
+    },
+    "signal": {
+      "enabled": false,
+      "phoneNumber": null,
+      "apiUrl": null,
+      "signalCliPath": null
+    },
+    "line": {
+      "enabled": false,
+      "channelAccessToken": null,
+      "channelSecret": null,
+      "userId": null
+    },
+    "matrix": {
+      "enabled": false,
+      "homeserver": null,
+      "userId": null,
+      "accessToken": null,
+      "deviceId": null,
+      "roomId": null
+    },
+    "msteams": {
+      "enabled": false,
+      "botId": null,
+      "botPassword": null,
+      "tenantId": null
+    },
+    "mattermost": {
+      "enabled": false,
+      "serverUrl": null,
+      "accessToken": null,
+      "teamId": null,
+      "channelId": null
+    },
+    "googleChat": {
+      "enabled": false,
+      "spaceName": null,
+      "serviceAccountJson": null
+    },
+    "irc": {
+      "enabled": false,
+      "server": null,
+      "port": 6697,
+      "nick": null,
+      "password": null,
+      "channels": []
+    },
+    "nostr": {
+      "enabled": false,
+      "relayUrls": [],
+      "privateKey": null,
+      "publicKey": null
+    },
+    "twitch": {
+      "enabled": false,
+      "clientId": null,
+      "accessToken": null,
+      "channelName": null
+    },
+    "zalo": {
+      "enabled": false,
+      "appId": null,
+      "accessToken": null,
+      "webhookSecret": null
+    },
+    "nextcloud": {
+      "enabled": false,
+      "serverUrl": null,
+      "token": null,
+      "secret": null
+    },
+    "synology": {
+      "enabled": false,
+      "serverUrl": null,
+      "token": null
+    },
+    "bluebubbles": {
+      "enabled": false,
+      "serverUrl": null,
+      "password": null
+    }
+  },
+
+  "session": {
+    "historyLimit": 100,
+    "persist": true,
+    "compaction": {
+      "enabled": true,
+      "reserveTokens": 1000,
+      "keepRecentTokens": 4000
+    },
+    "pruning": {
+      "enabled": true,
+      "softTrimMaxChars": 50000,
+      "hardClearMaxChars": 100000,
+      "keepLastAssistants": 3
+    },
+    "reset": {
+      "idleMinutes": 30
     }
   },
 
   "browser": {
     "enabled": true,
-    "headless": true,
-    "noSandbox": false,
     "evaluateEnabled": true,
     "cdpUrl": "ws://localhost:9222",
+    "remoteCdpTimeoutMs": 10000,
+    "remoteCdpHandshakeTimeoutMs": 5000,
+    "headless": true,
+    "noSandbox": false,
+    "attachOnly": false,
+    "executablePath": null,
+    "defaultProfile": null,
     "ssrfPolicy": {
       "allowPrivateNetwork": false,
-      "allowedHostnames": []
+      "allowedHostnames": [],
+      "hostnameAllowlist": []
     }
   },
 
   "cron": {
     "enabled": true,
-    "maxConcurrentRuns": 3,
     "store": "sqlite",
-    "webhook": "http://localhost:8080/webhooks/telegram",
+    "maxConcurrentRuns": 3,
+    "webhook": null,
     "webhookToken": "${OCLAWS_GATEWAY_AUTH_TOKEN}"
+  },
+
+  "memory": {
+    "enabled": false,
+    "provider": "openai",
+    "apiKey": "${OCLAWS_PROVIDER_OPENAI_API_KEY}",
+    "model": "text-embedding-3-small",
+    "dbPath": null,
+    "vectorWeight": 0.7,
+    "textWeight": 0.3,
+    "autoIndex": false
+  },
+
+  "plugins": {
+    "enabled": false,
+    "allow": [],
+    "deny": [],
+    "load": {
+      "paths": []
+    },
+    "slots": {
+      "memory": null
+    },
+    "entries": {}
+  },
+
+  "web": {
+    "enabled": true,
+    "heartbeatSeconds": 30,
+    "reconnect": {
+      "initialMs": 1000,
+      "maxMs": 60000,
+      "factor": 2.0,
+      "jitter": 0.1,
+      "maxAttempts": 10
+    }
+  },
+
+  "ui": {
+    "seamColor": null,
+    "assistant": {
+      "name": "oclaw",
+      "avatar": null
+    }
+  },
+
+  "auth": {
+    "profiles": {},
+    "order": {},
+    "cooldowns": {
+      "billingBackoffHours": 1.0,
+      "billingBackoffHoursByProvider": {},
+      "billingMaxHours": 24.0,
+      "failureWindowHours": 1.0
+    }
+  },
+
+  "talk": {
+    "voiceId": null,
+    "voiceAliases": {},
+    "modelId": null,
+    "outputFormat": "mp3",
+    "apiKey": null,
+    "interruptOnSpeech": true
+  },
+
+  "diagnostics": {
+    "enabled": false,
+    "flags": [],
+    "otel": {
+      "enabled": false,
+      "endpoint": "http://localhost:4317",
+      "protocol": "grpc",
+      "headers": {},
+      "serviceName": "oclaws",
+      "traces": true,
+      "metrics": false,
+      "logs": false,
+      "sampleRate": 1.0,
+      "flushIntervalMs": 5000
+    },
+    "cacheTrace": {
+      "enabled": false,
+      "filePath": null,
+      "includeMessages": false,
+      "includePrompt": false,
+      "includeSystem": false
+    }
+  },
+
+  "discovery": {
+    "wideArea": { "enabled": false },
+    "mdns": { "mode": "off" }
+  },
+
+  "canvasHost": {
+    "enabled": false,
+    "root": "./canvas",
+    "port": 3000,
+    "liveReload": true
+  },
+
+  "update": {
+    "channel": "stable",
+    "checkOnStart": true
+  },
+
+  "env": {
+    "shellEnv": {
+      "enabled": false,
+      "timeoutMs": 5000
+    },
+    "vars": {}
+  },
+
+  "media": {
+    "preserveFilenames": false
   }
 }

@@ -18,6 +18,10 @@ pub struct Theme {
     pub tool_error: Color,
     pub header_bg: Color,
     pub status_bg: Color,
+    pub timestamp: Color,
+    pub separator: Color,
+    pub scrollbar_track: Color,
+    pub scrollbar_thumb: Color,
 }
 
 impl Default for Theme {
@@ -40,6 +44,10 @@ impl Default for Theme {
             tool_error: Color::Red,
             header_bg: Color::DarkGray,
             status_bg: Color::DarkGray,
+            timestamp: Color::Rgb(100, 100, 120),
+            separator: Color::Rgb(40, 50, 70),
+            scrollbar_track: Color::Rgb(30, 35, 50),
+            scrollbar_thumb: Color::Rgb(80, 100, 140),
         }
     }
 }
@@ -87,5 +95,21 @@ impl Theme {
 
     pub fn assistant_style(&self) -> Style {
         Style::default().fg(self.assistant_msg)
+    }
+
+    pub fn timestamp_style(&self) -> Style {
+        Style::default().fg(self.timestamp)
+    }
+
+    pub fn separator_style(&self) -> Style {
+        Style::default().fg(self.separator)
+    }
+
+    pub fn scrollbar_track_style(&self) -> Style {
+        Style::default().fg(self.scrollbar_track)
+    }
+
+    pub fn scrollbar_thumb_style(&self) -> Style {
+        Style::default().fg(self.scrollbar_thumb)
     }
 }

@@ -7,11 +7,14 @@
 ## 为什么选择 oclaw
 
 - **单一二进制** — 一个 `oclaws` 文件搞定一切。不需要 Node.js、Python 或 Docker，单文件即可部署到任何环境。
-- **极致性能** — 纯 Rust 编写，异步优先架构。以极低的内存占用处理数千并发连接（Release 二进制仅 ~28MB）。
-- **9 大 LLM 供应商** — Anthropic、OpenAI、Google、Cohere、Ollama、AWS Bedrock、OpenRouter、Together AI、MiniMax。一行配置切换供应商，供应商故障时自动降级。
-- **13 个消息渠道** — Telegram、Slack、Discord、WhatsApp、Matrix、Signal、LINE、Mattermost、Google Chat、飞书、Nostr、IRC、网页聊天。将 AI 接入任何平台。
-- **内置 Web 界面** — 聊天界面和完整配置管理 UI 内嵌在二进制文件中，无需额外部署前端。
-- **OpenAI 兼容 API** — 直接替代 OpenAI 的 `/v1/chat/completions` 和 `/v1/responses` 端点，兼容所有 OpenAI 客户端。
+- **极致性能** — 纯 Rust 编写，异步优先架构。以极低的内存占用处理数千并发连接。
+- **18 大 LLM 供应商** — Anthropic、OpenAI、Google Gemini、Cohere、Ollama、AWS Bedrock、OpenRouter、Together AI、MiniMax、Hugging Face、vLLM、通义千问、豆包、Moonshot、xAI、Cloudflare AI、LiteLLM、GitHub Copilot。一行配置切换，供应商故障自动降级。
+- **19 个消息渠道** — Telegram、Slack、Discord、WhatsApp、Matrix、Signal、LINE、Mattermost、Google Chat、飞书、Nostr、IRC、网页聊天、iMessage/BlueBubbles、Microsoft Teams、Nextcloud Talk、Synology Chat、Twitch、Zalo。
+- **跨端记忆聊天** — 统一记忆管线：召回相关上下文 → 智能体执行 → 自动捕获关键信息。同一用户在 Telegram、Discord、Slack 等不同渠道共享记忆。
+- **工作区与身份** — 通过 `SOUL.md` 定义智能体人格，首次运行自动进行身份发现对话（Hatching），运行时自感知（模型、系统、工具、版本）。
+- **内置 Web 界面** — 聊天界面、配置管理和实时画布，全部内嵌在二进制文件中。
+- **OpenAI 兼容 API** — 直接替代 `/v1/chat/completions` 和 `/v1/responses` 端点，兼容所有 OpenAI 客户端。
+- **48 个 WebSocket RPC 方法** — 完整的编程控制：会话、智能体、定时任务、TTS、节点配对、配置、向导等。
 - **企业级特性** — OAuth 2.0、速率限制、TLS、Prometheus 指标、OpenTelemetry、结构化日志、健康检查、定时任务、插件系统。
 - **中英文配置界面** — 可视化配置编辑器，完整中英文支持。在浏览器中编辑所有设置，即时保存生效。
 
@@ -162,6 +165,7 @@ oclaws skill setup          # 设置技能
 |------|------|------|
 | `/ui/chat` | GET | Web 聊天界面 |
 | `/ui/config` | GET | Web 配置管理界面 |
+| `/ui/canvas` | GET | 实时画布渲染 |
 
 ### Webhooks
 
@@ -170,6 +174,7 @@ oclaws skill setup          # 设置技能
 | `/webhooks/telegram` | POST | Telegram Webhook |
 | `/webhooks/slack` | POST | Slack Webhook |
 | `/webhooks/discord` | POST | Discord Webhook |
+| `/webhooks/whatsapp` | POST | WhatsApp Webhook |
 | `/webhooks/feishu` | POST | 飞书 Webhook |
 | `/webhooks/{channel}` | POST | 通用渠道 Webhook |
 
@@ -183,7 +188,7 @@ oclaws skill setup          # 设置技能
 - [x] WebSocket 服务器
 - [x] TLS / SSL
 - [x] Tailscale 集成
-- [x] Webhook 支持（Telegram、Slack、Discord、飞书、通用）
+- [x] Webhook 支持（Telegram、Slack、Discord、WhatsApp、飞书、通用）
 - [x] OpenAI 兼容 API（`/v1/chat/completions`、`/v1/responses`）
 - [x] 速率限制
 - [x] CORS
@@ -252,6 +257,13 @@ oclaws skill setup          # 设置技能
 - [x] 回复分发
 - [x] 思考模式（扩展推理）
 - [x] 上下文窗口守卫
+- [x] 跨端记忆管线（召回 → 智能体 → 捕获 → 回复）
+- [x] 工作区身份（SOUL.md、IDENTITY.md）
+- [x] Hatching 引导（首次运行身份发现对话）
+- [x] 运行时自感知（模型、系统、架构、工具、版本）
+- [x] 跨平台会话身份（DmScope + IdentityLinks）
+- [x] 记忆刷写至工作区文件
+- [x] 智能体通信协议（ACP）
 
 ### 工具与集成
 
@@ -277,7 +289,10 @@ oclaws skill setup          # 设置技能
 - [x] 时间衰减
 - [x] 语义记忆
 - [x] 嵌入搜索
+- [x] 嵌入缓存
 - [x] 文件监控索引
+- [x] 自动捕获（对话 → 记忆）
+- [x] 记忆刷写（持久化至工作区文件）
 
 ### 技能与插件
 
@@ -293,8 +308,9 @@ oclaws skill setup          # 设置技能
 - [x] 图像处理
 - [x] 音频处理
 - [x] MIME 检测
+- [x] 媒体理解（图像/音频/视频分析，多供应商）
 - [x] STT（语音转文字）
-- [x] TTS（文字转语音）
+- [x] TTS（文字转语音，多供应商，指令解析）
 - [x] 音频流（WebSocket）
 - [x] ElevenLabs TTS
 - [x] Deepgram STT
@@ -305,6 +321,7 @@ oclaws skill setup          # 设置技能
 - [x] OAuth 2.0
 - [x] Token / 密码认证
 - [x] 设备配对
+- [x] 节点配对（点对点网格，白名单与配对码）
 - [x] HMAC / SHA2 加密
 - [x] 审计日志
 - [x] 多密钥轮换（Auth Profiles）
@@ -321,35 +338,46 @@ oclaws skill setup          # 设置技能
 ### 定时任务与后台
 
 - [x] 定时任务调度与持久化
+- [x] 退避与错峰
+- [x] 运行日志与遥测
+- [x] 定时任务事件系统
 - [x] 会话回收
+- [x] 心跳系统
 - [x] 进程监控
 - [x] 信号处理
 
 ## 架构
 
+23 个 crate 组成的 Cargo workspace（edition 2024，resolver v2）：
+
 ```
 crates/
-├── cli/            # CLI 二进制文件 (oclaws)
-├── protocol/       # 基于帧的通信协议
-├── gateway-core/   # HTTP + WebSocket 服务器、中间件、Webhook、Web UI
-├── agent-core/     # 智能体编排、子智能体、模型降级、回声检测、上下文压缩
-├── llm-core/       # 多供应商 LLM 集成（9 个供应商）
-├── channel-core/   # 消息渠道适配器（13 个渠道）
-├── tools-core/     # 工具执行框架
-├── storage-core/   # 数据库抽象层 (SQLite/PG/向量)、时间衰减、查询扩展
-├── memory-core/    # 长期记忆管理、嵌入搜索、文件监控
-├── config/         # 配置管理与验证
-├── plugin-core/    # 插件系统（含 HTTP 路由、工具注册）
-├── skills-core/    # 技能注册、发现、安装
-├── cron-core/      # 定时任务调度与持久化
-├── security-core/  # OAuth、加密、审计
-├── sandbox-core/   # 沙箱执行
-├── doctor-core/    # 健康检查与诊断
-├── voice-core/     # 音频流 (STT/TTS)
-├── media-core/     # 图像/音频处理
-├── browser-core/   # 浏览器自动化
-├── tui-core/       # 终端 UI (ratatui)
-└── daemon-core/    # 后台服务
+├── cli/                 # CLI 二进制文件 (oclaws)
+├── protocol/            # 基于帧的通信协议
+├── gateway-core/        # HTTP + WebSocket 服务器、中间件、Webhook、Web UI、记忆管线
+├── agent-core/          # 智能体编排、子智能体、模型降级、回声检测、上下文压缩
+├── llm-core/            # 多供应商 LLM 集成（18 个供应商）
+├── channel-core/        # 消息渠道适配器（19 个渠道）
+├── tools-core/          # 工具执行框架、审批门控、配置文件
+├── storage-core/        # 数据库抽象层 (SQLite/PG/向量)、时间衰减、查询扩展
+├── memory-core/         # 长期记忆管理、嵌入搜索、自动捕获、MMR 重排序
+├── workspace-core/      # 智能体工作区（SOUL.md、IDENTITY.md、心跳、记忆刷写、引导）
+├── config/              # 配置管理、验证、迁移
+├── plugin-core/         # 插件系统（HTTP 路由、工具注册、钩子）
+├── skills-core/         # 技能注册、发现、安装
+├── cron-core/           # 定时任务调度、持久化、退避、遥测
+├── security-core/       # OAuth、加密、审计
+├── sandbox-core/        # 沙箱执行
+├── doctor-core/         # 健康检查与诊断
+├── voice-core/          # 音频流 (STT/TTS)
+├── media-understanding/ # 图像/音频/视频分析（多供应商支持）
+├── tts-core/            # 文字转语音合成（多供应商、指令解析）
+├── acp/                 # 智能体通信协议（跨智能体消息传递）
+├── auto-reply/          # 消息处理管线（规范化 → 上下文 → 智能体 → 分发）
+├── pairing/             # 设备/节点配对（白名单、配对码）
+├── browser-core/        # 浏览器自动化 (CDP)
+├── tui-core/            # 终端 UI (ratatui)
+└── daemon-core/         # 后台服务
 ```
 
 ## 开发

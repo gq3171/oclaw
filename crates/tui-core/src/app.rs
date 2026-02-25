@@ -1,12 +1,12 @@
 use std::io::{self, stdout};
 use std::time::Duration;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind, EnableMouseCapture, DisableMouseCapture},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     execute,
 };
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap, Clear, List, ListItem};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap, Clear, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use tokio::sync::mpsc;
 
 use crate::chat::{ChatLog, ChatMessage, SystemLevel, ToolStatus};
@@ -85,7 +85,7 @@ impl TuiApp {
 
     pub async fn run(&mut self) -> io::Result<()> {
         enable_raw_mode()?;
-        execute!(stdout(), EnterAlternateScreen)?;
+        execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout());
         let mut terminal = Terminal::new(backend)?;
 
@@ -98,12 +98,21 @@ impl TuiApp {
         self.try_connect(&tx).await;
 
         loop {
-            terminal.draw(|f| self.render(f))?;
+            terminal.draw(|f| self.render(f))?;  // render takes &mut self now
 
-            if event::poll(Duration::from_millis(30))?
-                && let Event::Key(key) = event::read()?
-            {
-                self.handle_key_event(key, &tx).await;
+            if event::poll(Duration::from_millis(30))? {
+                match event::read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        self.handle_key_event(key, &tx).await;
+                    }
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse_event(mouse);
+                    }
+                    Event::Resize(_w, _h) => {
+                        // Viewport will be updated on next render
+                    }
+                    _ => {}
+                }
             }
 
             while let Ok(ev) = rx.try_recv() {
@@ -116,7 +125,7 @@ impl TuiApp {
         }
 
         disable_raw_mode()?;
-        execute!(stdout(), LeaveAlternateScreen)?;
+        execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
         Ok(())
     }
 
@@ -223,14 +232,23 @@ impl TuiApp {
     }
 
     fn handle_chat_key(&mut self, key: KeyEvent) {
+        let page_size = self.chat.viewport_height().max(1);
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.chat.scroll_up(1),
             KeyCode::Down | KeyCode::Char('j') => self.chat.scroll_down(1),
-            KeyCode::PageUp => self.chat.scroll_up(10),
-            KeyCode::PageDown => self.chat.scroll_down(10),
-            KeyCode::Home => self.chat.scroll_up(usize::MAX / 2),
-            KeyCode::End => self.chat.scroll_to_bottom(),
+            KeyCode::PageUp => self.chat.scroll_up(page_size),
+            KeyCode::PageDown => self.chat.scroll_down(page_size),
+            KeyCode::Home | KeyCode::Char('g') => self.chat.scroll_to_top(),
+            KeyCode::End | KeyCode::Char('G') => self.chat.scroll_to_bottom(),
             KeyCode::Char('i') | KeyCode::Esc => self.focus = Focus::Editor,
+            _ => {}
+        }
+    }
+
+    fn handle_mouse_event(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => self.chat.scroll_up(3),
+            MouseEventKind::ScrollDown => self.chat.scroll_down(3),
             _ => {}
         }
     }
@@ -391,7 +409,7 @@ impl TuiApp {
 
     // ── Rendering ───────────────────────────────────────────────────
 
-    fn render(&self, frame: &mut Frame) {
+    fn render(&mut self, frame: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -401,6 +419,14 @@ impl TuiApp {
                 Constraint::Length(1),   // status
             ])
             .split(frame.area());
+
+        // Sync viewport dimensions before rendering chat
+        let chat_block = Block::default().borders(Borders::ALL);
+        let chat_inner = chat_block.inner(chunks[1]);
+        self.chat.set_viewport(
+            chat_inner.width.saturating_sub(1) as usize, // -1 for scrollbar
+            chat_inner.height as usize,
+        );
 
         self.render_header(frame, chunks[0]);
         self.render_chat(frame, chunks[1]);
@@ -434,41 +460,134 @@ impl TuiApp {
         } else {
             self.theme.border_style()
         };
+
+        // Title shows scroll hint when focused
+        let title = if self.focus == Focus::Chat {
+            " Chat [j/k ↑↓ PgUp/PgDn Home/End] "
+        } else {
+            " Chat "
+        };
+
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
-            .title(" Chat ");
+            .title(title);
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
         if self.chat.is_empty() {
-            let hint = Paragraph::new("No messages yet.")
-                .style(self.theme.muted_style());
+            let hint = Paragraph::new("No messages yet. Type a message below to get started.")
+                .style(self.theme.muted_style())
+                .wrap(Wrap { trim: false });
             frame.render_widget(hint, inner);
             return;
         }
 
+        // Build formatted lines with timestamps
+        let lines = self.build_chat_lines();
+
+        // Use Paragraph::scroll for wrap-aware scrolling
+        let scroll_top = self.chat.scroll_top() as u16;
+        let paragraph = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_top, 0));
+
+        // Reserve 1 column on the right for the scrollbar
+        let text_area = Rect::new(inner.x, inner.y, inner.width.saturating_sub(1), inner.height);
+        frame.render_widget(paragraph, text_area);
+
+        // Render scrollbar
+        let total = self.chat.total_visual_lines();
+        let viewport = inner.height as usize;
+        if total > viewport {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .thumb_style(self.theme.scrollbar_thumb_style())
+                .track_style(self.theme.scrollbar_track_style())
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"));
+
+            let mut scrollbar_state = ScrollbarState::new(total.saturating_sub(viewport))
+                .position(self.chat.scroll_top())
+                .viewport_content_length(viewport);
+
+            frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
+        }
+    }
+
+    /// Build formatted chat lines with timestamps and visual separators.
+    fn build_chat_lines(&self) -> Vec<Line<'_>> {
         let mut lines: Vec<Line> = Vec::new();
+        let mut last_role: Option<&str> = None;
+
         for msg in self.chat.messages().iter() {
             match msg {
-                ChatMessage::User { text, .. } => {
-                    lines.push(Line::from(vec![
-                        Span::styled("You: ", self.theme.user_style()),
-                        Span::styled(text.as_str(), self.theme.style()),
-                    ]));
+                ChatMessage::User { text, timestamp, .. } => {
+                    // Add separator between different roles
+                    if last_role.is_some() && last_role != Some("user") {
+                        lines.push(Line::from(Span::styled(
+                            "─".repeat(40),
+                            self.theme.separator_style(),
+                        )));
+                    }
+                    let ts = format_timestamp(*timestamp);
+                    // Multi-line: first line has prefix, rest are continuation
+                    let text_lines: Vec<&str> = text.split('\n').collect();
+                    for (i, line) in text_lines.iter().enumerate() {
+                        if i == 0 {
+                            lines.push(Line::from(vec![
+                                Span::styled(format!("{} ", ts), self.theme.timestamp_style()),
+                                Span::styled("You: ", self.theme.user_style()),
+                                Span::styled(*line, self.theme.style()),
+                            ]));
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::styled("      ", self.theme.timestamp_style()),
+                                Span::styled("     ", self.theme.user_style()),
+                                Span::styled(*line, self.theme.style()),
+                            ]));
+                        }
+                    }
+                    last_role = Some("user");
                 }
                 ChatMessage::Assistant { text, streaming, .. } => {
-                    let suffix = if *streaming { " ▍" } else { "" };
-                    lines.push(Line::from(vec![
-                        Span::styled("AI: ", self.theme.assistant_style()),
-                        Span::styled(
-                            format!("{}{}", text, suffix),
-                            self.theme.style(),
-                        ),
-                    ]));
+                    if last_role.is_some() && last_role != Some("assistant") {
+                        lines.push(Line::from(Span::styled(
+                            "─".repeat(40),
+                            self.theme.separator_style(),
+                        )));
+                    }
+                    let cursor = if *streaming { " ▍" } else { "" };
+                    let text_lines: Vec<&str> = text.split('\n').collect();
+                    for (i, line) in text_lines.iter().enumerate() {
+                        if i == 0 {
+                            lines.push(Line::from(vec![
+                                Span::styled("  ", self.theme.timestamp_style()),
+                                Span::styled("AI: ", self.theme.assistant_style()),
+                                Span::styled(
+                                    if i == text_lines.len() - 1 {
+                                        format!("{}{}", line, cursor)
+                                    } else {
+                                        line.to_string()
+                                    },
+                                    self.theme.style(),
+                                ),
+                            ]));
+                        } else {
+                            let content = if i == text_lines.len() - 1 {
+                                format!("{}{}", line, cursor)
+                            } else {
+                                line.to_string()
+                            };
+                            lines.push(Line::from(vec![
+                                Span::styled("      ", self.theme.timestamp_style()),
+                                Span::styled(content, self.theme.style()),
+                            ]));
+                        }
+                    }
+                    last_role = Some("assistant");
                 }
-                ChatMessage::ToolCall { name, status, .. } => {
+                ChatMessage::ToolCall { name, status, expanded, arguments, result, .. } => {
                     let (icon, style) = match status {
                         ToolStatus::Pending => ("◌", self.theme.muted_style()),
                         ToolStatus::Running => ("⟳", self.theme.accent_style()),
@@ -476,9 +595,26 @@ impl TuiApp {
                         ToolStatus::Error(_) => ("✗", self.theme.error_style()),
                     };
                     lines.push(Line::from(vec![
-                        Span::styled(format!("  {} ", icon), style),
+                        Span::styled(format!("    {} ", icon), style),
                         Span::styled(name.as_str(), style),
                     ]));
+                    if *expanded {
+                        for arg_line in arguments.split('\n') {
+                            lines.push(Line::from(vec![
+                                Span::styled("      ", self.theme.muted_style()),
+                                Span::styled(arg_line, self.theme.muted_style()),
+                            ]));
+                        }
+                        if let Some(r) = result {
+                            for res_line in r.split('\n') {
+                                lines.push(Line::from(vec![
+                                    Span::styled("      ", self.theme.success_style()),
+                                    Span::styled(res_line, self.theme.style()),
+                                ]));
+                            }
+                        }
+                    }
+                    last_role = Some("tool");
                 }
                 ChatMessage::System { text, level } => {
                     let style = match level {
@@ -486,20 +622,20 @@ impl TuiApp {
                         SystemLevel::Warning => Style::default().fg(self.theme.warning),
                         SystemLevel::Error => self.theme.error_style(),
                     };
-                    lines.push(Line::from(Span::styled(text.as_str(), style)));
+                    let icon = match level {
+                        SystemLevel::Info => "ℹ",
+                        SystemLevel::Warning => "⚠",
+                        SystemLevel::Error => "✗",
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {} ", icon), style),
+                        Span::styled(text.as_str(), style),
+                    ]));
+                    last_role = Some("system");
                 }
             }
         }
-
-        // Apply scroll offset (scroll from bottom)
-        let visible_height = inner.height as usize;
-        let total = lines.len();
-        let end = total.saturating_sub(self.chat.scroll_offset());
-        let start = end.saturating_sub(visible_height);
-        let visible: Vec<Line> = lines[start..end].to_vec();
-
-        let paragraph = Paragraph::new(visible).wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, inner);
+        lines
     }
 
     fn render_editor(&self, frame: &mut Frame, area: Rect) {
@@ -520,11 +656,12 @@ impl TuiApp {
         let editor_para = Paragraph::new(text).style(self.theme.style());
         frame.render_widget(editor_para, inner);
 
-        // Place cursor
+        // Place cursor using display width for wide chars
         if self.focus == Focus::Editor {
-            let (row, col) = self.editor.cursor();
+            let (row, _col) = self.editor.cursor();
+            let display_col = self.editor.display_col();
             frame.set_cursor_position((
-                inner.x + col as u16,
+                inner.x + display_col as u16,
                 inner.y + row as u16,
             ));
         }
@@ -533,12 +670,29 @@ impl TuiApp {
     fn render_status(&self, frame: &mut Frame, area: Rect) {
         let focus_hint = match self.focus {
             Focus::Editor => "Tab: chat | Esc: chat | /help",
-            Focus::Chat => "Tab: editor | i: editor | j/k: scroll",
+            Focus::Chat => "Tab: editor | i: editor | j/k ↑↓ PgUp/Dn",
         };
         let streaming_hint = if self.streaming { " [streaming...]" } else { "" };
+
+        // Scroll position indicator
+        let total = self.chat.total_visual_lines();
+        let viewport = self.chat.viewport_height();
+        let scroll_info = if total > viewport {
+            let pos = self.chat.scroll_top() + viewport;
+            let pct = if total > 0 { (pos * 100 / total).min(100) } else { 100 };
+            if self.chat.is_pinned() {
+                " [END]".to_string()
+            } else {
+                format!(" [{}%]", pct)
+            }
+        } else {
+            String::new()
+        };
+
         let status_text = format!(
-            " {} {} | {}",
-            self.status_msg, streaming_hint, focus_hint
+            " {}{} | {} | {}{}",
+            self.status_msg, streaming_hint,
+            self.chat.len(), focus_hint, scroll_info
         );
         let status = Paragraph::new(status_text).style(self.theme.status_style());
         frame.render_widget(status, area);
@@ -612,5 +766,19 @@ impl TuiApp {
 
         let list = List::new(items);
         frame.render_widget(list, list_area);
+    }
+}
+
+/// Format a unix-millis timestamp to "HH:MM" for display.
+fn format_timestamp(ts_ms: u64) -> String {
+    use chrono::{Local, TimeZone};
+    if ts_ms == 0 {
+        return "     ".to_string();
+    }
+    let secs = (ts_ms / 1000) as i64;
+    let nanos = ((ts_ms % 1000) * 1_000_000) as u32;
+    match Local.timestamp_opt(secs, nanos) {
+        chrono::LocalResult::Single(dt) => dt.format("%H:%M").to_string(),
+        _ => "??:??".to_string(),
     }
 }

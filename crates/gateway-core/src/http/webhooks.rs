@@ -169,59 +169,16 @@ async fn handle_telegram_reply(
     chat_id: i64,
     text: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let provider = state.llm_provider.as_ref()
-        .ok_or("No LLM provider configured")?;
-
-    let session_id = format!("telegram_{}", chat_id);
-    let reply = if let Some(ref registry) = state.tool_registry {
-        let executor = crate::http::agent_bridge::ToolRegistryExecutor::new(registry.clone());
-        crate::http::agent_bridge::agent_reply_with_session(provider, &executor, text, Some(&session_id)).await
-            .unwrap_or_else(|e| format!("Agent error: {}", e))
-    } else {
-        // Fallback: direct LLM call without tools
-        let request = oclaws_llm_core::chat::ChatRequest {
-            model: provider.default_model().to_string(),
-            messages: vec![oclaws_llm_core::chat::ChatMessage {
-                role: oclaws_llm_core::chat::MessageRole::User,
-                content: text.to_string(),
-                name: None, tool_calls: None, tool_call_id: None,
-            }],
-            temperature: None, top_p: None, max_tokens: None,
-            stop: None, tools: None, tool_choice: None,
-            stream: None, response_format: None,
-        };
-        provider.chat(request).await
-            .map(|c| c.choices.first().map(|ch| ch.message.content.clone()).unwrap_or_default())
-            .unwrap_or_else(|e| format!("LLM error: {}", e))
-    };
-
-    // Echo tracking — remember our reply so we skip it on re-receive
-    state.echo_tracker.lock().await.remember(&reply);
-
-    // Send reply via channel
-    let manager = state.channel_manager.as_ref()
-        .ok_or("No channel manager")?;
-    let mgr = manager.read().await;
-    let channel = mgr.get("telegram").await
-        .ok_or("Telegram channel not found")?;
-
     let mut metadata = std::collections::HashMap::new();
     metadata.insert("chat_id".to_string(), chat_id.to_string());
 
-    let msg = oclaws_channel_core::traits::ChannelMessage {
-        id: uuid::Uuid::new_v4().to_string(),
-        channel: "telegram".to_string(),
-        sender: "bot".to_string(),
-        content: reply.to_string(),
-        timestamp: chrono::Utc::now().timestamp_millis(),
+    crate::pipeline::process_message(
+        state,
+        "telegram",
+        &chat_id.to_string(),
+        text,
         metadata,
-    };
-
-    let ch = channel.read().await;
-    ch.send_message(&msg).await
-        .map_err(|e| format!("Send error: {}", e))?;
-
-    info!("Replied to Telegram chat {}", chat_id);
+    ).await?;
     Ok(())
 }
 
@@ -285,6 +242,31 @@ pub async fn slack_webhook(
 
     let event_type = payload.get("event").and_then(|e| e.get("type")).and_then(|t| t.as_str()).unwrap_or("event");
     info!("Slack webhook: {}", event_type);
+
+    // Extract text from message events and run through pipeline for memory capture
+    if event_type == "message" || event_type == "app_mention" {
+        let text = payload.pointer("/event/text").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let channel_id = payload.pointer("/event/channel").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let bot_id = payload.pointer("/event/bot_id");
+        let subtype = payload.pointer("/event/subtype");
+
+        // Skip bot messages and message_changed subtypes
+        if bot_id.is_none() && subtype.is_none()
+            && let (Some(text), Some(channel_id)) = (text, channel_id)
+            && !text.is_empty()
+        {
+            let state_clone = state.clone();
+            let metadata = std::collections::HashMap::new();
+            tokio::spawn(async move {
+                if let Err(e) = crate::pipeline::process_message(
+                    &state_clone, "slack", &channel_id, &text, metadata,
+                ).await {
+                    error!("Slack pipeline error: {}", e);
+                }
+            });
+        }
+    }
+
     let event = ChannelEvent {
         event_type: event_type.to_string(),
         channel: "slack".to_string(),
@@ -336,6 +318,35 @@ pub async fn discord_webhook(
 
     let event_type = payload.get("type").and_then(|t| t.as_u64()).map(|t| format!("interaction_{}", t)).unwrap_or_else(|| "interaction".to_string());
     info!("Discord webhook: {}", event_type);
+
+    // Extract text from interactions and run through pipeline for memory capture
+    // Type 2 = APPLICATION_COMMAND, Type 4 = MESSAGE_COMPONENT
+    let interaction_type = payload.get("type").and_then(|t| t.as_u64()).unwrap_or(0);
+    if interaction_type == 2 || interaction_type == 4 {
+        let text = payload.pointer("/data/options/0/value")
+            .and_then(|v| v.as_str())
+            .or_else(|| payload.pointer("/data/custom_id").and_then(|v| v.as_str()))
+            .map(|s| s.to_string());
+        let channel_id = payload.pointer("/channel_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default")
+            .to_string();
+
+        if let Some(text) = text
+            && !text.is_empty()
+        {
+            let state_clone = state.clone();
+            let metadata = std::collections::HashMap::new();
+            tokio::spawn(async move {
+                if let Err(e) = crate::pipeline::process_message(
+                    &state_clone, "discord", &channel_id, &text, metadata,
+                ).await {
+                    error!("Discord pipeline error: {}", e);
+                }
+            });
+        }
+    }
+
     let event = ChannelEvent {
         event_type,
         channel: "discord".to_string(),
@@ -437,64 +448,162 @@ async fn handle_feishu_reply(
     message_id: Option<&str>,
     text: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let provider = state.llm_provider.as_ref()
-        .ok_or("No LLM provider configured")?;
-
-    let session_id = format!("feishu_{}", chat_id);
-    let reply = if let Some(ref registry) = state.tool_registry {
-        let executor = crate::http::agent_bridge::ToolRegistryExecutor::new(registry.clone());
-        crate::http::agent_bridge::agent_reply_with_session(provider, &executor, text, Some(&session_id)).await
-            .unwrap_or_else(|e| format!("Agent error: {}", e))
-    } else {
-        let request = oclaws_llm_core::chat::ChatRequest {
-            model: provider.default_model().to_string(),
-            messages: vec![oclaws_llm_core::chat::ChatMessage {
-                role: oclaws_llm_core::chat::MessageRole::User,
-                content: text.to_string(),
-                name: None, tool_calls: None, tool_call_id: None,
-            }],
-            temperature: None, top_p: None, max_tokens: None,
-            stop: None, tools: None, tool_choice: None,
-            stream: None, response_format: None,
-        };
-        provider.chat(request).await
-            .map(|c| c.choices.first().map(|ch| ch.message.content.clone()).unwrap_or_default())
-            .unwrap_or_else(|e| format!("LLM error: {}", e))
-    };
-
-    state.echo_tracker.lock().await.remember(&reply);
-
-    let manager = state.channel_manager.as_ref().ok_or("No channel manager")?;
-    let mgr = manager.read().await;
-    let channel = mgr.get("feishu").await.ok_or("Feishu channel not found")?;
-
     let mut metadata = std::collections::HashMap::new();
     metadata.insert("chat_id".to_string(), chat_id.to_string());
     if let Some(mid) = message_id {
         metadata.insert("message_id".to_string(), mid.to_string());
     }
 
-    let msg = oclaws_channel_core::traits::ChannelMessage {
-        id: uuid::Uuid::new_v4().to_string(),
-        channel: "feishu".to_string(),
-        sender: "bot".to_string(),
-        content: reply,
-        timestamp: chrono::Utc::now().timestamp_millis(),
+    crate::pipeline::process_message(
+        state,
+        "feishu",
+        chat_id,
+        text,
         metadata,
-    };
-
-    let ch = channel.read().await;
-    ch.send_message(&msg).await.map_err(|e| format!("Send error: {}", e))?;
-    info!("Replied to Feishu chat {}", chat_id);
+    ).await?;
     Ok(())
 }
 
+// ── WhatsApp webhook ───────────────────────────────────────────────────
+
+/// Verify WhatsApp webhook signature (HMAC-SHA256 with app secret).
+fn verify_whatsapp_signature(app_secret: &str, body: &str, expected_sig: &str) -> bool {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(app_secret.as_bytes()) else {
+        return false;
+    };
+    mac.update(body.as_bytes());
+    let computed = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+    constant_time_eq(computed.as_bytes(), expected_sig.as_bytes())
+}
+
+pub async fn whatsapp_webhook(
+    State(state): State<Arc<HttpState>>,
+    headers: HeaderMap,
+    raw_body: axum::body::Bytes,
+) -> Response {
+    let body_str = String::from_utf8_lossy(&raw_body).to_string();
+
+    // Verify WhatsApp signature if app secret is configured
+    if let Ok(app_secret) = std::env::var("WHATSAPP_APP_SECRET") {
+        let signature = headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !verify_whatsapp_signature(&app_secret, &body_str, signature) {
+            warn!("WhatsApp webhook: invalid signature");
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid signature"}))).into_response();
+        }
+    }
+
+    let payload: serde_json::Value = match serde_json::from_str(&body_str) {
+        Ok(v) => v,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
+    // Handle WhatsApp webhook verification (GET with hub.challenge)
+    if let Some(challenge) = payload.get("hub.challenge").and_then(|v| v.as_str()) {
+        return challenge.to_string().into_response();
+    }
+
+    info!("WhatsApp webhook received");
+
+    // Extract text from WhatsApp Cloud API payload
+    // Path: /entry/0/changes/0/value/messages/0/text/body
+    let messages = payload.pointer("/entry/0/changes/0/value/messages");
+    if let Some(msgs) = messages.and_then(|v| v.as_array()) {
+        for msg in msgs {
+            let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+            let text = if msg_type == "text" {
+                msg.pointer("/text/body").and_then(|v| v.as_str()).map(|s| s.to_string())
+            } else if msg_type == "interactive" {
+                msg.pointer("/interactive/button_reply/title")
+                    .or_else(|| msg.pointer("/interactive/list_reply/title"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            } else {
+                Some(format!("[{}]", msg_type))
+            };
+
+            if let Some(text) = text
+                && !text.is_empty()
+            {
+                let is_echo = state.echo_tracker.lock().await.has(&text);
+                if !is_echo {
+                    let state_clone = state.clone();
+                    let from = from.to_string();
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("recipient".to_string(), from.clone());
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::pipeline::process_message(
+                            &state_clone, "whatsapp", &from, &text, metadata,
+                        ).await {
+                            error!("WhatsApp pipeline error: {}", e);
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    let event = ChannelEvent {
+        event_type: "message".to_string(),
+        channel: "whatsapp".to_string(),
+        payload,
+    };
+    get_channel_and_forward(&state, "whatsapp", event).await
+}
+
+// ── Generic webhook — trait-based text extraction ──────────────────────
+
+/// Generic webhook handler for all channels without a dedicated handler.
+/// Text extraction is delegated to each channel's `parse_webhook()` impl,
+/// so adding a new channel never requires changes here.
 pub async fn generic_webhook(
     State(state): State<Arc<HttpState>>,
     Path(channel_name): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> Response {
     info!("Generic webhook for channel: {}", channel_name);
+
+    // Delegate text extraction to the channel's own parse_webhook impl
+    let parsed = if let Some(manager) = &state.channel_manager {
+        let mgr = manager.read().await;
+        if let Some(channel) = mgr.get(&channel_name).await {
+            let ch = channel.read().await;
+            ch.parse_webhook(&payload)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // If the channel extracted a message, run it through the pipeline
+    if let Some(msg) = parsed
+        && !msg.text.is_empty()
+    {
+        let is_echo = state.echo_tracker.lock().await.has(&msg.text);
+        let should = group_gate::should_process(
+            msg.is_group, state.group_activation, msg.has_mention,
+        );
+        if !is_echo && should {
+            let state_clone = state.clone();
+            let ch = channel_name.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::pipeline::process_message(
+                    &state_clone, &ch, &msg.chat_id, &msg.text, msg.metadata,
+                ).await {
+                    error!("{} pipeline error: {}", ch, e);
+                }
+            });
+        }
+    }
+
     let event = ChannelEvent {
         event_type: "webhook".to_string(),
         channel: channel_name.clone(),

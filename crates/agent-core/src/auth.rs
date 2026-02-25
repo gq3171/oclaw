@@ -117,7 +117,9 @@ impl AuthManager {
             && let Some(provider_impl) = self.providers.read().await.get(provider)
         {
             let new_creds = provider_impl.refresh(&creds).await?;
+            let token = new_creds.api_key.clone().or(new_creds.access_token.clone()).unwrap_or_default();
             self.credentials.write().await.insert(provider.to_string(), new_creds);
+            return Ok(token);
         }
 
         Ok(creds.api_key.or(creds.access_token).unwrap_or_default())
@@ -205,6 +207,7 @@ impl KeyRotator {
     }
 
     /// Get the next available key, skipping those in cooldown.
+    /// Advances the index (round-robin) so subsequent calls rotate keys.
     pub async fn get_key(&self) -> Option<String> {
         let now = chrono::Utc::now().timestamp();
         let len = self.keys.len();
@@ -215,6 +218,7 @@ impl KeyRotator {
             let slot = &self.keys[idx];
             let cd = slot.cooldown_until.read().await;
             if cd.is_none_or(|t| now >= t) {
+                *self.current.write().await = (idx + 1) % len;
                 return Some(slot.key.clone());
             }
         }

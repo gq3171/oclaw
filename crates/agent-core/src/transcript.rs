@@ -30,9 +30,22 @@ impl Transcript {
         let Ok(data) = tokio::fs::read_to_string(&self.path).await else {
             return Vec::new();
         };
-        data.lines()
-            .filter_map(|line| serde_json::from_str(line).ok())
-            .collect()
+        let mut messages = Vec::new();
+        let mut discarded = 0usize;
+        for line in data.lines() {
+            match serde_json::from_str::<ChatMessage>(line) {
+                Ok(msg) => messages.push(msg),
+                Err(_) => discarded += 1,
+            }
+        }
+        if discarded > 0 {
+            tracing::warn!(
+                "Transcript {}: discarded {} corrupt/non-message line(s)",
+                self.path.display(),
+                discarded
+            );
+        }
+        messages
     }
 
     pub async fn append(&self, message: &ChatMessage) -> Result<()> {

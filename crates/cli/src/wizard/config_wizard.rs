@@ -31,22 +31,28 @@ impl ConfigWizard {
                     "Gateway",
                     "Models",
                     "Channels",
+                    "Session",
                     "Browser",
                     "Cron",
+                    "Memory",
                     "Logging",
+                    "Plugins",
                     "Advanced",
                     "Save & Exit",
                 ],
-                7,
+                10,
             );
             match choice {
                 0 => Self::configure_gateway(&mut config),
                 1 => Self::configure_models(&mut config),
                 2 => Self::configure_channels(&mut config),
-                3 => Self::configure_browser(&mut config),
-                4 => Self::configure_cron(&mut config),
-                5 => Self::configure_logging(&mut config),
-                6 => Self::configure_advanced(&mut config),
+                3 => Self::configure_session(&mut config),
+                4 => Self::configure_browser(&mut config),
+                5 => Self::configure_cron(&mut config),
+                6 => Self::configure_memory(&mut config),
+                7 => Self::configure_logging(&mut config),
+                8 => Self::configure_plugins(&mut config),
+                9 => Self::configure_advanced(&mut config),
                 _ => {
                     let errors = config.validate();
                     if !errors.is_empty() {
@@ -152,6 +158,20 @@ impl ConfigWizard {
                 break;
             }
         }
+
+        // Fallback settings
+        if prompt_yes_no("Configure fallback?", models.fallback.is_some()) {
+            let fb = models.fallback.get_or_insert(FallbackSettings {
+                enabled: None, cooldown_secs: None, retry_delay_ms: None,
+            });
+            fb.enabled = Some(prompt_yes_no("Enable fallback?", fb.enabled.unwrap_or(true)));
+            if let Some(v) = prompt_optional("Cooldown secs", fb.cooldown_secs.map(|n| n.to_string()).as_deref()) {
+                fb.cooldown_secs = v.parse().ok();
+            }
+            if let Some(v) = prompt_optional("Retry delay ms", fb.retry_delay_ms.map(|n| n.to_string()).as_deref()) {
+                fb.retry_delay_ms = v.parse().ok();
+            }
+        }
     }
 
     fn edit_provider(p: &mut ModelProvider) {
@@ -173,8 +193,8 @@ impl ConfigWizard {
         let ch = config.channels.get_or_insert_with(Channels::default);
 
         let channel_names = [
-            "Telegram", "Discord", "Slack", "Webchat", "Matrix",
-            "Signal", "Line", "Mattermost", "Google Chat", "Back",
+            "Telegram", "Discord", "Slack", "Webchat", "Feishu",
+            "Matrix", "Signal", "Line", "Mattermost", "Google Chat", "Back",
         ];
         loop {
             let choice = select_option("Channel:", &channel_names, channel_names.len() - 1);
@@ -207,6 +227,16 @@ impl ConfigWizard {
                     w.enabled = Some(prompt_yes_no("Enabled?", w.enabled.unwrap_or(false)));
                 }
                 4 => {
+                    let f = ch.feishu.get_or_insert(FeishuChannel { enabled: None, app_id: None, app_secret: None, verification_token: None, encrypt_key: None });
+                    f.enabled = Some(prompt_yes_no("Enabled?", f.enabled.unwrap_or(false)));
+                    f.app_id = prompt_optional("App ID", f.app_id.as_deref());
+                    let sec = prompt_password("App secret (enter to keep)");
+                    if !sec.is_empty() { f.app_secret = Some(sec); }
+                    f.verification_token = prompt_optional("Verification token", f.verification_token.as_deref());
+                    let ek = prompt_password("Encrypt key (enter to keep)");
+                    if !ek.is_empty() { f.encrypt_key = Some(ek); }
+                }
+                5 => {
                     let m = ch.matrix.get_or_insert(MatrixChannel { enabled: None, homeserver: None, user_id: None, access_token: None, device_id: None, room_id: None });
                     m.enabled = Some(prompt_yes_no("Enabled?", m.enabled.unwrap_or(false)));
                     m.homeserver = prompt_optional("Homeserver", m.homeserver.as_deref());
@@ -215,13 +245,13 @@ impl ConfigWizard {
                     if !tok.is_empty() { m.access_token = Some(tok); }
                     m.room_id = prompt_optional("Room ID", m.room_id.as_deref());
                 }
-                5 => {
+                6 => {
                     let s = ch.signal.get_or_insert(SignalChannel { enabled: None, phone_number: None, api_url: None, signal_cli_path: None });
                     s.enabled = Some(prompt_yes_no("Enabled?", s.enabled.unwrap_or(false)));
                     s.phone_number = prompt_optional("Phone number", s.phone_number.as_deref());
                     s.api_url = prompt_optional("API URL", s.api_url.as_deref());
                 }
-                6 => {
+                7 => {
                     let l = ch.line.get_or_insert(LineChannel { enabled: None, channel_access_token: None, channel_secret: None, user_id: None });
                     l.enabled = Some(prompt_yes_no("Enabled?", l.enabled.unwrap_or(false)));
                     let tok = prompt_password("Channel access token (enter to keep)");
@@ -229,7 +259,7 @@ impl ConfigWizard {
                     let sec = prompt_password("Channel secret (enter to keep)");
                     if !sec.is_empty() { l.channel_secret = Some(sec); }
                 }
-                7 => {
+                8 => {
                     let m = ch.mattermost.get_or_insert(MattermostChannel { enabled: None, server_url: None, access_token: None, team_id: None, channel_id: None });
                     m.enabled = Some(prompt_yes_no("Enabled?", m.enabled.unwrap_or(false)));
                     m.server_url = prompt_optional("Server URL", m.server_url.as_deref());
@@ -238,7 +268,7 @@ impl ConfigWizard {
                     m.team_id = prompt_optional("Team ID", m.team_id.as_deref());
                     m.channel_id = prompt_optional("Channel ID", m.channel_id.as_deref());
                 }
-                8 => {
+                9 => {
                     let g = ch.google_chat.get_or_insert(GoogleChatChannel { enabled: None, space_name: None, service_account_json: None });
                     g.enabled = Some(prompt_yes_no("Enabled?", g.enabled.unwrap_or(false)));
                     g.space_name = prompt_optional("Space name", g.space_name.as_deref());
@@ -275,6 +305,74 @@ impl ConfigWizard {
         let tok = prompt_password("Webhook token (enter to keep)");
         if !tok.is_empty() { c.webhook_token = Some(tok); }
         success("Cron configured");
+    }
+
+    fn configure_session(config: &mut Config) {
+        info("=== Session ===");
+        let s = config.session.get_or_insert(SessionConfig::default());
+        if let Some(v) = prompt_optional("History limit", s.history_limit.map(|n| n.to_string()).as_deref()) {
+            s.history_limit = v.parse().ok();
+        }
+        s.persist = Some(prompt_yes_no("Persist sessions?", s.persist.unwrap_or(true)));
+
+        if prompt_yes_no("Configure compaction?", s.compaction.is_some()) {
+            let c = s.compaction.get_or_insert(CompactionSettings::default());
+            c.enabled = Some(prompt_yes_no("Enable compaction?", c.enabled.unwrap_or(true)));
+            if let Some(v) = prompt_optional("Reserve tokens", c.reserve_tokens.map(|n| n.to_string()).as_deref()) {
+                c.reserve_tokens = v.parse().ok();
+            }
+            if let Some(v) = prompt_optional("Keep recent tokens", c.keep_recent_tokens.map(|n| n.to_string()).as_deref()) {
+                c.keep_recent_tokens = v.parse().ok();
+            }
+        }
+
+        if prompt_yes_no("Configure pruning?", s.pruning.is_some()) {
+            let p = s.pruning.get_or_insert(PruningSettings::default());
+            p.enabled = Some(prompt_yes_no("Enable pruning?", p.enabled.unwrap_or(true)));
+            if let Some(v) = prompt_optional("Soft trim max chars", p.soft_trim_max_chars.map(|n| n.to_string()).as_deref()) {
+                p.soft_trim_max_chars = v.parse().ok();
+            }
+            if let Some(v) = prompt_optional("Hard clear max chars", p.hard_clear_max_chars.map(|n| n.to_string()).as_deref()) {
+                p.hard_clear_max_chars = v.parse().ok();
+            }
+            if let Some(v) = prompt_optional("Keep last N assistants", p.keep_last_assistants.map(|n| n.to_string()).as_deref()) {
+                p.keep_last_assistants = v.parse().ok();
+            }
+        }
+
+        if prompt_yes_no("Configure auto reset?", s.reset.is_some()) {
+            let r = s.reset.get_or_insert(SessionResetConfig::default());
+            if let Some(v) = prompt_optional("Idle reset minutes", r.idle_minutes.map(|n| n.to_string()).as_deref()) {
+                r.idle_minutes = v.parse().ok();
+            }
+        }
+        success("Session configured");
+    }
+
+    fn configure_memory(config: &mut Config) {
+        info("=== Memory ===");
+        let m = config.memory.get_or_insert(MemoryConfig::default());
+        m.enabled = Some(prompt_yes_no("Enable memory?", m.enabled.unwrap_or(false)));
+        m.provider = prompt_optional("Embedding provider (openai/anthropic/cohere/ollama)", m.provider.as_deref());
+        let key = prompt_password("API key (enter to keep)");
+        if !key.is_empty() { m.api_key = Some(key); }
+        m.model = prompt_optional("Embedding model", m.model.as_deref());
+        m.db_path = prompt_optional("Database path", m.db_path.as_deref());
+        if let Some(v) = prompt_optional("Vector weight", m.vector_weight.map(|n| n.to_string()).as_deref()) {
+            m.vector_weight = v.parse().ok();
+        }
+        if let Some(v) = prompt_optional("Text weight", m.text_weight.map(|n| n.to_string()).as_deref()) {
+            m.text_weight = v.parse().ok();
+        }
+        m.auto_index = Some(prompt_yes_no("Auto index?", m.auto_index.unwrap_or(false)));
+        success("Memory configured");
+    }
+
+    fn configure_plugins(config: &mut Config) {
+        info("=== Plugins ===");
+        let p = config.plugins.get_or_insert(PluginsConfig::default());
+        p.enabled = Some(prompt_yes_no("Enable plugins?", p.enabled.unwrap_or(false)));
+        success("Plugins configured");
     }
 
     fn configure_logging(config: &mut Config) {

@@ -1,7 +1,8 @@
 use crate::traits::*;
+use crate::types::*;
 use async_trait::async_trait;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -49,42 +50,6 @@ struct DiscordEmbedField {
     value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     inline: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct DiscordResponse {
-    #[serde(flatten)]
-    extra: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct DiscordUser {
-    id: String,
-    username: String,
-    discriminator: String,
-    avatar: Option<String>,
-    bot: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct DiscordGuild {
-    id: String,
-    name: String,
-    icon: Option<String>,
-    owner_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct DiscordChannelInfo {
-    id: String,
-    #[serde(rename = "type")]
-    channel_type: i32,
-    name: Option<String>,
-    topic: Option<String>,
 }
 
 impl DiscordChannel {
@@ -359,6 +324,187 @@ impl Channel for DiscordChannel {
         }
         
         Ok(())
+    }
+
+    fn capabilities(&self) -> ChannelCapabilities {
+        ChannelCapabilities {
+            reactions: true,
+            threads: true,
+            polls: true,
+            media: true,
+            streaming: true,
+            editing: true,
+            deletion: true,
+            typing_indicator: true,
+            directory: true,
+            ..Default::default()
+        }
+    }
+
+    async fn send_reaction(&self, message_id: &str, emoji: &str, _metadata: &HashMap<String, String>) -> ChannelResult<()> {
+        // message_id is raw Discord message ID; channel_id from metadata or first configured
+        let channel_id = _metadata.get("channel_id")
+            .or_else(|| self.channel_ids.first())
+            .ok_or_else(|| ChannelError::MessageError("Channel ID required for reaction".into()))?;
+        let encoded = urlencoding::encode(emoji);
+        self.send_api_request(
+            "PUT",
+            &format!("/channels/{}/messages/{}/reactions/{}/@me", channel_id, message_id, encoded),
+            None,
+        ).await?;
+        Ok(())
+    }
+
+    async fn remove_reaction(&self, message_id: &str, emoji: &str) -> ChannelResult<()> {
+        let channel_id = self.channel_ids.first()
+            .ok_or_else(|| ChannelError::MessageError("Channel ID required".into()))?;
+        let encoded = urlencoding::encode(emoji);
+        self.send_api_request(
+            "DELETE",
+            &format!("/channels/{}/messages/{}/reactions/{}/@me", channel_id, message_id, encoded),
+            None,
+        ).await?;
+        Ok(())
+    }
+
+    async fn create_thread(&self, message_id: &str, name: Option<&str>) -> ChannelResult<String> {
+        let channel_id = self.channel_ids.first()
+            .ok_or_else(|| ChannelError::MessageError("Channel ID required".into()))?;
+        let body = serde_json::json!({
+            "name": name.unwrap_or("Thread"),
+            "auto_archive_duration": 1440,
+        });
+        let resp = self.send_api_request(
+            "POST",
+            &format!("/channels/{}/messages/{}/threads", channel_id, message_id),
+            Some(&body),
+        ).await?;
+        Ok(resp.get("id").and_then(|id| id.as_str()).unwrap_or_default().to_string())
+    }
+
+    async fn send_thread_reply(&self, thread_id: &str, message: &ChannelMessage) -> ChannelResult<String> {
+        let body = serde_json::json!({"content": message.content});
+        let resp = self.send_api_request(
+            "POST",
+            &format!("/channels/{}/messages", thread_id),
+            Some(&body),
+        ).await?;
+        Ok(resp.get("id").and_then(|id| id.as_str()).unwrap_or_default().to_string())
+    }
+
+    async fn edit_message(&self, message_id: &str, content: &str) -> ChannelResult<()> {
+        let channel_id = self.channel_ids.first()
+            .ok_or_else(|| ChannelError::MessageError("Channel ID required".into()))?;
+        let body = serde_json::json!({"content": content});
+        self.send_api_request(
+            "PATCH",
+            &format!("/channels/{}/messages/{}", channel_id, message_id),
+            Some(&body),
+        ).await?;
+        Ok(())
+    }
+
+    async fn delete_message(&self, message_id: &str) -> ChannelResult<()> {
+        let channel_id = self.channel_ids.first()
+            .ok_or_else(|| ChannelError::MessageError("Channel ID required".into()))?;
+        self.send_api_request(
+            "DELETE",
+            &format!("/channels/{}/messages/{}", channel_id, message_id),
+            None,
+        ).await?;
+        Ok(())
+    }
+
+    async fn send_media(&self, target: &str, media: &ChannelMedia) -> ChannelResult<String> {
+        let url_str = match &media.data {
+            MediaData::Url(u) => u.clone(),
+            MediaData::FileId(id) => id.clone(),
+            MediaData::Bytes(_) => return Err(ChannelError::UnsupportedOperation(
+                "Discord send_media with raw bytes not yet supported".into(),
+            )),
+        };
+        let body = serde_json::json!({
+            "content": media.caption.as_deref().unwrap_or(""),
+            "embeds": [{"image": {"url": url_str}}],
+        });
+        let resp = self.send_api_request(
+            "POST",
+            &format!("/channels/{}/messages", target),
+            Some(&body),
+        ).await?;
+        Ok(resp.get("id").and_then(|id| id.as_str()).unwrap_or_default().to_string())
+    }
+
+    async fn list_members(&self, _group_id: &str) -> ChannelResult<Vec<ChannelAccount>> {
+        let guild_id = self.guild_id.as_deref()
+            .ok_or_else(|| ChannelError::ConfigError("Guild ID required".into()))?;
+        let resp = self.send_api_request(
+            "GET",
+            &format!("/guilds/{}/members?limit=100", guild_id),
+            None,
+        ).await?;
+        let members = resp.as_array()
+            .ok_or_else(|| ChannelError::MessageError("Unexpected response".into()))?;
+        Ok(members.iter().filter_map(|m| {
+            let user = m.get("user")?;
+            Some(ChannelAccount {
+                id: user.get("id")?.as_str()?.to_string(),
+                name: user.get("username")?.as_str()?.to_string(),
+                channel: "discord".to_string(),
+                avatar: user.get("avatar").and_then(|a| a.as_str()).map(|a| {
+                    let uid = user.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                    format!("https://cdn.discordapp.com/avatars/{}/{}.png", uid, a)
+                }),
+                status: None,
+            })
+        }).collect())
+    }
+
+    async fn list_groups(&self) -> ChannelResult<Vec<GroupInfo>> {
+        let guild_id = self.guild_id.as_deref()
+            .ok_or_else(|| ChannelError::ConfigError("Guild ID required".into()))?;
+        let resp = self.send_api_request(
+            "GET",
+            &format!("/guilds/{}/channels", guild_id),
+            None,
+        ).await?;
+        let channels = resp.as_array()
+            .ok_or_else(|| ChannelError::MessageError("Unexpected response".into()))?;
+        Ok(channels.iter().filter_map(|c| {
+            Some(GroupInfo {
+                id: c.get("id")?.as_str()?.to_string(),
+                name: c.get("name")?.as_str()?.to_string(),
+                member_count: None,
+                group_type: match c.get("type").and_then(|t| t.as_i64()).unwrap_or(0) {
+                    0 => ChatType::Channel,
+                    2 => ChatType::Channel,
+                    11 | 12 => ChatType::Thread,
+                    _ => ChatType::Group,
+                },
+            })
+        }).collect())
+    }
+
+    async fn send_poll(&self, target: &str, poll: &PollRequest) -> ChannelResult<String> {
+        let answers: Vec<serde_json::Value> = poll.options.iter()
+            .take(10)
+            .enumerate()
+            .map(|(i, o)| serde_json::json!({"answer_id": i + 1, "poll_media": {"text": o}}))
+            .collect();
+        let body = serde_json::json!({
+            "poll": {
+                "question": {"text": poll.question},
+                "answers": answers,
+                "allow_multiselect": poll.allows_multiple,
+                "duration": 24,
+            }
+        });
+        let resp = self.send_api_request(
+            "POST",
+            &format!("/channels/{}/messages", target),
+            Some(&body),
+        ).await?;
+        Ok(resp.get("id").and_then(|id| id.as_str()).unwrap_or_default().to_string())
     }
 
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {

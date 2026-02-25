@@ -211,27 +211,27 @@ impl SubagentRegistry {
                 sa.set_running();
             }
 
-            let agent_config = AgentConfig::new(&config.name, &config.model, &config.provider)
-                .with_system_prompt(&config.system_prompt);
-            let mut agent = Agent::new(agent_config, provider);
-            if let Err(e) = agent.initialize().await {
-                if let Some(sa) = agents.write().await.get_mut(&agent_id) {
-                    sa.set_failed(&e.to_string());
-                }
-                return;
-            }
+            let inner = std::panic::AssertUnwindSafe(async {
+                let agent_config = AgentConfig::new(&config.name, &config.model, &config.provider)
+                    .with_system_prompt(&config.system_prompt);
+                let mut agent = Agent::new(agent_config, provider);
+                agent.initialize().await?;
 
-            let run_fut = async {
-                match tool_executor {
-                    Some(exec) => agent.run_with_tools(&input, exec.as_ref()).await,
-                    None => agent.run(&input).await,
-                }
-            };
+                let run_fut = async {
+                    match tool_executor {
+                        Some(exec) => agent.run_with_tools(&input, exec.as_ref()).await,
+                        None => agent.run(&input).await,
+                    }
+                };
 
-            match tokio::time::timeout(
-                tokio::time::Duration::from_secs(timeout_secs),
-                run_fut,
-            ).await {
+                tokio::time::timeout(
+                    tokio::time::Duration::from_secs(timeout_secs),
+                    run_fut,
+                ).await
+                .map_err(|_| crate::AgentError::Timeout("Subagent timed out".into()))?
+            });
+
+            match futures_util::FutureExt::catch_unwind(inner).await {
                 Ok(Ok(result)) => {
                     if let Some(sa) = agents.write().await.get_mut(&agent_id) {
                         sa.set_completed(&result);
@@ -242,9 +242,14 @@ impl SubagentRegistry {
                         sa.set_failed(&e.to_string());
                     }
                 }
-                Err(_) => {
+                Err(panic_err) => {
+                    let msg = panic_err
+                        .downcast_ref::<String>().map(|s| s.as_str())
+                        .or_else(|| panic_err.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    tracing::error!("Subagent {} panicked: {}", agent_id, msg);
                     if let Some(sa) = agents.write().await.get_mut(&agent_id) {
-                        sa.set_failed("Timeout");
+                        sa.set_failed(&format!("Panic: {}", msg));
                     }
                 }
             }

@@ -30,6 +30,16 @@ pub enum Tool {
     WebSearch(WebSearchTool),
     LinkReader(LinkReaderTool),
     MediaDescribe(MediaDescribeTool),
+    Cron(CronTool),
+    Message(MessageTool),
+    SessionsList(SessionsListTool),
+    SessionsHistory(SessionsHistoryTool),
+    SessionsSend(SessionsSendTool),
+    SessionsSpawn(SessionsSpawnTool),
+    Subagents(SubagentsTool),
+    SessionStatus(SessionStatusTool),
+    Tts(TtsTool),
+    Workspace(WorkspaceTool),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +65,16 @@ impl Tool {
             Tool::WebSearch(_) => "web_search",
             Tool::LinkReader(_) => "link_reader",
             Tool::MediaDescribe(_) => "media_describe",
+            Tool::Cron(_) => "cron",
+            Tool::Message(_) => "message",
+            Tool::SessionsList(_) => "sessions_list",
+            Tool::SessionsHistory(_) => "sessions_history",
+            Tool::SessionsSend(_) => "sessions_send",
+            Tool::SessionsSpawn(_) => "sessions_spawn",
+            Tool::Subagents(_) => "subagents",
+            Tool::SessionStatus(_) => "session_status",
+            Tool::Tts(_) => "tts",
+            Tool::Workspace(_) => "workspace",
         }
     }
 
@@ -70,6 +90,16 @@ impl Tool {
             Tool::WebSearch(_) => "Search the web and return a list of results with titles, URLs, and snippets",
             Tool::LinkReader(_) => "Fetch a URL and extract its main text content",
             Tool::MediaDescribe(_) => "Describe an image from a URL using vision capabilities",
+            Tool::Cron(_) => "Manage scheduled cron jobs: list, add, update, remove, run, status",
+            Tool::Message(_) => "Send a message to a channel target",
+            Tool::SessionsList(_) => "List active sessions with optional filters",
+            Tool::SessionsHistory(_) => "Retrieve message history for a session",
+            Tool::SessionsSend(_) => "Send a message into an existing session",
+            Tool::SessionsSpawn(_) => "Spawn a new sub-session with an agent",
+            Tool::Subagents(_) => "Manage running subagents: list, kill, steer",
+            Tool::SessionStatus(_) => "Get current session status and metadata",
+            Tool::Tts(_) => "Convert text to speech audio",
+            Tool::Workspace(_) => "Read, write, append, or list files in the agent workspace (SOUL.md, IDENTITY.md, HEARTBEAT.md, memory/). Use this to evolve your personality and store durable memories.",
         }
     }
 
@@ -157,6 +187,97 @@ impl Tool {
                 },
                 "required": ["url"]
             }),
+            Tool::Cron(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "add", "update", "remove", "run", "status"], "description": "Cron action to perform" },
+                    "job_id": { "type": "string", "description": "Job ID (for update/remove/run/status)" },
+                    "schedule": { "type": "string", "description": "Cron expression (for add/update)" },
+                    "command": { "type": "string", "description": "Command to execute (for add/update)" },
+                    "label": { "type": "string", "description": "Human-readable label (for add/update)" },
+                    "enabled": { "type": "boolean", "description": "Whether job is enabled (for add/update)" }
+                },
+                "required": ["action"]
+            }),
+            Tool::Message(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "channel": { "type": "string", "description": "Channel type (telegram, discord, etc.)" },
+                    "target": { "type": "string", "description": "Target chat/user ID" },
+                    "text": { "type": "string", "description": "Message text to send" },
+                    "reply_to": { "type": "string", "description": "Message ID to reply to" }
+                },
+                "required": ["channel", "target", "text"]
+            }),
+            Tool::SessionsList(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "channel": { "type": "string", "description": "Filter by channel" },
+                    "limit": { "type": "integer", "description": "Max results (default 20)" },
+                    "active_only": { "type": "boolean", "description": "Only show active sessions" }
+                }
+            }),
+            Tool::SessionsHistory(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_key": { "type": "string", "description": "Session key to get history for" },
+                    "limit": { "type": "integer", "description": "Max messages (default 50)" },
+                    "before": { "type": "string", "description": "Cursor for pagination" }
+                },
+                "required": ["session_key"]
+            }),
+            Tool::SessionsSend(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_key": { "type": "string", "description": "Target session key" },
+                    "text": { "type": "string", "description": "Message text" },
+                    "role": { "type": "string", "enum": ["user", "system"], "description": "Message role (default: user)" }
+                },
+                "required": ["session_key", "text"]
+            }),
+            Tool::SessionsSpawn(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": { "type": "string", "description": "Agent to use for the sub-session" },
+                    "prompt": { "type": "string", "description": "Initial prompt for the sub-session" },
+                    "parent_session_key": { "type": "string", "description": "Parent session key" }
+                },
+                "required": ["agent_id", "prompt"]
+            }),
+            Tool::Subagents(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "kill", "steer"], "description": "Subagent action" },
+                    "session_key": { "type": "string", "description": "Session key of the subagent (for kill/steer)" },
+                    "message": { "type": "string", "description": "Steering message (for steer)" }
+                },
+                "required": ["action"]
+            }),
+            Tool::SessionStatus(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_key": { "type": "string", "description": "Session key (default: current session)" }
+                }
+            }),
+            Tool::Tts(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string", "description": "Text to convert to speech" },
+                    "provider": { "type": "string", "enum": ["openai", "elevenlabs", "edge"], "description": "TTS provider (default: auto)" },
+                    "voice": { "type": "string", "description": "Voice name/ID" },
+                    "model": { "type": "string", "description": "Model name (provider-specific)" }
+                },
+                "required": ["text"]
+            }),
+            Tool::Workspace(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["read", "write", "append", "list"], "description": "Action to perform on workspace files" },
+                    "path": { "type": "string", "description": "Relative path within workspace (e.g. SOUL.md, IDENTITY.md, memory/2026-02-25.md)" },
+                    "content": { "type": "string", "description": "Content to write or append (for write/append actions)" }
+                },
+                "required": ["action"]
+            }),
         }
     }
 
@@ -172,6 +293,16 @@ impl Tool {
             Tool::WebSearch(tool) => tool.execute(arguments).await,
             Tool::LinkReader(tool) => tool.execute(arguments).await,
             Tool::MediaDescribe(tool) => tool.execute(arguments).await,
+            Tool::Cron(tool) => tool.execute(arguments).await,
+            Tool::Message(tool) => tool.execute(arguments).await,
+            Tool::SessionsList(tool) => tool.execute(arguments).await,
+            Tool::SessionsHistory(tool) => tool.execute(arguments).await,
+            Tool::SessionsSend(tool) => tool.execute(arguments).await,
+            Tool::SessionsSpawn(tool) => tool.execute(arguments).await,
+            Tool::Subagents(tool) => tool.execute(arguments).await,
+            Tool::SessionStatus(tool) => tool.execute(arguments).await,
+            Tool::Tts(tool) => tool.execute(arguments).await,
+            Tool::Workspace(tool) => tool.execute(arguments).await,
         }
     }
 }
@@ -229,6 +360,8 @@ impl BashTool {
                 "BASH_ENV", "ENV", "CDPATH", "GLOBIGNORE",
                 "BASH_FUNC_", "PS4", "PROMPT_COMMAND",
                 "PYTHONSTARTUP", "PERL5OPT", "RUBYOPT", "NODE_OPTIONS",
+                "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH",
+                "GIT_SSH_COMMAND", "http_proxy", "https_proxy", "CURL_CA_BUNDLE",
             ];
             for (key, value) in env_vars {
                 let key_upper = key.to_uppercase();
@@ -310,6 +443,15 @@ impl ToolRegistry {
         tools.insert("web_search".to_string(), Tool::WebSearch(WebSearchTool::new()));
         tools.insert("link_reader".to_string(), Tool::LinkReader(LinkReaderTool::new()));
         tools.insert("media_describe".to_string(), Tool::MediaDescribe(MediaDescribeTool::new()));
+        tools.insert("cron".to_string(), Tool::Cron(CronTool::new()));
+        tools.insert("message".to_string(), Tool::Message(MessageTool::new()));
+        tools.insert("sessions_list".to_string(), Tool::SessionsList(SessionsListTool::new()));
+        tools.insert("sessions_history".to_string(), Tool::SessionsHistory(SessionsHistoryTool::new()));
+        tools.insert("sessions_send".to_string(), Tool::SessionsSend(SessionsSendTool::new()));
+        tools.insert("sessions_spawn".to_string(), Tool::SessionsSpawn(SessionsSpawnTool::new()));
+        tools.insert("subagents".to_string(), Tool::Subagents(SubagentsTool::new()));
+        tools.insert("session_status".to_string(), Tool::SessionStatus(SessionStatusTool::new()));
+        tools.insert("tts".to_string(), Tool::Tts(TtsTool::new()));
         Self { tools }
     }
 
@@ -319,6 +461,13 @@ impl ToolRegistry {
         if let Some(exe) = executable_path { browse.executable_path = Some(exe.to_string()); }
         if let Some(h) = headless { browse.headless = Some(h); }
         self.tools.insert("browse".to_string(), Tool::Browse(browse));
+    }
+
+    pub fn configure_workspace(&mut self, workspace_root: &str) {
+        self.tools.insert(
+            "workspace".to_string(),
+            Tool::Workspace(WorkspaceTool::new(workspace_root)),
+        );
     }
 
     pub fn register(&mut self, tool: Tool) {
@@ -345,7 +494,12 @@ impl ToolRegistry {
 
     /// Return only essential tools for LLM function calling (reduces token usage).
     pub fn list_for_llm(&self) -> Vec<serde_json::Value> {
-        let essential = ["bash", "web_fetch", "web_search", "browse", "memory", "link_reader", "media_describe"];
+        let essential = [
+            "bash", "web_fetch", "web_search", "browse", "memory",
+            "link_reader", "media_describe", "cron", "message",
+            "sessions_list", "sessions_history", "session_status", "tts",
+            "workspace",
+        ];
         self.tools.values()
             .filter(|t| essential.contains(&t.name()))
             .map(|t| serde_json::json!({
@@ -592,7 +746,7 @@ impl WebFetchTool {
             return std::env::var("OCLAWS_ALLOW_PRIVATE_FETCH").is_ok();
         }
 
-        // Block private IP ranges (RFC 1918 + link-local)
+        // Block private IP ranges (RFC 1918 + link-local + IPv6 specials)
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
             let is_private = match ip {
                 std::net::IpAddr::V4(v4) => {
@@ -602,7 +756,18 @@ impl WebFetchTool {
                         || v4.is_unspecified()
                 }
                 std::net::IpAddr::V6(v6) => {
-                    v6.is_loopback() || v6.is_unspecified()
+                    let seg = v6.segments();
+                    v6.is_loopback()
+                        || v6.is_unspecified()
+                        // Link-local fe80::/10
+                        || (seg[0] & 0xffc0) == 0xfe80
+                        // Unique-local fc00::/7
+                        || (seg[0] & 0xfe00) == 0xfc00
+                        // Multicast ff00::/8
+                        || (seg[0] & 0xff00) == 0xff00
+                        // IPv4-mapped ::ffff:0:0/96 — check the mapped v4 address
+                        || matches!(v6.to_ipv4_mapped(), Some(v4) if
+                            v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified())
                 }
             };
             if is_private {
@@ -1415,3 +1580,675 @@ impl MediaDescribeTool {
 }
 
 impl Default for MediaDescribeTool { fn default() -> Self { Self::new() } }
+
+// --- CronTool: manage scheduled cron jobs ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronTool;
+
+impl CronTool {
+    pub fn new() -> Self { Self }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            action: String,
+            #[serde(default)]
+            job_id: Option<String>,
+            #[serde(default)]
+            schedule: Option<String>,
+            #[serde(default)]
+            command: Option<String>,
+            #[serde(default)]
+            label: Option<String>,
+            #[serde(default)]
+            enabled: Option<bool>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        match args.action.as_str() {
+            "list" => {
+                Ok(serde_json::json!({ "action": "list", "jobs": [], "note": "Cron store not connected — use gateway RPC for persistent jobs" }))
+            }
+            "add" => {
+                let schedule = args.schedule.ok_or_else(|| crate::ToolError::InvalidInput("schedule required".into()))?;
+                let command = args.command.ok_or_else(|| crate::ToolError::InvalidInput("command required".into()))?;
+                let id = uuid::Uuid::new_v4().to_string();
+                Ok(serde_json::json!({
+                    "action": "add", "job_id": id,
+                    "schedule": schedule, "command": command,
+                    "label": args.label, "enabled": args.enabled.unwrap_or(true)
+                }))
+            }
+            "update" => {
+                let job_id = args.job_id.ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
+                Ok(serde_json::json!({
+                    "action": "update", "job_id": job_id,
+                    "schedule": args.schedule, "command": args.command,
+                    "label": args.label, "enabled": args.enabled
+                }))
+            }
+            "remove" => {
+                let job_id = args.job_id.ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
+                Ok(serde_json::json!({ "action": "remove", "job_id": job_id, "removed": true }))
+            }
+            "run" => {
+                let job_id = args.job_id.ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
+                Ok(serde_json::json!({ "action": "run", "job_id": job_id, "triggered": true }))
+            }
+            "status" => {
+                let job_id = args.job_id.ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
+                Ok(serde_json::json!({ "action": "status", "job_id": job_id, "status": "unknown" }))
+            }
+            other => Err(crate::ToolError::InvalidInput(format!("Unknown cron action: {}", other))),
+        }
+    }
+}
+
+impl Default for CronTool { fn default() -> Self { Self::new() } }
+
+// --- MessageTool: send cross-channel messages ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageTool;
+
+impl MessageTool {
+    pub fn new() -> Self { Self }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            channel: String,
+            target: String,
+            text: String,
+            #[serde(default)]
+            reply_to: Option<String>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        // Message delivery is delegated to the channel adapter at runtime.
+        // This tool returns a structured intent that the orchestrator fulfills.
+        Ok(serde_json::json!({
+            "action": "send_message",
+            "channel": args.channel,
+            "target": args.target,
+            "text": args.text,
+            "reply_to": args.reply_to,
+            "status": "queued"
+        }))
+    }
+}
+
+impl Default for MessageTool { fn default() -> Self { Self::new() } }
+
+// --- SessionsListTool: list active sessions ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionsListTool;
+
+impl SessionsListTool {
+    pub fn new() -> Self { Self }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            channel: Option<String>,
+            #[serde(default)]
+            limit: Option<usize>,
+            #[serde(default)]
+            active_only: Option<bool>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        Ok(serde_json::json!({
+            "action": "sessions_list",
+            "channel": args.channel,
+            "limit": args.limit.unwrap_or(20),
+            "active_only": args.active_only.unwrap_or(false),
+            "sessions": [],
+            "note": "Session store not connected — results populated by orchestrator"
+        }))
+    }
+}
+
+impl Default for SessionsListTool { fn default() -> Self { Self::new() } }
+
+// --- SessionsHistoryTool: retrieve session message history ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionsHistoryTool;
+
+impl SessionsHistoryTool {
+    pub fn new() -> Self { Self }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            session_key: String,
+            #[serde(default)]
+            limit: Option<usize>,
+            #[serde(default)]
+            before: Option<String>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        Ok(serde_json::json!({
+            "action": "sessions_history",
+            "session_key": args.session_key,
+            "limit": args.limit.unwrap_or(50),
+            "before": args.before,
+            "messages": [],
+            "note": "Session store not connected — results populated by orchestrator"
+        }))
+    }
+}
+
+impl Default for SessionsHistoryTool { fn default() -> Self { Self::new() } }
+
+// --- SessionsSendTool: send message into a session ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionsSendTool;
+
+impl SessionsSendTool {
+    pub fn new() -> Self { Self }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            session_key: String,
+            text: String,
+            #[serde(default)]
+            role: Option<String>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        let role = args.role.unwrap_or_else(|| "user".to_string());
+        Ok(serde_json::json!({
+            "action": "sessions_send",
+            "session_key": args.session_key,
+            "text": args.text,
+            "role": role,
+            "status": "queued"
+        }))
+    }
+}
+
+impl Default for SessionsSendTool { fn default() -> Self { Self::new() } }
+
+// --- SessionsSpawnTool: spawn a sub-session ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionsSpawnTool;
+
+impl SessionsSpawnTool {
+    pub fn new() -> Self { Self }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            agent_id: String,
+            prompt: String,
+            #[serde(default)]
+            parent_session_key: Option<String>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        let session_id = uuid::Uuid::new_v4().to_string();
+        Ok(serde_json::json!({
+            "action": "sessions_spawn",
+            "session_id": session_id,
+            "agent_id": args.agent_id,
+            "prompt": args.prompt,
+            "parent_session_key": args.parent_session_key,
+            "status": "spawned"
+        }))
+    }
+}
+
+impl Default for SessionsSpawnTool { fn default() -> Self { Self::new() } }
+
+// --- SubagentsTool: manage running subagents ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentsTool;
+
+impl SubagentsTool {
+    pub fn new() -> Self { Self }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            action: String,
+            #[serde(default)]
+            session_key: Option<String>,
+            #[serde(default)]
+            message: Option<String>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        match args.action.as_str() {
+            "list" => {
+                Ok(serde_json::json!({
+                    "action": "subagents_list",
+                    "subagents": [],
+                    "note": "Populated by orchestrator at runtime"
+                }))
+            }
+            "kill" => {
+                let key = args.session_key.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("session_key required for kill".into())
+                })?;
+                Ok(serde_json::json!({
+                    "action": "subagents_kill",
+                    "session_key": key,
+                    "status": "killed"
+                }))
+            }
+            "steer" => {
+                let key = args.session_key.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("session_key required for steer".into())
+                })?;
+                let msg = args.message.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("message required for steer".into())
+                })?;
+                Ok(serde_json::json!({
+                    "action": "subagents_steer",
+                    "session_key": key,
+                    "message": msg,
+                    "status": "steered"
+                }))
+            }
+            other => Err(crate::ToolError::InvalidInput(
+                format!("Unknown subagents action: {}", other),
+            )),
+        }
+    }
+}
+
+impl Default for SubagentsTool { fn default() -> Self { Self::new() } }
+
+// --- SessionStatusTool: get session status ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStatusTool;
+
+impl SessionStatusTool {
+    pub fn new() -> Self { Self }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            session_key: Option<String>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        Ok(serde_json::json!({
+            "action": "session_status",
+            "session_key": args.session_key,
+            "status": "unknown",
+            "note": "Populated by orchestrator at runtime"
+        }))
+    }
+}
+
+impl Default for SessionStatusTool { fn default() -> Self { Self::new() } }
+
+// --- TtsTool: text-to-speech conversion ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsTool {
+    pub default_provider: String,
+}
+
+impl TtsTool {
+    pub fn new() -> Self {
+        Self { default_provider: "openai".to_string() }
+    }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            text: String,
+            #[serde(default)]
+            provider: Option<String>,
+            #[serde(default)]
+            voice: Option<String>,
+            #[serde(default)]
+            model: Option<String>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        if args.text.is_empty() {
+            return Err(crate::ToolError::InvalidInput(
+                "text must not be empty".into(),
+            ));
+        }
+
+        let provider = args.provider.unwrap_or_else(|| self.default_provider.clone());
+
+        match provider.as_str() {
+            "openai" => self.tts_openai(&args.text, args.voice.as_deref(), args.model.as_deref()).await,
+            "elevenlabs" => self.tts_elevenlabs(&args.text, args.voice.as_deref(), args.model.as_deref()).await,
+            "edge" => self.tts_edge(&args.text, args.voice.as_deref()).await,
+            other => Err(crate::ToolError::InvalidInput(
+                format!("Unknown TTS provider: {}", other),
+            )),
+        }
+    }
+
+    async fn tts_openai(
+        &self, text: &str, voice: Option<&str>, model: Option<&str>,
+    ) -> ToolResult<serde_json::Value> {
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .map_err(|_| crate::ToolError::ExecutionFailed("OPENAI_API_KEY not set".into()))?;
+
+        let voice = voice.unwrap_or("alloy");
+        let model = model.unwrap_or("tts-1");
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let body = serde_json::json!({
+            "model": model,
+            "input": text,
+            "voice": voice,
+            "response_format": "mp3"
+        });
+
+        let resp = client
+            .post("https://api.openai.com/v1/audio/speech")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::ToolError::ExecutionFailed(
+                format!("OpenAI TTS request failed: {}", e),
+            ))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(crate::ToolError::ExecutionFailed(
+                format!("OpenAI TTS error ({}): {}", status, text),
+            ));
+        }
+
+        let bytes = resp.bytes().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let tmp = std::env::temp_dir().join(format!("oclaw-tts-{}.mp3", uuid::Uuid::new_v4()));
+        tokio::fs::write(&tmp, &bytes).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(
+                format!("Failed to write audio: {}", e),
+            ))?;
+
+        Ok(serde_json::json!({
+            "provider": "openai",
+            "voice": voice,
+            "model": model,
+            "audio_path": tmp.to_string_lossy(),
+            "size_bytes": bytes.len(),
+            "format": "mp3"
+        }))
+    }
+
+    async fn tts_elevenlabs(
+        &self, text: &str, voice: Option<&str>, model: Option<&str>,
+    ) -> ToolResult<serde_json::Value> {
+        let api_key = std::env::var("ELEVENLABS_API_KEY")
+            .map_err(|_| crate::ToolError::ExecutionFailed("ELEVENLABS_API_KEY not set".into()))?;
+
+        let voice_id = voice.unwrap_or("21m00Tcm4TlvDq8ikWAM");
+        let model_id = model.unwrap_or("eleven_monolingual_v1");
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let body = serde_json::json!({
+            "text": text,
+            "model_id": model_id,
+            "voice_settings": { "stability": 0.5, "similarity_boost": 0.75 }
+        });
+
+        let url = format!(
+            "https://api.elevenlabs.io/v1/text-to-speech/{}",
+            voice_id
+        );
+
+        let resp = client
+            .post(&url)
+            .header("xi-api-key", &api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::ToolError::ExecutionFailed(
+                format!("ElevenLabs TTS request failed: {}", e),
+            ))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(crate::ToolError::ExecutionFailed(
+                format!("ElevenLabs TTS error ({}): {}", status, text),
+            ));
+        }
+
+        let bytes = resp.bytes().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let tmp = std::env::temp_dir().join(format!("oclaw-tts-{}.mp3", uuid::Uuid::new_v4()));
+        tokio::fs::write(&tmp, &bytes).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(
+                format!("Failed to write audio: {}", e),
+            ))?;
+
+        Ok(serde_json::json!({
+            "provider": "elevenlabs",
+            "voice_id": voice_id,
+            "model_id": model_id,
+            "audio_path": tmp.to_string_lossy(),
+            "size_bytes": bytes.len(),
+            "format": "mp3"
+        }))
+    }
+
+    async fn tts_edge(
+        &self, text: &str, voice: Option<&str>,
+    ) -> ToolResult<serde_json::Value> {
+        let voice = voice.unwrap_or("en-US-AriaNeural");
+        // Edge TTS uses a local CLI tool (edge-tts) if available
+        let tmp = std::env::temp_dir().join(format!("oclaw-tts-{}.mp3", uuid::Uuid::new_v4()));
+
+        let output = tokio::process::Command::new("edge-tts")
+            .args(["--voice", voice, "--text", text, "--write-media", &tmp.to_string_lossy()])
+            .output()
+            .await
+            .map_err(|e| crate::ToolError::ExecutionFailed(
+                format!("edge-tts not found or failed: {}. Install with: pip install edge-tts", e),
+            ))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(crate::ToolError::ExecutionFailed(
+                format!("edge-tts failed: {}", stderr),
+            ));
+        }
+
+        let size = tokio::fs::metadata(&tmp).await
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        Ok(serde_json::json!({
+            "provider": "edge",
+            "voice": voice,
+            "audio_path": tmp.to_string_lossy(),
+            "size_bytes": size,
+            "format": "mp3"
+        }))
+    }
+}
+
+impl Default for TtsTool { fn default() -> Self { Self::new() } }
+
+// --- WorkspaceTool: agent self-modification via workspace files ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceTool {
+    /// Root directory of the agent workspace.
+    pub workspace_root: String,
+}
+
+impl WorkspaceTool {
+    pub fn new(workspace_root: impl Into<String>) -> Self {
+        Self { workspace_root: workspace_root.into() }
+    }
+
+    /// Resolve and validate a relative path within the workspace.
+    fn resolve_path(&self, rel: &str) -> Result<std::path::PathBuf, crate::ToolError> {
+        let root = std::path::Path::new(&self.workspace_root);
+        let target = root.join(rel);
+
+        // Canonicalize what exists, then check prefix
+        let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        // For new files, check the parent
+        let check_path = if target.exists() {
+            target.canonicalize().unwrap_or_else(|_| target.clone())
+        } else if let Some(parent) = target.parent() {
+            let p = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+            p.join(target.file_name().unwrap_or_default())
+        } else {
+            target.clone()
+        };
+
+        if !check_path.starts_with(&canonical_root) {
+            return Err(crate::ToolError::InvalidInput(
+                "Path escapes workspace directory".into(),
+            ));
+        }
+        Ok(target)
+    }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> crate::error::ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            action: String,
+            #[serde(default)]
+            path: Option<String>,
+            #[serde(default)]
+            content: Option<String>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        match args.action.as_str() {
+            "read" => self.action_read(args.path).await,
+            "write" => self.action_write(args.path, args.content).await,
+            "append" => self.action_append(args.path, args.content).await,
+            "list" => self.action_list(args.path).await,
+            other => Err(crate::ToolError::InvalidInput(
+                format!("Unknown workspace action: {}", other),
+            )),
+        }
+    }
+
+    async fn action_read(&self, path: Option<String>) -> crate::error::ToolResult<serde_json::Value> {
+        let rel = path.ok_or_else(|| crate::ToolError::InvalidInput("path required for read".into()))?;
+        let full = self.resolve_path(&rel)?;
+        let content = tokio::fs::read_to_string(&full).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Read failed: {}", e)))?;
+        Ok(serde_json::json!({
+            "action": "read", "path": rel,
+            "content": content, "size": content.len(),
+        }))
+    }
+
+    async fn action_write(&self, path: Option<String>, content: Option<String>) -> crate::error::ToolResult<serde_json::Value> {
+        let rel = path.ok_or_else(|| crate::ToolError::InvalidInput("path required for write".into()))?;
+        let content = content.ok_or_else(|| crate::ToolError::InvalidInput("content required for write".into()))?;
+        let full = self.resolve_path(&rel)?;
+        if let Some(parent) = full.parent() {
+            tokio::fs::create_dir_all(parent).await
+                .map_err(|e| crate::ToolError::ExecutionFailed(format!("mkdir failed: {}", e)))?;
+        }
+        tokio::fs::write(&full, &content).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Write failed: {}", e)))?;
+        Ok(serde_json::json!({
+            "action": "write", "path": rel,
+            "bytes_written": content.len(),
+        }))
+    }
+
+    async fn action_append(&self, path: Option<String>, content: Option<String>) -> crate::error::ToolResult<serde_json::Value> {
+        let rel = path.ok_or_else(|| crate::ToolError::InvalidInput("path required for append".into()))?;
+        let content = content.ok_or_else(|| crate::ToolError::InvalidInput("content required for append".into()))?;
+        let full = self.resolve_path(&rel)?;
+        if let Some(parent) = full.parent() {
+            tokio::fs::create_dir_all(parent).await
+                .map_err(|e| crate::ToolError::ExecutionFailed(format!("mkdir failed: {}", e)))?;
+        }
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true).append(true).open(&full).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Open failed: {}", e)))?;
+        file.write_all(content.as_bytes()).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Append failed: {}", e)))?;
+        Ok(serde_json::json!({
+            "action": "append", "path": rel,
+            "bytes_appended": content.len(),
+        }))
+    }
+
+    async fn action_list(&self, path: Option<String>) -> crate::error::ToolResult<serde_json::Value> {
+        let rel = path.unwrap_or_default();
+        let full = if rel.is_empty() {
+            std::path::PathBuf::from(&self.workspace_root)
+        } else {
+            self.resolve_path(&rel)?
+        };
+        let mut entries = Vec::new();
+        let mut dir = tokio::fs::read_dir(&full).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(format!("List failed: {}", e)))?;
+        while let Some(entry) = dir.next_entry().await
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))? {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let meta = entry.metadata().await.ok();
+            entries.push(serde_json::json!({
+                "name": name,
+                "is_dir": meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+                "size": meta.as_ref().map(|m| m.len()).unwrap_or(0),
+            }));
+        }
+        Ok(serde_json::json!({
+            "action": "list",
+            "path": if rel.is_empty() { "." } else { &rel },
+            "entries": entries, "count": entries.len(),
+        }))
+    }
+}

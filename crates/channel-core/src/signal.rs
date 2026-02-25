@@ -170,6 +170,25 @@ impl Channel for SignalChannel {
             channel: Arc::new(RwLock::new(self.clone())),
         }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // Signal CLI REST API: /envelope/dataMessage/message
+        let text = payload.pointer("/envelope/dataMessage/message")
+            .or_else(|| payload.pointer("/dataMessage/body"))
+            .and_then(|v| v.as_str())?;
+        let source = payload.pointer("/envelope/source")
+            .or_else(|| payload.get("source"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let is_group = payload.pointer("/envelope/dataMessage/groupInfo").is_some();
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: source.to_string(),
+            is_group,
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
 }
 
 impl Clone for SignalChannel {

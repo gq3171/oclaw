@@ -227,6 +227,21 @@ impl Channel for MattermostChannel {
             channel: Arc::new(RwLock::new(self.clone())),
         }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // Mattermost outgoing webhook: /text, /channel_id
+        let text = payload.get("text").and_then(|v| v.as_str())?;
+        let chat_id = payload.get("channel_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: chat_id.to_string(),
+            is_group: true,
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
 }
 
 impl Clone for MattermostChannel {

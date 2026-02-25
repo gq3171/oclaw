@@ -186,6 +186,26 @@ impl Channel for GoogleChatChannel {
             channel: Arc::new(RwLock::new(self.clone())),
         }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // Google Chat: /message/text, /space/name
+        let text = payload.pointer("/message/text")
+            .and_then(|v| v.as_str())?;
+        let space = payload.pointer("/space/name")
+            .or_else(|| payload.pointer("/message/space/name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let space_type = payload.pointer("/space/type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("DM");
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: space.to_string(),
+            is_group: space_type == "ROOM" || space_type == "SPACE",
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
 }
 
 impl Clone for GoogleChatChannel {

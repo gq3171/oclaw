@@ -1,3 +1,4 @@
+use crate::runner::CronRunResult;
 use crate::store::CronStore;
 use crate::schedule::compute_next_run;
 use crate::types::{CronJob, CronScheduleKind};
@@ -5,6 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+// TODO: migrate to incremental updates for high-frequency scenarios.
+// Currently every mutation does a full load→modify→save cycle, which is fine for
+// small job counts but will become a bottleneck with hundreds of jobs.
 pub struct CronService {
     store: Mutex<CronStore>,
     running: Arc<AtomicBool>,
@@ -64,6 +68,62 @@ impl CronService {
         let updated = job.clone();
         store.save(&jobs).await?;
         Ok(updated)
+    }
+
+    /// Get a single job by ID.
+    pub async fn get(&self, id: &str) -> Option<CronJob> {
+        let store = self.store.lock().await;
+        let jobs = store.load().await;
+        jobs.into_iter().find(|j| j.id == id)
+    }
+
+    /// Mark a job as currently running (for stuck detection).
+    pub async fn mark_running(&self, id: &str, now_ms: u64) -> anyhow::Result<()> {
+        let store = self.store.lock().await;
+        let mut jobs = store.load().await;
+        let job = jobs.iter_mut().find(|j| j.id == id)
+            .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
+        job.state.running_since_ms = Some(now_ms);
+        store.save(&jobs).await
+    }
+
+    /// Update job state after a run completes.
+    pub async fn update_after_run(&self, id: &str, result: &CronRunResult) -> anyhow::Result<()> {
+        let store = self.store.lock().await;
+        let mut jobs = store.load().await;
+        let job = jobs.iter_mut().find(|j| j.id == id)
+            .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
+
+        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        job.state.last_run_at_ms = Some(now_ms);
+        job.state.running_since_ms = None;
+        job.state.total_runs += 1;
+
+        if result.success {
+            job.state.last_status = Some("ok".to_string());
+            job.state.last_error = None;
+            job.state.consecutive_errors = 0;
+        } else {
+            job.state.last_status = Some("error".to_string());
+            job.state.last_error = Some(result.output.clone());
+            job.state.consecutive_errors += 1;
+            job.state.total_errors += 1;
+        }
+
+        job.state.next_run_at_ms = compute_next_run(&job.schedule, now_ms);
+        job.updated_at_ms = now_ms;
+
+        store.save(&jobs).await
+    }
+
+    /// Manually trigger a job by resetting its next_run to now.
+    pub async fn trigger(&self, id: &str) -> anyhow::Result<()> {
+        let store = self.store.lock().await;
+        let mut jobs = store.load().await;
+        let job = jobs.iter_mut().find(|j| j.id == id)
+            .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
+        job.state.next_run_at_ms = Some(0); // due immediately
+        store.save(&jobs).await
     }
 
     pub fn stop(&self) {

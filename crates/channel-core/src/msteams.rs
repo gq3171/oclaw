@@ -137,6 +137,24 @@ impl Channel for MsTeamsChannel {
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
         Ok(Box::new(MsTeamsSender { channel: Arc::new(RwLock::new(self.clone())) }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // MS Teams Bot Framework: /text, /conversation/id
+        let text = payload.get("text").and_then(|v| v.as_str())?;
+        let chat_id = payload.pointer("/conversation/id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let conv_type = payload.pointer("/conversation/conversationType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("personal");
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: chat_id.to_string(),
+            is_group: conv_type == "channel" || conv_type == "groupChat",
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
 }
 
 struct MsTeamsSender {

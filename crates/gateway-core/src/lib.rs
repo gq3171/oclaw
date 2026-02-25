@@ -10,6 +10,12 @@ pub mod webhook;
 pub mod control_ui;
 pub mod webchat;
 pub mod channel_access;
+pub mod session_key;
+pub mod binding;
+pub mod msg_context;
+pub mod memory_bridge;
+pub mod pipeline;
+pub mod heartbeat_runner;
 
 pub use error::*;
 pub use message::*;

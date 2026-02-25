@@ -98,9 +98,10 @@ pub fn supports_thinking(model: &str) -> bool {
         return true;
     }
 
-    // OpenAI o-series reasoning models
+    // OpenAI o-series reasoning models (exclude mini variants)
     if (m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4"))
         && !m.starts_with("o1-mini")
+        && !m.starts_with("o3-mini")
     {
         return true;
     }
@@ -203,7 +204,7 @@ mod tests {
         assert!(supports_thinking("claude-sonnet-4-20260101"));
         assert!(supports_thinking("claude-opus-4-20260101"));
         assert!(supports_thinking("o1-preview"));
-        assert!(supports_thinking("o3-mini"));
+        assert!(!supports_thinking("o3-mini"));
         assert!(supports_thinking("deepseek-r1"));
 
         // NOT supported — old Claude 3 models

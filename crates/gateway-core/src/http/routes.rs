@@ -1,21 +1,38 @@
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{StatusCode, HeaderMap},
     response::{sse::{Event, Sse}, IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::{info, warn, error};
 
 use crate::http::HttpState;
+use oclaws_memory_core::MemoryManager;
+
+/// Fire-and-forget: store a user↔assistant exchange into long-term memory.
+fn spawn_memory_capture(mm: Arc<MemoryManager>, user_text: String, assistant_text: String) {
+    if user_text.is_empty() || assistant_text.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        let content = format!("User: {}\nAssistant: {}", user_text, assistant_text);
+        match mm.add_memory(&content, "chat_api").await {
+            Ok(id) => info!("Memory captured: {}", id),
+            Err(e) => warn!("Memory capture failed: {}", e),
+        }
+    });
+}
 
 fn sanitize_error(msg: &str) -> String {
-    // Strip anything that looks like an API key or token from error messages
-    regex::Regex::new(r"(?i)(sk-|key-|token-|bearer\s+)[a-zA-Z0-9\-_]{8,}")
-        .map(|re| re.replace_all(msg, "${1}[REDACTED]").to_string())
-        .unwrap_or_else(|_| "Internal server error".to_string())
+    // Strip anything that looks like an API key or token from error messages.
+    // Regex is compiled once via LazyLock to avoid per-call overhead.
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)(sk-|key-|token-|bearer\s+)[a-zA-Z0-9\-_]{8,}").unwrap()
+    });
+    RE.replace_all(msg, "${1}[REDACTED]").to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +132,7 @@ fn to_llm_messages(msgs: &[ChatMessage]) -> Vec<oclaws_llm_core::chat::ChatMessa
 
 pub async fn chat_completions_handler(
     State(state): State<Arc<HttpState>>,
+    _headers: HeaderMap,
     Json(payload): Json<ChatCompletionsRequest>,
 ) -> Response {
     info!("Chat completions request for model: {}", payload.model);
@@ -124,9 +142,38 @@ pub async fn chat_completions_handler(
         None => return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": {"message": "No LLM provider configured", "type": "server_error"}}))).into_response(),
     };
 
+    let mut messages = to_llm_messages(&payload.messages);
+
+    // Memory recall: inject relevant context from long-term memory
+    if let Some(ref mm) = state.memory_manager {
+        let query = payload.messages.iter().rev()
+            .find(|m| m.role == "user")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        if !query.is_empty() {
+            let recaller = crate::memory_bridge::MemoryManagerRecaller::new(mm.clone());
+            let results = oclaws_agent_core::auto_recall::MemoryRecaller::recall(
+                &recaller, &query, 5, 0.3,
+            ).await;
+            if let Some(ctx_msg) = oclaws_agent_core::auto_recall::format_recall_context(&results) {
+                // Insert recall context right after any system messages
+                let insert_pos = messages.iter()
+                    .position(|m| m.role != oclaws_llm_core::chat::MessageRole::System)
+                    .unwrap_or(0);
+                messages.insert(insert_pos, ctx_msg);
+            }
+        }
+    }
+
+    // Extract last user message for memory capture after LLM responds
+    let user_query_for_capture = payload.messages.iter().rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+
     let request = oclaws_llm_core::chat::ChatRequest {
         model: payload.model.clone(),
-        messages: to_llm_messages(&payload.messages),
+        messages,
         temperature: payload.temperature,
         top_p: None,
         max_tokens: payload.max_tokens,
@@ -139,12 +186,15 @@ pub async fn chat_completions_handler(
 
     if payload.stream {
         let model_name = payload.model.clone();
+        let mm_for_stream = state.memory_manager.clone();
+        let user_q_for_stream = user_query_for_capture.clone();
         match provider.chat_stream(request).await {
             Ok(mut rx) => {
                 let stream = async_stream::stream! {
                     let chunk_id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
                     let created = chrono::Utc::now().timestamp();
                     let mut first = true;
+                    let mut full_text = String::new();
 
                     while let Some(chunk) = rx.recv().await {
                         match chunk {
@@ -154,6 +204,11 @@ pub async fn chat_completions_handler(
                                 } else {
                                     c.choices[0].delta.as_ref().map(|d| d.content.clone())
                                 };
+
+                                // Accumulate for memory capture
+                                if let Some(ref t) = content {
+                                    full_text.push_str(t);
+                                }
 
                                 let delta = if first {
                                     first = false;
@@ -200,6 +255,11 @@ pub async fn chat_completions_handler(
                         yield Ok::<_, Infallible>(Event::default().data(json));
                     }
                     yield Ok::<_, Infallible>(Event::default().data("[DONE]"));
+
+                    // Memory capture after stream completes
+                    if let Some(mm) = mm_for_stream {
+                        spawn_memory_capture(mm, user_q_for_stream, full_text);
+                    }
                 };
                 Sse::new(stream).into_response()
             }
@@ -208,6 +268,14 @@ pub async fn chat_completions_handler(
     } else {
         match provider.chat(request).await {
             Ok(completion) => {
+                // Memory capture: store user↔assistant exchange
+                let assistant_text = completion.choices.first()
+                    .map(|c| c.message.content.clone())
+                    .unwrap_or_default();
+                if let Some(ref mm) = state.memory_manager {
+                    spawn_memory_capture(mm.clone(), user_query_for_capture, assistant_text);
+                }
+
                 let choices: Vec<Choice> = completion.choices.iter().map(|c| Choice {
                     index: c.index,
                     message: ChatMessage {
@@ -570,7 +638,7 @@ export:'Export',import:'Import',
 nav:{gateway:'Gateway',models:'Models',channels:'Channels',session:'Session',browser:'Browser',cron:'Cron Jobs',memory:'Memory',logging:'Logging',advanced:'Advanced'},
 navDesc:{gateway:'Server, auth, TLS, proxy',models:'LLM providers and fallback',channels:'Messaging integrations',session:'History and compaction',browser:'Browser automation',cron:'Scheduled tasks',memory:'Memory and embeddings',logging:'Log levels and output',advanced:'Diagnostics, voice, plugins'},
 providerTypes:['anthropic','openai','google','cohere','ollama','bedrock','openrouter','together','minimax'],
-channelNames:{webchat:'Webchat',whatsapp:'WhatsApp',telegram:'Telegram',discord:'Discord',slack:'Slack',signal:'Signal',line:'LINE',matrix:'Matrix',nostr:'Nostr',irc:'IRC',google_chat:'Google Chat',mattermost:'Mattermost',feishu:'Feishu'},
+channelNames:{webchat:'Webchat',whatsapp:'WhatsApp',telegram:'Telegram',discord:'Discord',slack:'Slack',signal:'Signal',line:'LINE',matrix:'Matrix',nostr:'Nostr',irc:'IRC',google_chat:'Google Chat',mattermost:'Mattermost',feishu:'Feishu',msteams:'MS Teams',twitch:'Twitch',zalo:'Zalo',nextcloud:'Nextcloud',synology:'Synology',bluebubbles:'BlueBubbles'},
 },zh:{
 title:'OpenClaw 配置管理',save:'保存',saving:'保存中...',saved:'配置已保存',
 cancel:'取消',confirm:'确定',delete:'删除',enable:'启用',disable:'禁用',
@@ -583,7 +651,7 @@ export:'导出',import:'导入',
 nav:{gateway:'网关',models:'模型',channels:'频道',session:'会话',browser:'浏览器',cron:'定时任务',memory:'记忆',logging:'日志',advanced:'高级设置'},
 navDesc:{gateway:'服务器、认证、TLS、代理',models:'LLM 供应商与降级链',channels:'消息平台集成',session:'历史记录与压缩',browser:'浏览器自动化',cron:'定时任务调度',memory:'记忆与向量搜索',logging:'日志级别与输出',advanced:'诊断、语音、插件'},
 providerTypes:['anthropic','openai','google','cohere','ollama','bedrock','openrouter','together','minimax'],
-channelNames:{webchat:'网页聊天',whatsapp:'WhatsApp',telegram:'Telegram',discord:'Discord',slack:'Slack',signal:'Signal',line:'LINE',matrix:'Matrix',nostr:'Nostr',irc:'IRC',google_chat:'Google Chat',mattermost:'Mattermost',feishu:'飞书'},
+channelNames:{webchat:'网页聊天',whatsapp:'WhatsApp',telegram:'Telegram',discord:'Discord',slack:'Slack',signal:'Signal',line:'LINE',matrix:'Matrix',nostr:'Nostr',irc:'IRC',google_chat:'Google Chat',mattermost:'Mattermost',feishu:'飞书',msteams:'MS Teams',twitch:'Twitch',zalo:'Zalo',nextcloud:'Nextcloud',synology:'Synology',bluebubbles:'BlueBubbles'},
 labels:{
 'Server':'服务器','Authentication':'认证','TLS / HTTPS':'TLS / HTTPS','Control UI':'控制面板','Tailscale':'Tailscale',
 'Fallback Settings':'降级设置','Session Settings':'会话设置','Compaction':'上下文压缩','Pruning':'消息裁剪','Auto Reset':'自动重置',
@@ -629,12 +697,21 @@ labels:{
 'Wide Area Discovery':'广域发现','mDNS Mode':'mDNS 模式',
 'Enable Plugins':'启用插件','Allow List':'允许列表','Deny List':'拒绝列表',
 'Update Channel':'更新通道','Check on Start':'启动时检查',
+'Bot ID':'机器人 ID','Bot Password':'机器人密码','Tenant ID':'租户 ID',
+'Client ID':'客户端 ID','Channel Name':'频道名称','Webhook Secret':'Webhook 密钥',
+'Rate Limiting':'速率限制','Max Attempts':'最大尝试次数','Window (ms)':'窗口（毫秒）','Lockout (ms)':'锁定（毫秒）','Exempt Loopback':'豁免回环',
+'Trusted Proxy':'可信代理','User Header':'用户头','Required Headers':'必需头','Allow Users':'允许用户',
+'Remote Connection':'远程连接','Transport':'传输协议','TLS Fingerprint':'TLS 指纹','SSH Target':'SSH 目标','SSH Identity':'SSH 身份',
+'Config Reload':'配置重载','Debounce (ms)':'防抖（毫秒）','HTTP Endpoints':'HTTP 端点','Chat Completions':'聊天补全','Responses':'响应',
+'Tool Allow/Deny':'工具允许/拒绝','Allow List':'允许列表','Deny List':'拒绝列表','Health Check Interval (min)':'健康检查间隔（分钟）',
+'Canvas Host':'Canvas 主机','Live Reload':'实时重载','Root Path':'根路径',
+'Preserve Filenames':'保留文件名','Shell Environment':'Shell 环境','Timeout (ms)':'超时（毫秒）',
 },
 }};
 const t=k=>{const parts=k.split('.');let v=I[lang];for(const p of parts){v=v?.[p];if(v===undefined)return k}return v};
 const tl=s=>{if(lang==='zh'&&I.zh.labels[s])return I.zh.labels[s];return s};
 const NAV_ICONS={gateway:'\u2699',models:'\u2B22',channels:'\u260E',session:'\u23F3',browser:'\u{1F310}',cron:'\u23F0',memory:'\u{1F9E0}',logging:'\u{1F4CB}',advanced:'\u2699'};
-const CH_ICONS={webchat:'\u{1F4AC}',whatsapp:'\u{1F4F1}',telegram:'\u2708',discord:'\u{1F3AE}',slack:'\u{1F4E8}',signal:'\u{1F510}',line:'\u{1F49A}',matrix:'\u{1F504}',nostr:'\u{1F4E1}',irc:'\u{1F4BB}',google_chat:'\u{1F4AC}',mattermost:'\u{1F4AC}',feishu:'\u{1F426}'};
+const CH_ICONS={webchat:'\u{1F4AC}',whatsapp:'\u{1F4F1}',telegram:'\u2708',discord:'\u{1F3AE}',slack:'\u{1F4E8}',signal:'\u{1F510}',line:'\u{1F49A}',matrix:'\u{1F504}',nostr:'\u{1F4E1}',irc:'\u{1F4BB}',google_chat:'\u{1F4AC}',mattermost:'\u{1F4AC}',feishu:'\u{1F426}',msteams:'\u{1F4BC}',twitch:'\u{1F3AE}',zalo:'\u{1F4AC}',nextcloud:'\u2601',synology:'\u{1F4E6}',bluebubbles:'\u{1F4AC}'};
 function toggleLang(){lang=lang==='en'?'zh':'en';document.getElementById('lang-btn').textContent=lang==='en'?'中文':'EN';renderAll()}
 function toast(msg,ok){const d=document.getElementById('toast'),el=document.createElement('div');el.className='toast-item '+(ok?'toast-ok':'toast-err');el.textContent=msg;d.appendChild(el);setTimeout(()=>{el.style.animation='slideOut .3s ease forwards';setTimeout(()=>el.remove(),300)},2500)}
 function isSensitive(k){return/token|key|password|secret|api_key|signing/i.test(k)}
@@ -771,6 +848,50 @@ if(!cfg.gateway.tailscale)cfg.gateway.tailscale={};
 tsc.appendChild(mkInput('gateway.tailscale.mode','Mode','select',{options:['','funnel','serve']}));
 tsc.appendChild(mkInput('gateway.tailscale.resetOnExit','Reset on Exit','toggle'));
 pg.appendChild(tsc);
+// Rate Limiting
+const rlc=document.createElement('div');rlc.className='card';
+const rlh=document.createElement('div');rlh.className='card-header';
+const rlt=document.createElement('div');rlt.className='card-title';rlt.textContent=tl('Rate Limiting');rlc.appendChild(rlh);rlh.appendChild(rlt);
+if(!cfg.gateway.auth.rateLimit)cfg.gateway.auth.rateLimit={};
+rlc.appendChild(mkRow([mkInput('gateway.auth.rateLimit.maxAttempts','Max Attempts','number',{placeholder:'5'}),mkInput('gateway.auth.rateLimit.windowMs','Window (ms)','number',{placeholder:'60000'})]));
+rlc.appendChild(mkRow([mkInput('gateway.auth.rateLimit.lockoutMs','Lockout (ms)','number',{placeholder:'300000'}),mkInput('gateway.auth.rateLimit.exemptLoopback','Exempt Loopback','toggle')]));
+pg.appendChild(rlc);
+// Remote
+const rmc=document.createElement('div');rmc.className='card';
+const rmh=document.createElement('div');rmh.className='card-header';
+const rmt=document.createElement('div');rmt.className='card-title';rmt.textContent=tl('Remote Connection');rmc.appendChild(rmh);rmh.appendChild(rmt);
+if(!cfg.gateway.remote)cfg.gateway.remote={};
+rmc.appendChild(mkInput('gateway.remote.url','URL','text',{placeholder:'wss://remote-host:8080'}));
+rmc.appendChild(mkInput('gateway.remote.transport','Transport','select',{options:['','ws','ssh']}));
+rmc.appendChild(mkRow([mkInput('gateway.remote.token','Token','password'),mkInput('gateway.remote.password','Password','password')]));
+pg.appendChild(rmc);
+// Reload
+const rldc=document.createElement('div');rldc.className='card';
+const rldh=document.createElement('div');rldh.className='card-header';
+const rldt=document.createElement('div');rldt.className='card-title';rldt.textContent=tl('Config Reload');rldc.appendChild(rldh);rldh.appendChild(rldt);
+if(!cfg.gateway.reload)cfg.gateway.reload={};
+rldc.appendChild(mkInput('gateway.reload.mode','Mode','select',{options:['','watch','manual']}));
+rldc.appendChild(mkInput('gateway.reload.debounceMs','Debounce (ms)','number',{placeholder:'1000'}));
+pg.appendChild(rldc);
+// HTTP Endpoints
+const hec=document.createElement('div');hec.className='card';
+const heh=document.createElement('div');heh.className='card-header';
+const het=document.createElement('div');het.className='card-title';het.textContent=tl('HTTP Endpoints');hec.appendChild(heh);heh.appendChild(het);
+if(!cfg.gateway.http)cfg.gateway.http={};if(!cfg.gateway.http.endpoints)cfg.gateway.http.endpoints={};
+if(!cfg.gateway.http.endpoints.chatCompletions)cfg.gateway.http.endpoints.chatCompletions={};
+if(!cfg.gateway.http.endpoints.responses)cfg.gateway.http.endpoints.responses={};
+hec.appendChild(mkInput('gateway.http.endpoints.chatCompletions.enabled','Chat Completions','toggle'));
+hec.appendChild(mkInput('gateway.http.endpoints.responses.enabled','Responses','toggle'));
+pg.appendChild(hec);
+// Tools + Health Check
+const gtc=document.createElement('div');gtc.className='card';
+const gth=document.createElement('div');gth.className='card-header';
+const gtt=document.createElement('div');gtt.className='card-title';gtt.textContent=tl('Tool Allow/Deny');gtc.appendChild(gth);gth.appendChild(gtt);
+if(!cfg.gateway.tools)cfg.gateway.tools={};
+gtc.appendChild(mkInput('gateway.tools.allow','Allow List','textarea',{placeholder:'["tool_a"]',arrayMode:true}));
+gtc.appendChild(mkInput('gateway.tools.deny','Deny List','textarea',{placeholder:'["tool_b"]',arrayMode:true}));
+gtc.appendChild(mkInput('gateway.channelHealthCheckMinutes','Health Check Interval (min)','number',{placeholder:'5'}));
+pg.appendChild(gtc);
 }
 // --- Page: Models ---
 function pgModels(pg){
@@ -842,7 +963,13 @@ nostr:{fields:[{k:'relayUrls',l:'Relay URLs',t:'textarea',arr:true},{k:'privateK
 irc:{fields:[{k:'server',l:'Server',t:'text'},{k:'port',l:'Port',t:'number'},{k:'nick',l:'Nickname',t:'text'},{k:'password',l:'Password',t:'password'},{k:'channels',l:'Channels',t:'textarea',arr:true}]},
 google_chat:{fields:[{k:'spaceName',l:'Space Name',t:'text'},{k:'serviceAccountJson',l:'Service Account JSON',t:'password'}]},
 mattermost:{fields:[{k:'serverUrl',l:'Server URL',t:'text'},{k:'accessToken',l:'Access Token',t:'password'},{k:'teamId',l:'Team ID',t:'text'},{k:'channelId',l:'Channel ID',t:'text'}]},
-feishu:{fields:[{k:'appId',l:'App ID',t:'text'},{k:'appSecret',l:'App Secret',t:'password'},{k:'verificationToken',l:'Verification Token',t:'password'},{k:'encryptKey',l:'Encrypt Key',t:'password'}]}
+feishu:{fields:[{k:'appId',l:'App ID',t:'text'},{k:'appSecret',l:'App Secret',t:'password'},{k:'verificationToken',l:'Verification Token',t:'password'},{k:'encryptKey',l:'Encrypt Key',t:'password'}]},
+msteams:{fields:[{k:'botId',l:'Bot ID',t:'text'},{k:'botPassword',l:'Bot Password',t:'password'},{k:'tenantId',l:'Tenant ID',t:'text'}]},
+twitch:{fields:[{k:'clientId',l:'Client ID',t:'text'},{k:'accessToken',l:'Access Token',t:'password'},{k:'channelName',l:'Channel Name',t:'text'}]},
+zalo:{fields:[{k:'appId',l:'App ID',t:'text'},{k:'accessToken',l:'Access Token',t:'password'},{k:'webhookSecret',l:'Webhook Secret',t:'password'}]},
+nextcloud:{fields:[{k:'serverUrl',l:'Server URL',t:'text'},{k:'token',l:'Token',t:'password'},{k:'secret',l:'Secret',t:'password'}]},
+synology:{fields:[{k:'serverUrl',l:'Server URL',t:'text'},{k:'token',l:'Token',t:'password'}]},
+bluebubbles:{fields:[{k:'serverUrl',l:'Server URL',t:'text'},{k:'password',l:'Password',t:'password'}]}
 };
 const grid=document.createElement('div');grid.className='channel-grid';
 for(const[chKey,schema] of Object.entries(CHSCHEMA)){
@@ -1058,6 +1185,31 @@ const upt=document.createElement('div');upt.className='card-title';upt.textConte
 upc.appendChild(mkInput('update.channel','Update Channel','select',{options:['','stable','beta','nightly']}));
 upc.appendChild(mkInput('update.checkOnStart','Check on Start','toggle'));
 pg.appendChild(upc);
+// Canvas Host
+if(!cfg.canvasHost)cfg.canvasHost={};
+const chc=document.createElement('div');chc.className='card';
+const chh=document.createElement('div');chh.className='card-header';
+const cht=document.createElement('div');cht.className='card-title';cht.textContent=tl('Canvas Host');chc.appendChild(chh);chh.appendChild(cht);
+chc.appendChild(mkInput('canvasHost.enabled','Enable','toggle'));
+chc.appendChild(mkInput('canvasHost.root','Root Path','text',{placeholder:'./canvas'}));
+chc.appendChild(mkRow([mkInput('canvasHost.port','Port','number',{placeholder:'3000'}),mkInput('canvasHost.liveReload','Live Reload','toggle')]));
+pg.appendChild(chc);
+// Media
+if(!cfg.media)cfg.media={};
+const mdc=document.createElement('div');mdc.className='card';
+const mdh=document.createElement('div');mdh.className='card-header';
+const mdt=document.createElement('div');mdt.className='card-title';mdt.textContent='Media';mdc.appendChild(mdh);mdh.appendChild(mdt);
+mdc.appendChild(mkInput('media.preserveFilenames','Preserve Filenames','toggle'));
+pg.appendChild(mdc);
+// Env
+if(!cfg.env)cfg.env={};
+const enc=document.createElement('div');enc.className='card';
+const enh=document.createElement('div');enh.className='card-header';
+const ent=document.createElement('div');ent.className='card-title';ent.textContent=tl('Shell Environment');enc.appendChild(enh);enh.appendChild(ent);
+if(!cfg.env.shellEnv)cfg.env.shellEnv={};
+enc.appendChild(mkInput('env.shellEnv.enabled','Enable','toggle'));
+enc.appendChild(mkInput('env.shellEnv.timeoutMs','Timeout (ms)','number',{placeholder:'5000'}));
+pg.appendChild(enc);
 }
 // --- Collect form values into cfg ---
 function collect(){
@@ -1588,6 +1740,48 @@ pub async fn cron_delete_handler(
     }
 }
 
+pub async fn cron_trigger_handler(
+    State(state): State<Arc<HttpState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Some(ref svc) = state.cron_service else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "cron not enabled"}))).into_response();
+    };
+    match svc.trigger(&id).await {
+        Ok(_) => Json(serde_json::json!({"triggered": true})).into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
+pub async fn cron_logs_handler(
+    State(state): State<Arc<HttpState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Some(ref run_log) = state.cron_run_log else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "cron run log not available"}))).into_response();
+    };
+    match run_log.read(&id, 50).await {
+        Ok(entries) => Json(serde_json::json!({"logs": entries})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
+pub async fn cron_status_handler(
+    State(state): State<Arc<HttpState>>,
+) -> Response {
+    let scheduler_running = state.cron_scheduler.as_ref()
+        .map(|s| s.is_running())
+        .unwrap_or(false);
+    let job_count = match &state.cron_service {
+        Some(svc) => svc.list().await.len(),
+        None => 0,
+    };
+    Json(serde_json::json!({
+        "scheduler_running": scheduler_running,
+        "job_count": job_count,
+    })).into_response()
+}
+
 pub async fn canvas_ui_handler() -> axum::response::Html<&'static str> {
     axum::response::Html(CANVAS_HTML)
 }
@@ -1672,12 +1866,20 @@ mod tests {
             tool_registry: None,
             plugin_registrations: None,
             cron_service: None,
+            cron_scheduler: None,
+            cron_events: None,
+            cron_run_log: None,
+            memory_manager: None,
+            workspace: None,
             metrics: Arc::new(crate::http::metrics::AppMetrics::new()),
             health_checker: Arc::new(oclaws_doctor_core::HealthChecker::new()),
             full_config: None,
             config_path: None,
             echo_tracker: Arc::new(tokio::sync::Mutex::new(oclaws_agent_core::EchoTracker::default())),
             group_activation: oclaws_channel_core::group_gate::GroupActivation::default(),
+            dm_scope: crate::session_key::DmScope::default(),
+            identity_links: None,
+            needs_hatching: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 
@@ -1694,6 +1896,7 @@ mod tests {
             .route("/webhooks/telegram", post(crate::http::webhooks::telegram_webhook))
             .route("/webhooks/slack", post(crate::http::webhooks::slack_webhook))
             .route("/webhooks/discord", post(crate::http::webhooks::discord_webhook))
+            .route("/webhooks/whatsapp", post(crate::http::webhooks::whatsapp_webhook))
             .route("/webhooks/{channel}", post(crate::http::webhooks::generic_webhook))
             .with_state(state)
     }

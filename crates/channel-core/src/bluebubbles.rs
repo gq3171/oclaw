@@ -158,6 +158,24 @@ impl Channel for BlueBubblesChannel {
             channel: Arc::new(RwLock::new(self.clone())),
         }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // BlueBubbles: /data/0/text or /message/text
+        let text = payload.pointer("/data/0/text")
+            .or_else(|| payload.pointer("/message/text"))
+            .and_then(|v| v.as_str())?;
+        let chat_id = payload.pointer("/data/0/handle/address")
+            .or_else(|| payload.pointer("/message/handle/address"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: chat_id.to_string(),
+            is_group: false,
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
 }
 
 struct BlueBubblesSender {

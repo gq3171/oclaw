@@ -1,4 +1,5 @@
 use crate::traits::*;
+use crate::types::*;
 use async_trait::async_trait;
 use hmac::{Hmac, Mac};
 use reqwest::Client;
@@ -241,6 +242,129 @@ impl Channel for SlackChannel {
         }
 
         Ok(())
+    }
+
+    fn capabilities(&self) -> ChannelCapabilities {
+        ChannelCapabilities {
+            reactions: true,
+            threads: true,
+            media: true,
+            streaming: true,
+            editing: true,
+            deletion: true,
+            directory: true,
+            ..Default::default()
+        }
+    }
+
+    async fn send_reaction(&self, message_id: &str, emoji: &str, _metadata: &HashMap<String, String>) -> ChannelResult<()> {
+        // message_id format: "channelId_timestamp"
+        let parts: Vec<&str> = message_id.splitn(2, '_').collect();
+        if parts.len() != 2 {
+            return Err(ChannelError::MessageError("Invalid message_id format, expected channelId_ts".into()));
+        }
+        let body = serde_json::json!({
+            "channel": parts[0],
+            "timestamp": parts[1],
+            "name": emoji.trim_matches(':'),
+        });
+        self.send_api_request("reactions.add", Some(&body)).await?;
+        Ok(())
+    }
+
+    async fn remove_reaction(&self, message_id: &str, emoji: &str) -> ChannelResult<()> {
+        let parts: Vec<&str> = message_id.splitn(2, '_').collect();
+        if parts.len() != 2 {
+            return Err(ChannelError::MessageError("Invalid message_id format".into()));
+        }
+        let body = serde_json::json!({
+            "channel": parts[0],
+            "timestamp": parts[1],
+            "name": emoji.trim_matches(':'),
+        });
+        self.send_api_request("reactions.remove", Some(&body)).await?;
+        Ok(())
+    }
+
+    async fn send_thread_reply(&self, thread_id: &str, message: &ChannelMessage) -> ChannelResult<String> {
+        let channel_id = message.metadata.get("channel_id")
+            .or_else(|| message.metadata.get("channel"))
+            .cloned()
+            .ok_or_else(|| ChannelError::MessageError("Channel ID required for thread reply".into()))?;
+        let body = serde_json::json!({
+            "channel": channel_id,
+            "text": message.content,
+            "thread_ts": thread_id,
+        });
+        let resp = self.send_api_request("chat.postMessage", Some(&body)).await?;
+        let ts = resp.get("ts").and_then(|t| t.as_str()).unwrap_or_default();
+        Ok(format!("{}_{}", channel_id, ts))
+    }
+
+    async fn edit_message(&self, message_id: &str, content: &str) -> ChannelResult<()> {
+        let parts: Vec<&str> = message_id.splitn(2, '_').collect();
+        if parts.len() != 2 {
+            return Err(ChannelError::MessageError("Invalid message_id format".into()));
+        }
+        let body = serde_json::json!({
+            "channel": parts[0],
+            "ts": parts[1],
+            "text": content,
+        });
+        self.send_api_request("chat.update", Some(&body)).await?;
+        Ok(())
+    }
+
+    async fn delete_message(&self, message_id: &str) -> ChannelResult<()> {
+        let parts: Vec<&str> = message_id.splitn(2, '_').collect();
+        if parts.len() != 2 {
+            return Err(ChannelError::MessageError("Invalid message_id format".into()));
+        }
+        let body = serde_json::json!({
+            "channel": parts[0],
+            "ts": parts[1],
+        });
+        self.send_api_request("chat.delete", Some(&body)).await?;
+        Ok(())
+    }
+
+    async fn list_members(&self, group_id: &str) -> ChannelResult<Vec<ChannelAccount>> {
+        let body = serde_json::json!({"channel": group_id});
+        let resp = self.send_api_request("conversations.members", Some(&body)).await?;
+        let member_ids = resp.get("members").and_then(|m| m.as_array())
+            .ok_or_else(|| ChannelError::MessageError("No members in response".into()))?;
+        let mut accounts = Vec::new();
+        for mid in member_ids.iter().take(50) {
+            if let Some(uid) = mid.as_str() {
+                accounts.push(ChannelAccount {
+                    id: uid.to_string(),
+                    name: uid.to_string(),
+                    channel: "slack".to_string(),
+                    avatar: None,
+                    status: None,
+                });
+            }
+        }
+        Ok(accounts)
+    }
+
+    async fn list_groups(&self) -> ChannelResult<Vec<GroupInfo>> {
+        let body = serde_json::json!({"types": "public_channel,private_channel", "limit": 100});
+        let resp = self.send_api_request("conversations.list", Some(&body)).await?;
+        let channels = resp.get("channels").and_then(|c| c.as_array())
+            .ok_or_else(|| ChannelError::MessageError("No channels in response".into()))?;
+        Ok(channels.iter().filter_map(|c| {
+            Some(GroupInfo {
+                id: c.get("id")?.as_str()?.to_string(),
+                name: c.get("name")?.as_str()?.to_string(),
+                member_count: c.get("num_members").and_then(|n| n.as_u64()).map(|n| n as u32),
+                group_type: if c.get("is_channel").and_then(|b| b.as_bool()).unwrap_or(false) {
+                    ChatType::Channel
+                } else {
+                    ChatType::Group
+                },
+            })
+        }).collect())
     }
 
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {

@@ -131,6 +131,23 @@ impl Channel for TwitchChannel {
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
         Ok(Box::new(TwitchSender { channel: Arc::new(RwLock::new(self.clone())) }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // Twitch EventSub: /event/message/text or /event/user_input
+        let text = payload.pointer("/event/message/text")
+            .or_else(|| payload.pointer("/event/user_input"))
+            .and_then(|v| v.as_str())?;
+        let chat_id = payload.pointer("/event/broadcaster_user_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: chat_id.to_string(),
+            is_group: true,
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
 }
 
 struct TwitchSender {

@@ -108,8 +108,9 @@ impl ErrorClass {
     }
 
     /// Whether this error class is fatal (no retry, no fallback).
+    /// AuthFailure is NOT fatal — it should attempt fallback to another provider/key.
     pub fn is_fatal(&self) -> bool {
-        matches!(self, Self::AuthFailure)
+        matches!(self, Self::ToolError)
     }
 }
 

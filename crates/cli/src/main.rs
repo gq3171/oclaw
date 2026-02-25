@@ -225,6 +225,8 @@ async fn main() -> anyhow::Result<()> {
         _ => Level::INFO,
     };
     
+    let is_tui = matches!(cli.command, Some(Commands::Tui));
+
     // Load config early to check OTEL settings
     #[cfg(feature = "otel")]
     let otel_config = {
@@ -236,20 +238,38 @@ async fn main() -> anyhow::Result<()> {
         mgr.config().diagnostics.as_ref().and_then(|d| d.otel.clone())
     };
 
-    #[cfg(feature = "otel")]
-    let _otel_guard = {
-        let otel_enabled = otel_config.as_ref()
-            .and_then(|o| o.enabled).unwrap_or(false);
-        if otel_enabled {
-            Some(init_otel_tracing(log_level, &cli.log_format, &otel_config.unwrap()))
-        } else {
-            init_plain_tracing(log_level, &cli.log_format);
-            None
-        }
-    };
+    // TUI mode: redirect logs to file so they don't corrupt the terminal
+    let _tui_log_guard = if is_tui {
+        let log_dir = dirs::data_local_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("oclaws");
+        std::fs::create_dir_all(&log_dir).ok();
+        let file = std::fs::File::create(log_dir.join("tui.log"))
+            .expect("Failed to create TUI log file");
+        FmtSubscriber::builder()
+            .with_max_level(log_level)
+            .with_target(false)
+            .with_ansi(false)
+            .with_writer(std::sync::Mutex::new(file))
+            .init();
+        true
+    } else {
+        #[cfg(feature = "otel")]
+        let _otel_guard = {
+            let otel_enabled = otel_config.as_ref()
+                .and_then(|o| o.enabled).unwrap_or(false);
+            if otel_enabled {
+                Some(init_otel_tracing(log_level, &cli.log_format, &otel_config.unwrap()))
+            } else {
+                init_plain_tracing(log_level, &cli.log_format);
+                None
+            }
+        };
 
-    #[cfg(not(feature = "otel"))]
-    init_plain_tracing(log_level, &cli.log_format);
+        #[cfg(not(feature = "otel"))]
+        init_plain_tracing(log_level, &cli.log_format);
+        false
+    };
     
     let Some(command) = cli.command else {
         // No subcommand — print help and exit
@@ -297,6 +317,10 @@ async fn main() -> anyhow::Result<()> {
                     browser.headless,
                 );
             }
+            // Configure workspace tool if workspace path is resolvable
+            if let Ok(ws) = oclaws_workspace_core::files::Workspace::default_location() {
+                tool_registry.configure_workspace(&ws.root().to_string_lossy());
+            }
             let tool_registry = Arc::new(tool_registry);
             info!("Tool registry initialized with {} tools", tool_registry.list().len());
 
@@ -338,6 +362,49 @@ async fn main() -> anyhow::Result<()> {
                 None
             };
 
+            // Initialize memory manager for cross-channel recall
+            let memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>> = {
+                let store = oclaws_memory_core::MemoryStore::new(
+                    oclaws_memory_core::MemoryStore::default_path(),
+                );
+                match store.init() {
+                    Ok(()) => {
+                        info!("Memory store initialized");
+                        Some(Arc::new(oclaws_memory_core::MemoryManager::new(store, None)))
+                    }
+                    Err(e) => {
+                        warn!("Failed to initialize memory store: {}", e);
+                        None
+                    }
+                }
+            };
+
+            // Initialize workspace (bootstrap on first run)
+            let needs_hatching = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let workspace: Option<Arc<oclaws_workspace_core::files::Workspace>> = {
+                match oclaws_workspace_core::files::Workspace::default_location() {
+                    Ok(ws) => {
+                        let runner = oclaws_workspace_core::bootstrap::BootstrapRunner::new(ws.clone());
+                        match runner.ensure_bootstrapped().await {
+                            Ok(oclaws_workspace_core::bootstrap::BootstrapStatus::NeedsHatching) => {
+                                needs_hatching.store(true, std::sync::atomic::Ordering::Relaxed);
+                                info!("Workspace bootstrapped — first-run hatching enabled");
+                                println!("Wake up, my friend! Send your first message to begin the hatching ritual.");
+                            }
+                            Ok(oclaws_workspace_core::bootstrap::BootstrapStatus::AlreadyDone) => {
+                                info!("Workspace loaded at {}", ws.root().display());
+                            }
+                            Err(e) => warn!("Workspace bootstrap failed: {}", e),
+                        }
+                        Some(Arc::new(ws))
+                    }
+                    Err(e) => {
+                        warn!("Could not resolve workspace location: {}", e);
+                        None
+                    }
+                }
+            };
+
             // 4b. Start Telegram long-polling if configured (with auto-reconnect)
             if let Some(ref channels) = config.channels
                 && let Some(ref tg) = channels.telegram
@@ -348,11 +415,12 @@ async fn main() -> anyhow::Result<()> {
                 let provider = llm_provider.clone();
                 let cm = channel_manager.clone();
                 let tr = tool_registry.clone();
+                let mm = memory_manager.clone();
                 tokio::spawn(async move {
                     let mut backoff_secs = 1u64;
                     loop {
                         info!("Starting Telegram polling loop");
-                        telegram_poll_loop(token.clone(), provider.clone(), cm.clone(), tr.clone()).await;
+                        telegram_poll_loop(token.clone(), provider.clone(), cm.clone(), tr.clone(), mm.clone()).await;
                         error!("Telegram polling loop exited, reconnecting in {}s", backoff_secs);
                         tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
                         backoff_secs = (backoff_secs * 2).min(60);
@@ -371,11 +439,12 @@ async fn main() -> anyhow::Result<()> {
                 let provider = llm_provider.clone();
                 let cm = channel_manager.clone();
                 let tr = tool_registry.clone();
+                let mm = memory_manager.clone();
                 tokio::spawn(async move {
                     let mut backoff_secs = 1u64;
                     loop {
                         info!("Starting Feishu WebSocket connection");
-                        feishu_ws_loop(aid.clone(), asec.clone(), provider.clone(), cm.clone(), tr.clone()).await;
+                        feishu_ws_loop(aid.clone(), asec.clone(), provider.clone(), cm.clone(), tr.clone(), mm.clone()).await;
                         error!("Feishu WebSocket disconnected, reconnecting in {}s", backoff_secs);
                         tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
                         backoff_secs = (backoff_secs * 2).min(60);
@@ -405,7 +474,8 @@ async fn main() -> anyhow::Result<()> {
 
             if http_only {
                 info!("Starting OCLAWS HTTP server on port {}", port);
-                let server = build_http_server(HttpServerParams { port, gateway: gateway_config, gateway_server, llm_provider, channel_manager, tool_registry: tool_registry.clone(), plugin_registrations: plugin_registrations.clone(), cron_service: cron_service.clone(), full_config: config.clone(), config_path: config_path.clone() }).await?;                if let Err(e) = server.start().await {
+                let server = build_http_server(HttpServerParams { port, gateway: gateway_config, gateway_server, llm_provider, channel_manager, tool_registry: tool_registry.clone(), plugin_registrations: plugin_registrations.clone(), cron_service: cron_service.clone(), memory_manager, workspace: workspace.clone(), full_config: config.clone(), config_path: config_path.clone(), needs_hatching: needs_hatching.clone() }).await?;
+                if let Err(e) = server.start().await {
                     error!("HTTP server error: {}", e);
                     return Err(anyhow::anyhow!(e));
                 }
@@ -424,7 +494,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                 });
 
-                let server = build_http_server(HttpServerParams { port: port + 1, gateway: gateway_config, gateway_server, llm_provider, channel_manager, tool_registry: tool_registry.clone(), plugin_registrations: plugin_registrations.clone(), cron_service: cron_service.clone(), full_config: config.clone(), config_path: config_path.clone() }).await?;
+                let server = build_http_server(HttpServerParams { port: port + 1, gateway: gateway_config, gateway_server, llm_provider, channel_manager, tool_registry: tool_registry.clone(), plugin_registrations: plugin_registrations.clone(), cron_service: cron_service.clone(), memory_manager, workspace: workspace.clone(), full_config: config.clone(), config_path: config_path.clone(), needs_hatching: needs_hatching.clone() }).await?;
                 tokio::spawn(async move {
                     if let Err(e) = server.start().await {
                         error!("HTTP server error: {}", e);
@@ -790,12 +860,19 @@ async fn main() -> anyhow::Result<()> {
                 let gw = manager.config().gateway.as_ref();
                 let port = gw.and_then(|g| g.port).unwrap_or(8080) as u16;
                 let bind = gw.and_then(|g| g.bind.clone()).unwrap_or_else(|| "127.0.0.1".to_string());
-                format!("http://{}:{}", bind, port + 1)
+                // 0.0.0.0 is a listen address, not connectable — use loopback instead
+                let connect_host = if bind == "0.0.0.0" || bind == "::" { "127.0.0.1" } else { &bind };
+                format!("http://{}:{}", connect_host, port + 1)
             } else {
                 cli.gateway_url.clone()
             };
+            // Read auth token from config for TUI authentication
+            let token = manager.config().gateway.as_ref()
+                .and_then(|g| g.auth.as_ref())
+                .and_then(|a| a.token.clone());
             let tui_config = oclaws_tui_core::TuiConfig {
                 gateway_url,
+                token,
                 ..Default::default()
             };
             let mut app = oclaws_tui_core::TuiApp::new(tui_config);
@@ -1050,14 +1127,18 @@ struct HttpServerParams {
     tool_registry: Arc<oclaws_tools_core::tool::ToolRegistry>,
     plugin_registrations: Option<Arc<oclaws_plugin_core::PluginRegistrations>>,
     cron_service: Option<Arc<oclaws_cron_core::CronService>>,
+    memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>>,
+    workspace: Option<Arc<oclaws_workspace_core::files::Workspace>>,
     full_config: oclaws_config::Config,
     config_path: std::path::PathBuf,
+    needs_hatching: Arc<std::sync::atomic::AtomicBool>,
 }
 
 async fn build_http_server(p: HttpServerParams) -> anyhow::Result<oclaws_gateway_core::HttpServer> {
     let HttpServerParams {
         port, gateway, gateway_server, llm_provider, channel_manager,
-        tool_registry, plugin_registrations, cron_service, full_config, config_path,
+        tool_registry, plugin_registrations, cron_service, memory_manager,
+        workspace, full_config, config_path, needs_hatching,
     } = p;
     use oclaws_gateway_core::create_http_server;
     let mut server = create_http_server(port, gateway, gateway_server).await
@@ -1076,6 +1157,13 @@ async fn build_http_server(p: HttpServerParams) -> anyhow::Result<oclaws_gateway
     if let Some(cm) = channel_manager {
         server = server.with_channel_manager(cm);
     }
+    if let Some(mm) = memory_manager {
+        server = server.with_memory_manager(mm);
+    }
+    if let Some(ws) = workspace {
+        server = server.with_workspace(ws);
+    }
+    server = server.with_needs_hatching(needs_hatching);
     Ok(server)
 }
 
@@ -1084,6 +1172,7 @@ async fn telegram_poll_loop(
     llm_provider: Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>,
     channel_manager: Option<Arc<RwLock<oclaws_channel_core::ChannelManager>>>,
     tool_registry: Arc<oclaws_tools_core::tool::ToolRegistry>,
+    memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>>,
 ) {
     let client = reqwest::Client::new();
     let base = format!("https://api.telegram.org/bot{}", bot_token);
@@ -1162,6 +1251,16 @@ async fn telegram_poll_loop(
                     continue;
                 }
             };
+
+            // Memory capture
+            if let Some(ref mm) = memory_manager {
+                let content = format!("User: {}\nAssistant: {}", text, reply);
+                let source = format!("session:telegram_{}", chat_id);
+                match mm.add_memory(&content, &source).await {
+                    Ok(id) => info!("Telegram memory captured: id={}", id),
+                    Err(e) => warn!("Telegram memory capture failed: {}", e),
+                }
+            }
 
             // Send reply via channel manager (with reply_to + long msg split)
             let sent = if let Some(ref cm) = channel_manager {
@@ -1283,6 +1382,7 @@ async fn feishu_ws_loop(
     llm_provider: Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>,
     channel_manager: Option<Arc<RwLock<oclaws_channel_core::ChannelManager>>>,
     tool_registry: Arc<oclaws_tools_core::tool::ToolRegistry>,
+    memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>>,
 ) {
     use futures::stream::StreamExt;
     use futures::SinkExt;
@@ -1404,8 +1504,9 @@ async fn feishu_ws_loop(
                         let provider = llm_provider.clone();
                         let cm = channel_manager.clone();
                         let tr = tool_registry.clone();
+                        let mm = memory_manager.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = feishu_handle_event(provider, cm, tr, &payload).await {
+                            if let Err(e) = feishu_handle_event(provider, cm, tr, mm, &payload).await {
                                 error!("Feishu event error: {}", e);
                             }
                         });
@@ -1472,6 +1573,7 @@ async fn feishu_handle_event(
     llm_provider: Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>,
     channel_manager: Option<Arc<RwLock<oclaws_channel_core::ChannelManager>>>,
     tool_registry: Arc<oclaws_tools_core::tool::ToolRegistry>,
+    memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>>,
     payload: &[u8],
 ) -> Result<(), String> {
     let event: serde_json::Value = serde_json::from_slice(payload)
@@ -1486,7 +1588,7 @@ async fn feishu_handle_event(
     match event_type {
         // ── IM: 消息 ──
         "im.message.receive_v1" => {
-            feishu_on_message_receive(&event, &llm_provider, &channel_manager, &tool_registry).await?;
+            feishu_on_message_receive(&event, &llm_provider, &channel_manager, &tool_registry, &memory_manager).await?;
         }
         "im.message.message_read_v1" => {
             let reader = event.pointer("/event/reader/reader_id/open_id").and_then(|v| v.as_str()).unwrap_or("?");
@@ -1727,6 +1829,7 @@ async fn feishu_on_message_receive(
     llm_provider: &Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>,
     channel_manager: &Option<Arc<RwLock<oclaws_channel_core::ChannelManager>>>,
     tool_registry: &Arc<oclaws_tools_core::tool::ToolRegistry>,
+    memory_manager: &Option<Arc<oclaws_memory_core::MemoryManager>>,
 ) -> Result<(), String> {
     let chat_id = event.pointer("/event/message/chat_id")
         .and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -1779,6 +1882,16 @@ async fn feishu_on_message_receive(
     let session_key = format!("feishu_{}", chat_id);
     let reply = run_agent(provider, tool_registry, &text, Some(&session_key)).await?;
     info!("Feishu: agent reply len={}", reply.len());
+
+    // Memory capture: store user↔assistant exchange
+    if let Some(mm) = memory_manager {
+        let content = format!("User: {}\nAssistant: {}", text, reply);
+        let source = format!("session:feishu_{}", chat_id);
+        match mm.add_memory(&content, &source).await {
+            Ok(id) => info!("Feishu memory captured: id={}, source={}", id, source),
+            Err(e) => warn!("Feishu memory capture failed: {}", e),
+        }
+    }
 
     // Update placeholder with actual reply, or send new message
     if let Some(cm) = channel_manager {

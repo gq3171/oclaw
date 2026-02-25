@@ -17,6 +17,12 @@ members = [
     "crates/daemon-core",
     "crates/cron-core",
     "crates/memory-core",
+    "crates/auto-reply",
+    "crates/media-understanding",
+    "crates/tts-core",
+    "crates/pairing",
+    "crates/acp",
+    "crates/workspace-core",
 ]
 resolver = "2"
 
@@ -103,6 +109,8 @@ oclaws-tui-core = { path = "crates/tui-core" }
 oclaws-daemon-core = { path = "crates/daemon-core" }
 oclaws-cron-core = { path = "crates/cron-core" }
 oclaws-memory-core = { path = "crates/memory-core" }
+oclaws-auto-reply = { path = "crates/auto-reply" }
+oclaws-workspace-core = { path = "crates/workspace-core" }
 
 [profile.release]
 lto = "thin"

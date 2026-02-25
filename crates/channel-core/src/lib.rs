@@ -1,4 +1,6 @@
 pub mod traits;
+pub mod types;
+pub mod policy;
 pub mod router;
 pub mod webchat;
 pub mod whatsapp;
@@ -22,6 +24,7 @@ pub mod bluebubbles;
 pub mod manager;
 pub mod group_gate;
 pub mod draft_stream;
+pub mod streaming;
 
 pub use traits::*;
 pub use draft_stream::{DraftStreamLoop, DraftStreamHandle};

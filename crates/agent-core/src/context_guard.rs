@@ -2,6 +2,7 @@
 
 use oclaws_llm_core::chat::{ChatMessage, MessageRole};
 use oclaws_llm_core::tokenizer::TokenCounter;
+use crate::str_util::floor_char_boundary;
 
 const HARD_MIN_TOKENS: usize = 16_000;
 const WARNING_THRESHOLD: usize = 32_000;
@@ -89,9 +90,10 @@ impl ContextGuard {
                 if tok > limit_per_tool {
                     let max_chars = limit_per_tool * 4;
                     if msg.content.len() > max_chars {
-                        let cut = msg.content[..max_chars]
+                        let safe_max = floor_char_boundary(&msg.content, max_chars);
+                        let cut = msg.content[..safe_max]
                             .rfind('\n')
-                            .unwrap_or(max_chars);
+                            .unwrap_or(safe_max);
                         msg.content = format!(
                             "{}\n\n[Truncated by context guard — original ~{} tokens, limit {}]",
                             &msg.content[..cut],
@@ -129,7 +131,7 @@ impl ContextGuard {
             }
 
             let content = &messages[idx].content;
-            let half = content.len() / 2;
+            let half = floor_char_boundary(content, content.len() / 2);
             let cut = content[..half].rfind('\n').unwrap_or(half);
             messages[idx].content = format!(
                 "{}\n\n[Truncated by context guard — halved for budget]",

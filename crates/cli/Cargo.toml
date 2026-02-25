@@ -16,6 +16,7 @@ oclaws-gateway-core.workspace = true
 oclaws-channel-core.workspace = true
 oclaws-llm-core.workspace = true
 oclaws-agent-core.workspace = true
+oclaws-memory-core.workspace = true
 oclaws-tools-core.workspace = true
 oclaws-doctor-core.workspace = true
 tokio.workspace = true
@@ -33,6 +34,7 @@ oclaws-daemon-core = { path = "../daemon-core" }
 oclaws-skills-core = { path = "../skills-core" }
 oclaws-plugin-core = { path = "../plugin-core" }
 oclaws-cron-core = { path = "../cron-core" }
+oclaws-workspace-core = { path = "../workspace-core" }
 async-trait.workspace = true
 dotenvy.workspace = true
 tokio-tungstenite.workspace = true

@@ -10,7 +10,7 @@ pub mod overlay;
 pub mod theme;
 
 pub use app::{TuiApp, TuiConfig};
-pub use chat::{ChatLog, ChatMessage, ToolStatus, SystemLevel};
+pub use chat::{ChatLog, ChatMessage, ToolStatus, SystemLevel, visual_lines_for_message};
 pub use commands::{SlashCommand, parse_command};
 pub use editor::TextEditor;
 pub use gateway::{GatewayClient, GatewayConfig, GatewayEvent};

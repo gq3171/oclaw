@@ -73,7 +73,7 @@ impl MatrixChannel {
         body: Option<&serde_json::Value>,
     ) -> ChannelResult<serde_json::Value> {
         let homeserver = self.homeserver.as_ref()
-            .ok_or_else(|| ChannelError::ConfigurationError("Homeserver not set".to_string()))?;
+            .ok_or_else(|| ChannelError::ConfigError("Homeserver not set".to_string()))?;
 
         let url = format!("{}{}", homeserver, path);
 
@@ -81,7 +81,7 @@ impl MatrixChannel {
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".to_string()))?;
 
         let http_method = reqwest::Method::from_bytes(method.as_bytes())
-            .map_err(|e| ChannelError::ConfigurationError(format!("Invalid HTTP method '{}': {}", method, e)))?;
+            .map_err(|e| ChannelError::ConfigError(format!("Invalid HTTP method '{}': {}", method, e)))?;
         let mut request = client.request(http_method, &url);
 
         if let Some(token) = &self.access_token {
@@ -217,6 +217,22 @@ impl Channel for MatrixChannel {
         Ok(Box::new(MatrixSender {
             channel: Arc::new(RwLock::new(self.clone())),
         }))
+    }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // Matrix: /content/body, /room_id, /sender
+        let text = payload.pointer("/content/body")
+            .and_then(|v| v.as_str())?;
+        let room_id = payload.get("room_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: room_id.to_string(),
+            is_group: true, // Matrix rooms are inherently group-like
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
     }
 }
 

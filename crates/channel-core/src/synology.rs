@@ -118,6 +118,23 @@ impl Channel for SynologyChannel {
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
         Ok(Box::new(SynologySender { channel: Arc::new(RwLock::new(self.clone())) }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // Synology Chat: /text, /user_id or /channel_id
+        let text = payload.get("text")
+            .and_then(|v| v.as_str())?;
+        let chat_id = payload.get("user_id")
+            .or_else(|| payload.get("channel_id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: chat_id.to_string(),
+            is_group: false,
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
 }
 
 struct SynologySender {

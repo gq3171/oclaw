@@ -7,11 +7,14 @@ A modular AI agent gateway framework written in Rust. Single binary, zero extern
 ## Why oclaw
 
 - **Single Binary** — One `oclaws` binary does everything. No Node.js, no Python, no Docker required. Deploy anywhere with a single file.
-- **Blazing Fast** — Written in pure Rust with async-first architecture. Handles thousands of concurrent connections with minimal memory footprint (~28MB release binary).
-- **9 LLM Providers** — Anthropic, OpenAI, Google, Cohere, Ollama, AWS Bedrock, OpenRouter, Together AI, MiniMax. Switch providers with one config change, automatic fallback chains when a provider goes down.
-- **13 Messaging Channels** — Telegram, Slack, Discord, WhatsApp, Matrix, Signal, LINE, Mattermost, Google Chat, Feishu, Nostr, IRC, Webchat. Connect your AI to any platform.
-- **Built-in Web UI** — Chat interface and full configuration management UI embedded in the binary. No separate frontend deployment needed.
-- **OpenAI-Compatible API** — Drop-in replacement for OpenAI's `/v1/chat/completions` and `/v1/responses` endpoints. Works with any OpenAI-compatible client.
+- **Blazing Fast** — Pure Rust, async-first architecture. Thousands of concurrent connections with minimal memory footprint.
+- **18 LLM Providers** — Anthropic, OpenAI, Google Gemini, Cohere, Ollama, AWS Bedrock, OpenRouter, Together AI, MiniMax, Hugging Face, vLLM, Qwen, Doubao, Moonshot, xAI, Cloudflare AI, LiteLLM, GitHub Copilot. One config change to switch, automatic fallback chains.
+- **19 Messaging Channels** — Telegram, Slack, Discord, WhatsApp, Matrix, Signal, LINE, Mattermost, Google Chat, Feishu, Nostr, IRC, Webchat, iMessage/BlueBubbles, Microsoft Teams, Nextcloud Talk, Synology Chat, Twitch, Zalo.
+- **Cross-Channel Memory** — Unified memory pipeline: recall relevant context → agent execution → auto-capture key info. Same user gets the same memory across Telegram, Discord, Slack, etc.
+- **Workspace & Identity** — Agent personality via `SOUL.md`, first-run hatching conversation for identity discovery, runtime self-awareness (model, OS, tools, version).
+- **Built-in Web UI** — Chat interface, configuration manager, and live canvas — all embedded in the binary.
+- **OpenAI-Compatible API** — Drop-in replacement for `/v1/chat/completions` and `/v1/responses`. Works with any OpenAI client.
+- **48 WebSocket RPC Methods** — Full programmatic control: sessions, agents, cron, TTS, node pairing, config, wizard, and more.
 - **Enterprise Features** — OAuth 2.0, rate limiting, TLS, Prometheus metrics, OpenTelemetry, structured logging, health checks, cron jobs, plugin system.
 - **i18n Config UI** — Visual configuration editor with full English/Chinese support. Edit all settings in the browser, save instantly.
 
@@ -162,6 +165,7 @@ Visual configuration editor with full i18n support (English/Chinese).
 |----------|--------|-------------|
 | `/ui/chat` | GET | Web chat interface |
 | `/ui/config` | GET | Configuration manager |
+| `/ui/canvas` | GET | Live canvas rendering |
 
 ### Webhooks
 
@@ -170,6 +174,7 @@ Visual configuration editor with full i18n support (English/Chinese).
 | `/webhooks/telegram` | POST | Telegram webhook |
 | `/webhooks/slack` | POST | Slack webhook |
 | `/webhooks/discord` | POST | Discord webhook |
+| `/webhooks/whatsapp` | POST | WhatsApp webhook |
 | `/webhooks/feishu` | POST | Feishu webhook |
 | `/webhooks/{channel}` | POST | Generic channel webhook |
 
@@ -183,7 +188,7 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] WebSocket Server
 - [x] TLS / SSL
 - [x] Tailscale Integration
-- [x] Webhook Support (Telegram, Slack, Discord, Feishu, Generic)
+- [x] Webhook Support (Telegram, Slack, Discord, WhatsApp, Feishu, Generic)
 - [x] OpenAI-Compatible API (`/v1/chat/completions`, `/v1/responses`)
 - [x] Rate Limiting
 - [x] CORS
@@ -252,6 +257,13 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] Reply Dispatch
 - [x] Thinking Mode (Extended Reasoning)
 - [x] Context Window Guard
+- [x] Cross-channel Memory Pipeline (recall → agent → capture → reply)
+- [x] Workspace Identity (SOUL.md, IDENTITY.md)
+- [x] Hatching Bootstrap (first-run identity discovery conversation)
+- [x] Runtime Self-awareness (model, OS, arch, tools, version)
+- [x] Cross-platform Session Identity (DmScope + IdentityLinks)
+- [x] Memory Flush to Workspace Files
+- [x] Agent Communication Protocol (ACP)
 
 ### Tools & Integrations
 
@@ -277,7 +289,10 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] Temporal Decay
 - [x] Semantic Memory
 - [x] Embedding Search
+- [x] Embedding Cache
 - [x] File Watch Indexing
+- [x] Auto-capture (conversation → memory)
+- [x] Memory Flush (durable workspace files)
 
 ### Skills & Plugins
 
@@ -293,8 +308,9 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] Image Processing
 - [x] Audio Processing
 - [x] MIME Detection
+- [x] Media Understanding (image/audio/video analysis, multi-provider)
 - [x] STT (Speech-to-Text)
-- [x] TTS (Text-to-Speech)
+- [x] TTS (Text-to-Speech, multi-provider with directives)
 - [x] Audio Streaming (WebSocket)
 - [x] ElevenLabs TTS
 - [x] Deepgram STT
@@ -305,6 +321,7 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 - [x] OAuth 2.0
 - [x] Token / Password Auth
 - [x] Device Pairing
+- [x] Node Pairing (peer-to-peer mesh with allowlist and setup codes)
 - [x] HMAC / SHA2 Crypto
 - [x] Audit Logging
 - [x] Multi-key Rotation (Auth Profiles)
@@ -321,35 +338,46 @@ Compared with the [Node OpenClaw](https://github.com/nicepkg/openclaw) reference
 ### Cron & Background
 
 - [x] Cron Scheduling & Persistence
+- [x] Backoff & Stagger
+- [x] Run Log & Telemetry
+- [x] Cron Event System
 - [x] Session Reaping
+- [x] Heartbeat System
 - [x] Process Monitoring
 - [x] Signal Handling
 
 ## Architecture
 
+23 crates organized as a Cargo workspace (edition 2024, resolver v2):
+
 ```
 crates/
-├── cli/            # CLI binary (oclaws)
-├── protocol/       # Frame-based wire protocol
-├── gateway-core/   # HTTP + WebSocket server, middleware, webhooks, Web UI
-├── agent-core/     # Agent orchestration, subagents, model fallback, echo detection, compaction
-├── llm-core/       # Multi-provider LLM integration (9 providers)
-├── channel-core/   # Messaging channel adapters (13 channels)
-├── tools-core/     # Tool execution framework
-├── storage-core/   # Database abstraction (SQLite/PG/vector), temporal decay, query expansion
-├── memory-core/    # Long-term memory, embedding search, file watch indexing
-├── config/         # Configuration management and validation
-├── plugin-core/    # Plugin system (HTTP routes, tool registration)
-├── skills-core/    # Skill registry, discovery, installation
-├── cron-core/      # Cron scheduling and persistence
-├── security-core/  # OAuth, crypto, audit
-├── sandbox-core/   # Sandboxed execution
-├── doctor-core/    # Health checks and diagnostics
-├── voice-core/     # Audio streaming (STT/TTS)
-├── media-core/     # Image/audio processing
-├── browser-core/   # Browser automation
-├── tui-core/       # Terminal UI (ratatui)
-└── daemon-core/    # Background service
+├── cli/                 # CLI binary (oclaws)
+├── protocol/            # Frame-based wire protocol
+├── gateway-core/        # HTTP + WebSocket server, middleware, webhooks, Web UI, memory pipeline
+├── agent-core/          # Agent orchestration, subagents, model fallback, echo detection, compaction
+├── llm-core/            # Multi-provider LLM integration (18 providers)
+├── channel-core/        # Messaging channel adapters (19 channels)
+├── tools-core/          # Tool execution framework, approval gates, profiles
+├── storage-core/        # Database abstraction (SQLite/PG/vector), temporal decay, query expansion
+├── memory-core/         # Long-term memory, embedding search, auto-capture, MMR reranking
+├── workspace-core/      # Agent workspace (SOUL.md, IDENTITY.md, heartbeat, memory flush, bootstrap)
+├── config/              # Configuration management, validation, migration
+├── plugin-core/         # Plugin system (HTTP routes, tool registration, hooks)
+├── skills-core/         # Skill registry, discovery, installation
+├── cron-core/           # Cron scheduling, persistence, backoff, telemetry
+├── security-core/       # OAuth, crypto, audit
+├── sandbox-core/        # Sandboxed execution
+├── doctor-core/         # Health checks and diagnostics
+├── voice-core/          # Audio streaming (STT/TTS)
+├── media-understanding/ # Image/audio/video analysis with multi-provider support
+├── tts-core/            # Text-to-speech synthesis (multi-provider, directives)
+├── acp/                 # Agent Communication Protocol (inter-agent messaging)
+├── auto-reply/          # Message processing pipeline (normalize → context → agent → dispatch)
+├── pairing/             # Device/node pairing with allowlist and setup codes
+├── browser-core/        # Browser automation (CDP)
+├── tui-core/            # Terminal UI (ratatui)
+└── daemon-core/         # Background service
 ```
 
 ## Development

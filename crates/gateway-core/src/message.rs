@@ -60,6 +60,24 @@ pub struct SessionInfo {
     pub message_count: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInfo {
+    pub id: String,
+    pub name: String,
+    pub model: String,
+    pub system_prompt: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMessage {
+    pub role: String,
+    pub content: String,
+    pub timestamp: i64,
+}
+
 /// SQLite-backed session manager. Sessions survive restarts.
 /// The inner Connection is wrapped in a Mutex so SessionManager is Send + Sync.
 pub struct SessionManager {
@@ -101,6 +119,24 @@ impl SessionManager {
                 updated_at INTEGER NOT NULL,
                 message_count INTEGER NOT NULL DEFAULT 0
             );",
+            // v2: agents table + session messages table
+            "CREATE TABLE IF NOT EXISTS agents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT 'default',
+                system_prompt TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS session_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_key TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                FOREIGN KEY (session_key) REFERENCES sessions(key) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_messages_key ON session_messages(session_key, id);",
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -114,19 +150,21 @@ impl SessionManager {
 
     pub fn create_session(&self, key: &str, agent_id: &str) -> Result<SessionInfo, String> {
         let now = chrono::Utc::now().timestamp_millis();
-        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        {
+            let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
 
-        // Use INSERT OR IGNORE to avoid overwriting existing sessions,
-        // then UPDATE to refresh the agent_id and updated_at timestamp.
-        db.execute(
-            "INSERT OR IGNORE INTO sessions (key, agent_id, created_at, updated_at, message_count) VALUES (?1, ?2, ?3, ?4, 0)",
-            rusqlite::params![key, agent_id, now, now],
-        ).map_err(|e| format!("Failed to create session: {}", e))?;
+            // Use INSERT OR IGNORE to avoid overwriting existing sessions,
+            // then UPDATE to refresh the agent_id and updated_at timestamp.
+            db.execute(
+                "INSERT OR IGNORE INTO sessions (key, agent_id, created_at, updated_at, message_count) VALUES (?1, ?2, ?3, ?4, 0)",
+                rusqlite::params![key, agent_id, now, now],
+            ).map_err(|e| format!("Failed to create session: {}", e))?;
 
-        db.execute(
-            "UPDATE sessions SET agent_id = ?1, updated_at = ?2 WHERE key = ?3",
-            rusqlite::params![agent_id, now, key],
-        ).map_err(|e| format!("Failed to update session: {}", e))?;
+            db.execute(
+                "UPDATE sessions SET agent_id = ?1, updated_at = ?2 WHERE key = ?3",
+                rusqlite::params![agent_id, now, key],
+            ).map_err(|e| format!("Failed to update session: {}", e))?;
+        } // drop lock before calling get_session
 
         // Return the actual session state (preserving message_count)
         self.get_session(key)?
@@ -180,6 +218,138 @@ impl SessionManager {
             rusqlite::params![count, now, key],
         ).ok();
         Ok(())
+    }
+
+    pub fn update_agent_id(&self, key: &str, agent_id: &str) -> Result<(), String> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        db.execute(
+            "UPDATE sessions SET agent_id = ?1, updated_at = ?2 WHERE key = ?3",
+            rusqlite::params![agent_id, now, key],
+        ).map_err(|e| format!("Failed to update agent_id: {}", e))?;
+        Ok(())
+    }
+
+    pub fn touch_session(&self, key: &str) -> Result<(), String> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        db.execute(
+            "UPDATE sessions SET updated_at = ?1 WHERE key = ?2",
+            rusqlite::params![now, key],
+        ).map_err(|e| format!("Failed to touch session: {}", e))?;
+        Ok(())
+    }
+
+    // ── Agent CRUD ──────────────────────────────────────────────────
+
+    pub fn create_agent(&self, id: &str, name: &str, model: &str, system_prompt: &str) -> Result<AgentInfo, String> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        db.execute(
+            "INSERT INTO agents (id, name, model, system_prompt, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, name, model, system_prompt, now, now],
+        ).map_err(|e| format!("Failed to create agent: {}", e))?;
+        Ok(AgentInfo { id: id.to_string(), name: name.to_string(), model: model.to_string(), system_prompt: system_prompt.to_string(), created_at: now, updated_at: now })
+    }
+
+    pub fn list_agents(&self) -> Result<Vec<AgentInfo>, String> {
+        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        let mut stmt = db.prepare(
+            "SELECT id, name, model, system_prompt, created_at, updated_at FROM agents ORDER BY created_at"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| Ok(AgentInfo {
+            id: row.get(0)?, name: row.get(1)?, model: row.get(2)?,
+            system_prompt: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)?,
+        })).map_err(|e| e.to_string())?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn update_agent(&self, id: &str, patch: &serde_json::Value) -> Result<(), String> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        if let Some(name) = patch["name"].as_str() {
+            db.execute("UPDATE agents SET name = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![name, now, id]).map_err(|e| e.to_string())?;
+        }
+        if let Some(model) = patch["model"].as_str() {
+            db.execute("UPDATE agents SET model = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![model, now, id]).map_err(|e| e.to_string())?;
+        }
+        if let Some(sp) = patch["systemPrompt"].as_str() {
+            db.execute("UPDATE agents SET system_prompt = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![sp, now, id]).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_agent(&self, id: &str) -> Result<(), String> {
+        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        db.execute("DELETE FROM agents WHERE id = ?1", rusqlite::params![id])
+            .map_err(|e| format!("Failed to delete agent: {}", e))?;
+        Ok(())
+    }
+
+    // ── Session Messages ────────────────────────────────────────────
+
+    pub fn add_message(&self, session_key: &str, role: &str, content: &str) -> Result<(), String> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        db.execute(
+            "INSERT INTO session_messages (session_key, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![session_key, role, content, now],
+        ).map_err(|e| format!("Failed to add message: {}", e))?;
+        db.execute(
+            "UPDATE sessions SET message_count = (SELECT COUNT(*) FROM session_messages WHERE session_key = ?1), updated_at = ?2 WHERE key = ?1",
+            rusqlite::params![session_key, now],
+        ).map_err(|e| format!("Failed to update message count: {}", e))?;
+        Ok(())
+    }
+
+    pub fn get_messages(&self, session_key: &str, limit: usize) -> Result<Vec<SessionMessage>, String> {
+        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        let mut stmt = db.prepare(
+            "SELECT role, content, timestamp FROM session_messages WHERE session_key = ?1 ORDER BY id DESC LIMIT ?2"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![session_key, limit as i64], |row| {
+            Ok(SessionMessage { role: row.get(0)?, content: row.get(1)?, timestamp: row.get(2)? })
+        }).map_err(|e| e.to_string())?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn clear_messages(&self, session_key: &str) -> Result<(), String> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        db.execute("DELETE FROM session_messages WHERE session_key = ?1", rusqlite::params![session_key])
+            .map_err(|e| format!("Failed to clear messages: {}", e))?;
+        db.execute(
+            "UPDATE sessions SET message_count = 0, updated_at = ?1 WHERE key = ?2",
+            rusqlite::params![now, session_key],
+        ).map_err(|e| format!("Failed to update session: {}", e))?;
+        Ok(())
+    }
+
+    pub fn compact_messages(&self, session_key: &str, max_messages: usize) -> Result<(i64, i64), String> {
+        let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        let total: i64 = db.query_row(
+            "SELECT COUNT(*) FROM session_messages WHERE session_key = ?1",
+            rusqlite::params![session_key], |r| r.get(0),
+        ).map_err(|e| e.to_string())?;
+        if total as usize > max_messages {
+            let to_delete = total - max_messages as i64;
+            db.execute(
+                "DELETE FROM session_messages WHERE id IN (SELECT id FROM session_messages WHERE session_key = ?1 ORDER BY id ASC LIMIT ?2)",
+                rusqlite::params![session_key, to_delete],
+            ).map_err(|e| e.to_string())?;
+            let now = chrono::Utc::now().timestamp_millis();
+            let new_count = total - to_delete;
+            db.execute(
+                "UPDATE sessions SET message_count = ?1, updated_at = ?2 WHERE key = ?3",
+                rusqlite::params![new_count, now, session_key],
+            ).map_err(|e| e.to_string())?;
+            Ok((total, new_count))
+        } else {
+            Ok((total, total))
+        }
     }
 
     /// Remove sessions not updated within `max_age_ms` milliseconds.

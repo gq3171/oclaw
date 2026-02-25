@@ -1,4 +1,5 @@
 use crate::traits::*;
+use crate::types::*;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -369,6 +370,135 @@ impl Channel for TelegramChannel {
         Ok(format!("{}_{}", chat_id, last_id))
     }
 
+    fn capabilities(&self) -> ChannelCapabilities {
+        ChannelCapabilities {
+            reactions: true,
+            threads: true,
+            polls: true,
+            media: true,
+            typing_indicator: true,
+            deletion: true,
+            editing: true,
+            directory: true,
+            ..Default::default()
+        }
+    }
+
+    async fn send_thread_reply(&self, thread_id: &str, message: &ChannelMessage) -> ChannelResult<String> {
+        let chat_id = message.metadata.get("chat_id")
+            .or_else(|| message.metadata.get("recipient"))
+            .cloned()
+            .ok_or_else(|| ChannelError::MessageError("Chat ID not specified".into()))?;
+        let thread_id_num: i64 = thread_id.parse()
+            .map_err(|_| ChannelError::MessageError("Invalid thread_id".into()))?;
+        let body = serde_json::json!({
+            "chat_id": chat_id,
+            "text": message.content,
+            "message_thread_id": thread_id_num,
+            "parse_mode": "Markdown",
+        });
+        let resp = self.send_api_request("sendMessage", Some(&body)).await?;
+        Ok(resp.get("message_id").and_then(|m| m.as_i64())
+            .map(|id| id.to_string()).unwrap_or_default())
+    }
+
+    async fn send_media(&self, target: &str, media: &ChannelMedia) -> ChannelResult<String> {
+        let url_or_id = match &media.data {
+            MediaData::Url(u) => u.clone(),
+            MediaData::FileId(id) => id.clone(),
+            MediaData::Bytes(_) => return Err(ChannelError::UnsupportedOperation(
+                "Telegram send_media with raw bytes not yet supported".into(),
+            )),
+        };
+        let caption = media.caption.as_deref();
+        let resp = match media.media_type {
+            MediaType::Photo => self.send_photo(target, &url_or_id, caption, None).await?,
+            MediaType::Audio => self.send_audio(target, &url_or_id, caption, None).await?,
+            MediaType::Voice => self.send_voice(target, &url_or_id, caption, None).await?,
+            MediaType::Video => self.send_video(target, &url_or_id, caption, None).await?,
+            MediaType::Document | MediaType::File => self.send_document(target, &url_or_id, caption, None).await?,
+            MediaType::Sticker => self.send_sticker(target, &url_or_id, None).await?,
+        };
+        Ok(resp.get("message_id").and_then(|m| m.as_i64())
+            .map(|id| id.to_string()).unwrap_or_default())
+    }
+
+    async fn download_media(&self, media_id: &str) -> ChannelResult<Vec<u8>> {
+        let download_url = self.get_file(media_id).await?;
+        let client = self.client.as_ref()
+            .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".into()))?;
+        let bytes = client.get(&download_url).send().await
+            .map_err(|e| ChannelError::ConnectionError(e.to_string()))?
+            .bytes().await
+            .map_err(|e| ChannelError::MessageError(e.to_string()))?;
+        Ok(bytes.to_vec())
+    }
+
+    async fn edit_message(&self, message_id: &str, content: &str) -> ChannelResult<()> {
+        // message_id format: "chatId_messageId"
+        let parts: Vec<&str> = message_id.splitn(2, '_').collect();
+        if parts.len() != 2 {
+            return Err(ChannelError::MessageError("Invalid message_id format, expected chatId_messageId".into()));
+        }
+        let body = serde_json::json!({
+            "chat_id": parts[0],
+            "message_id": parts[1].parse::<i64>().map_err(|_| ChannelError::MessageError("Invalid message id".into()))?,
+            "text": content,
+            "parse_mode": "Markdown",
+        });
+        self.send_api_request("editMessageText", Some(&body)).await?;
+        Ok(())
+    }
+
+    async fn delete_message(&self, message_id: &str) -> ChannelResult<()> {
+        let parts: Vec<&str> = message_id.splitn(2, '_').collect();
+        if parts.len() != 2 {
+            return Err(ChannelError::MessageError("Invalid message_id format, expected chatId_messageId".into()));
+        }
+        let body = serde_json::json!({
+            "chat_id": parts[0],
+            "message_id": parts[1].parse::<i64>().map_err(|_| ChannelError::MessageError("Invalid message id".into()))?,
+        });
+        self.send_api_request("deleteMessage", Some(&body)).await?;
+        Ok(())
+    }
+
+    async fn send_poll(&self, target: &str, poll: &PollRequest) -> ChannelResult<String> {
+        let options: Vec<serde_json::Value> = poll.options.iter()
+            .take(10)
+            .map(|o| serde_json::json!({"text": o}))
+            .collect();
+        let body = serde_json::json!({
+            "chat_id": target,
+            "question": poll.question,
+            "options": options,
+            "is_anonymous": poll.is_anonymous,
+            "allows_multiple_answers": poll.allows_multiple,
+        });
+        let resp = self.send_api_request("sendPoll", Some(&body)).await?;
+        Ok(resp.get("message_id").and_then(|m| m.as_i64())
+            .map(|id| id.to_string()).unwrap_or_default())
+    }
+
+    async fn list_members(&self, group_id: &str) -> ChannelResult<Vec<ChannelAccount>> {
+        let body = serde_json::json!({"chat_id": group_id});
+        let resp = self.send_api_request("getChatAdministrators", Some(&body)).await?;
+        let members = resp.as_array()
+            .ok_or_else(|| ChannelError::MessageError("Unexpected response format".into()))?;
+        Ok(members.iter().filter_map(|m| {
+            let user = m.get("user")?;
+            Some(ChannelAccount {
+                id: user.get("id")?.as_i64()?.to_string(),
+                name: user.get("username").and_then(|u| u.as_str())
+                    .or_else(|| user.get("first_name").and_then(|f| f.as_str()))
+                    .unwrap_or("unknown").to_string(),
+                channel: "telegram".to_string(),
+                avatar: None,
+                status: m.get("status").and_then(|s| s.as_str()).map(|s| s.to_string()),
+            })
+        }).collect())
+    }
+
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
         Ok(Box::new(TelegramSender {
             channel: Arc::new(RwLock::new(self.clone())),
@@ -413,6 +543,13 @@ impl MessageSender for TelegramSender {
     }
 }
 
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() { return s.len(); }
+    let mut i = index;
+    while i > 0 && !s.is_char_boundary(i) { i -= 1; }
+    i
+}
+
 fn split_message(text: &str, max_len: usize) -> Vec<String> {
     if text.len() <= max_len {
         return vec![text.to_string()];
@@ -424,10 +561,11 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
             chunks.push(remaining.to_string());
             break;
         }
+        let safe_max = floor_char_boundary(remaining, max_len);
         // Try to split at last newline within limit
-        let split_at = remaining[..max_len]
+        let split_at = remaining[..safe_max]
             .rfind('\n')
-            .unwrap_or(max_len);
+            .unwrap_or(safe_max);
         chunks.push(remaining[..split_at].to_string());
         remaining = remaining[split_at..].trim_start_matches('\n');
     }

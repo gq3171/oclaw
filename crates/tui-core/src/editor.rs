@@ -1,4 +1,6 @@
 /// Multi-line text editor with cursor, history, and basic editing.
+use unicode_width::UnicodeWidthChar;
+
 pub struct TextEditor {
     lines: Vec<String>,
     cursor_row: usize,
@@ -30,6 +32,15 @@ impl TextEditor {
 
     pub fn cursor(&self) -> (usize, usize) {
         (self.cursor_row, self.cursor_col)
+    }
+
+    /// Return display width of cursor column (accounts for wide chars like CJK).
+    pub fn display_col(&self) -> usize {
+        let line = &self.lines[self.cursor_row];
+        line.chars()
+            .take(self.cursor_col)
+            .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
+            .sum()
     }
 
     pub fn lines(&self) -> &[String] {

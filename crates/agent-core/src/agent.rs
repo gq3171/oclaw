@@ -331,19 +331,11 @@ impl Agent {
         }
         const MIN_KEEP: usize = 2_000;
         let keep = max_chars.saturating_sub(TRUNCATION_SUFFIX.len()).max(MIN_KEEP);
+        let keep = crate::str_util::floor_char_boundary(s, keep);
         let cut = s[..keep].rfind('\n')
             .filter(|&i| i > keep * 4 / 5)
             .unwrap_or(keep);
         format!("{}{}", &s[..cut], TRUNCATION_SUFFIX)
-    }
-
-    fn _is_context_overflow(err: &str) -> bool {
-        let e = err.to_lowercase();
-        e.contains("context length exceeded")
-            || e.contains("maximum context")
-            || e.contains("too many tokens")
-            || e.contains("content_too_large")
-            || e.contains("request too large")
     }
 
     /// Chat with exponential backoff retry within the tool loop.
@@ -415,7 +407,7 @@ impl Agent {
             return;
         };
         let content = &self.history[idx].content;
-        let half = content.len() / 2;
+        let half = crate::str_util::floor_char_boundary(content, content.len() / 2);
         let cut = content[..half].rfind('\n').unwrap_or(half);
         let truncated = format!(
             "{}...\n[truncated for context limit, {} chars total]",

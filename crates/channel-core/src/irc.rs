@@ -195,6 +195,24 @@ impl Channel for IrcChannel {
             channel: Arc::new(RwLock::new(self.clone())),
         }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // IRC bridge: /message, /nick, /channel
+        let text = payload.get("message")
+            .and_then(|v| v.as_str())?;
+        let chat_id = payload.get("channel")
+            .or_else(|| payload.get("nick"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let is_group = payload.get("channel").is_some();
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: chat_id.to_string(),
+            is_group,
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
 }
 
 impl Clone for IrcChannel {

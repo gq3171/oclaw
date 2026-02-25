@@ -198,6 +198,32 @@ impl Channel for LineChannel {
             channel: Arc::new(RwLock::new(self.clone())),
         }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // LINE: /events/0/message/text
+        let event = payload.pointer("/events/0")?;
+        let text = event.pointer("/message/text")
+            .and_then(|v| v.as_str())?;
+        let source = event.get("source")?;
+        let source_type = source.get("type").and_then(|v| v.as_str()).unwrap_or("user");
+        let chat_id = source.get("groupId")
+            .or_else(|| source.get("roomId"))
+            .or_else(|| source.get("userId"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let is_group = source_type == "group" || source_type == "room";
+        let mut metadata = HashMap::new();
+        if let Some(token) = event.get("replyToken").and_then(|v| v.as_str()) {
+            metadata.insert("reply_token".to_string(), token.to_string());
+        }
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: chat_id.to_string(),
+            is_group,
+            has_mention: false,
+            metadata,
+        })
+    }
 }
 
 impl Clone for LineChannel {

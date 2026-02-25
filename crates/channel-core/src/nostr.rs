@@ -196,6 +196,22 @@ impl Channel for NostrChannel {
             channel: Arc::new(RwLock::new(self.clone())),
         }))
     }
+
+    fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
+        // Nostr event: /content, /pubkey
+        let text = payload.get("content")
+            .and_then(|v| v.as_str())?;
+        let pubkey = payload.get("pubkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        Some(WebhookMessage {
+            text: text.to_string(),
+            chat_id: pubkey.to_string(),
+            is_group: false,
+            has_mention: false,
+            metadata: HashMap::new(),
+        })
+    }
 }
 
 impl Clone for NostrChannel {
