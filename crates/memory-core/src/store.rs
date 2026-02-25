@@ -16,7 +16,7 @@ impl MemoryStore {
     pub fn default_path() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(".oclaws")
+            .join(".oclaw")
             .join("memory.db")
     }
 

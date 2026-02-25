@@ -20,13 +20,13 @@ impl ConfigManager {
         {
             let app_data = std::env::var("APPDATA")
                 .map_err(|_| ConfigError::InvalidPath("APPDATA not found".to_string()))?;
-            Ok(PathBuf::from(app_data).join("oclaws"))
+            Ok(PathBuf::from(app_data).join("oclaw"))
         }
         #[cfg(not(target_os = "windows"))]
         {
             let home = dirs::home_dir()
                 .ok_or_else(|| ConfigError::InvalidPath("HOME not found".to_string()))?;
-            Ok(home.join(".oclaws"))
+            Ok(home.join(".oclaw"))
         }
     }
 

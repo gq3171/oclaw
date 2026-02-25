@@ -4,7 +4,7 @@ use std::path::PathBuf;
 fn main() {
     let path = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".oclaws")
+        .join(".oclaw")
         .join("memory.db");
 
     println!("DB path: {:?}", path);
