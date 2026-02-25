@@ -24,7 +24,7 @@ pub fn compute_next_run(schedule: &CronScheduleKind, now_ms: u64) -> Option<u64>
             use std::str::FromStr;
             let sched = Schedule::from_str(expr).ok()?;
             let now_dt = chrono::DateTime::from_timestamp_millis(now_ms as i64)?;
-            let next = sched.upcoming(chrono::Utc).next()?;
+            let next = sched.after(&now_dt).next()?;
             Some(next.timestamp_millis() as u64)
         }
     }

@@ -2,17 +2,12 @@
 /// activation mode (mention vs always) and mention detection.
 use regex::Regex;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GroupActivation {
+    #[default]
     Mention,
     Always,
-}
-
-impl Default for GroupActivation {
-    fn default() -> Self {
-        Self::Mention
-    }
 }
 
 pub fn normalize_activation(raw: Option<&str>) -> Option<GroupActivation> {
@@ -28,10 +23,10 @@ pub fn build_mention_patterns(name: Option<&str>, extra: &[String]) -> Vec<Regex
     let mut patterns = Vec::new();
     if let Some(n) = name {
         let escaped = regex::escape(n.trim());
-        if !escaped.is_empty() {
-            if let Ok(re) = Regex::new(&format!(r"(?i)\b@?{}\b", escaped)) {
-                patterns.push(re);
-            }
+        if !escaped.is_empty()
+            && let Ok(re) = Regex::new(&format!(r"(?i)\b@?{}\b", escaped))
+        {
+            patterns.push(re);
         }
     }
     for p in extra {

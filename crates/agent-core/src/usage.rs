@@ -24,9 +24,9 @@ impl UsageAccumulator {
 
     /// Record usage from a single LLM call.
     pub fn record(&mut self, usage: &oclaws_llm_core::chat::Usage) {
-        self.inner.input_tokens += usage.prompt_tokens as i64;
-        self.inner.output_tokens += usage.completion_tokens as i64;
-        self.inner.total_calls += 1;
+        self.inner.input_tokens = self.inner.input_tokens.saturating_add(usage.prompt_tokens as i64);
+        self.inner.output_tokens = self.inner.output_tokens.saturating_add(usage.completion_tokens as i64);
+        self.inner.total_calls = self.inner.total_calls.saturating_add(1);
     }
 
     /// Record usage with optional cache fields.
@@ -37,11 +37,11 @@ impl UsageAccumulator {
         cache_read: i64,
         cache_write: i64,
     ) {
-        self.inner.input_tokens += input;
-        self.inner.output_tokens += output;
-        self.inner.cache_read_tokens += cache_read;
-        self.inner.cache_write_tokens += cache_write;
-        self.inner.total_calls += 1;
+        self.inner.input_tokens = self.inner.input_tokens.saturating_add(input);
+        self.inner.output_tokens = self.inner.output_tokens.saturating_add(output);
+        self.inner.cache_read_tokens = self.inner.cache_read_tokens.saturating_add(cache_read);
+        self.inner.cache_write_tokens = self.inner.cache_write_tokens.saturating_add(cache_write);
+        self.inner.total_calls = self.inner.total_calls.saturating_add(1);
     }
 
     /// Add estimated cost (caller computes based on model pricing).
@@ -59,8 +59,8 @@ impl UsageAccumulator {
         self.inner = UsageSummary::default();
     }
 
-    /// Total tokens (input + output).
+    /// Total tokens (input + output), saturating to avoid overflow.
     pub fn total_tokens(&self) -> i64 {
-        self.inner.input_tokens + self.inner.output_tokens
+        self.inner.input_tokens.saturating_add(self.inner.output_tokens)
     }
 }

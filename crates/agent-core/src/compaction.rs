@@ -90,6 +90,11 @@ pub async fn compact_history(
     messages: &[ChatMessage],
     config: &CompactionConfig,
 ) -> Result<CompactionResult> {
+    // Preserve the system prompt so it survives compaction
+    let system_prompt = messages.iter()
+        .find(|m| m.role == MessageRole::System)
+        .cloned();
+
     // Split: old (to summarize) vs recent (to keep)
     let mut recent_tokens = 0usize;
     let mut split_idx = messages.len();
@@ -101,7 +106,8 @@ pub async fn compact_history(
         }
         recent_tokens += t;
     }
-    if split_idx == 0 { split_idx = 1; }
+    // Never summarize away the system prompt (index 0)
+    if split_idx <= 1 { split_idx = 1; }
 
     let old = &messages[..split_idx];
     let kept = messages[split_idx..].to_vec();
@@ -124,12 +130,26 @@ pub async fn compact_history(
 
     let summary_text = generate_summary(provider, request, &config.retry).await?;
 
-    Ok(CompactionResult {
-        summary: ChatMessage {
-            role: MessageRole::System,
-            content: format!("[Conversation summary]\n{}", summary_text),
-            name: None, tool_calls: None, tool_call_id: None,
-        },
-        kept_messages: kept,
-    })
+    // Build result: preserve original system prompt, then add summary, then kept messages
+    let summary_msg = ChatMessage {
+        role: MessageRole::System,
+        content: format!("[Conversation summary]\n{}", summary_text),
+        name: None, tool_calls: None, tool_call_id: None,
+    };
+
+    if let Some(sys) = system_prompt {
+        // Return the original system prompt as the "summary" (it goes first),
+        // and prepend the actual summary to kept_messages.
+        let mut kept_with_summary = vec![summary_msg];
+        kept_with_summary.extend(kept);
+        Ok(CompactionResult {
+            summary: sys,
+            kept_messages: kept_with_summary,
+        })
+    } else {
+        Ok(CompactionResult {
+            summary: summary_msg,
+            kept_messages: kept,
+        })
+    }
 }

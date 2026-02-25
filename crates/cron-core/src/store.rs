@@ -1,5 +1,5 @@
 use crate::types::CronJob;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct CronStore {
     path: PathBuf,

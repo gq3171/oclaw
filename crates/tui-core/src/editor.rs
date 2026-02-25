@@ -1,5 +1,4 @@
 /// Multi-line text editor with cursor, history, and basic editing.
-
 pub struct TextEditor {
     lines: Vec<String>,
     cursor_row: usize,
@@ -182,10 +181,10 @@ impl TextEditor {
     }
 
     fn load_history_entry(&mut self) {
-        if let Some(i) = self.history_index {
-            if let Some(entry) = self.history.get(i) {
-                self.set_text(&entry.clone());
-            }
+        if let Some(i) = self.history_index
+            && let Some(entry) = self.history.get(i)
+        {
+            self.set_text(&entry.clone());
         }
     }
 

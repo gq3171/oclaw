@@ -6,10 +6,10 @@ use tokio::time::{Duration, Instant};
 /// Throttled draft-streaming loop for channels that support message editing.
 /// Accumulates text and periodically flushes to a sender callback.
 pub struct DraftStreamLoop {
-    throttle: Duration,
-    buffer: Arc<Mutex<String>>,
-    tx: mpsc::Sender<String>,
-    stopped: Arc<AtomicBool>,
+    _throttle: Duration,
+    _buffer: Arc<Mutex<String>>,
+    _tx: mpsc::Sender<String>,
+    _stopped: Arc<AtomicBool>,
 }
 
 pub struct DraftStreamHandle {
@@ -32,7 +32,7 @@ impl DraftStreamLoop {
         let throttle = Duration::from_millis(throttle_ms);
 
         let task = tokio::spawn(async move {
-            let mut last_flush = Instant::now();
+            let mut _last_flush = Instant::now();
             loop {
                 tokio::time::sleep(throttle).await;
 
@@ -56,7 +56,7 @@ impl DraftStreamLoop {
                     std::mem::take(&mut *buf)
                 };
                 let _ = loop_tx.send(text).await;
-                last_flush = Instant::now();
+                _last_flush = Instant::now();
             }
         });
 

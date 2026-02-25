@@ -138,6 +138,9 @@ impl MemoryManager {
             return chunks;
         }
 
+        // Clamp overlap to at most chunk_size - 1 to guarantee forward progress
+        let safe_overlap = self.chunk_overlap.min(self.chunk_size.saturating_sub(1));
+
         let mut start = 0;
         while start < total {
             let end = (start + self.chunk_size).min(total);
@@ -158,7 +161,7 @@ impl MemoryManager {
             if end >= total {
                 break;
             }
-            start = end.saturating_sub(self.chunk_overlap);
+            start = end.saturating_sub(safe_overlap);
         }
         chunks
     }
@@ -179,6 +182,13 @@ impl MemoryManager {
 
         for batch in texts.chunks(batch_size) {
             let embs = provider.embed(batch).await?;
+            if embs.len() != batch.len() {
+                anyhow::bail!(
+                    "Embedding provider returned {} vectors for {} texts",
+                    embs.len(),
+                    batch.len()
+                );
+            }
             all_embeddings.extend(embs);
         }
 

@@ -25,12 +25,14 @@ pub enum ErrorClass {
 pub fn classify_error(err: &str) -> ErrorClass {
     let lower = err.to_lowercase();
 
-    // Rate limiting
+    // Rate limiting (including AWS Bedrock ThrottlingException)
     if lower.contains("rate limit")
         || lower.contains("rate_limit")
         || lower.contains("429")
         || lower.contains("too many requests")
         || lower.contains("quota exceeded")
+        || lower.contains("throttlingexception")
+        || lower.contains("throttling")
     {
         return ErrorClass::RateLimit;
     }

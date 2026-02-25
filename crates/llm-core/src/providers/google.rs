@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 
 use crate::chat::{ChatMessage, ChatRequest, ChatCompletion, StreamChunk, StreamChoice, MessageRole};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
@@ -207,7 +206,10 @@ impl LlmProvider for GoogleProvider {
 
                     let json: serde_json::Value = match serde_json::from_str(data) {
                         Ok(v) => v,
-                        Err(_) => continue,
+                        Err(e) => {
+                            tracing::debug!("Google stream: failed to parse SSE data: {}", e);
+                            continue;
+                        }
                     };
 
                     let text = json["candidates"][0]["content"]["parts"][0]["text"]
@@ -236,6 +238,38 @@ impl LlmProvider for GoogleProvider {
 
                     if tx.send(Ok(chunk)).await.is_err() { return; }
                 }
+            }
+
+            // Process any remaining data in buffer after stream ends
+            for line in buffer.lines() {
+                let line = line.trim();
+                let Some(data) = line.strip_prefix("data: ") else { continue };
+                if data.is_empty() { continue; }
+                let json: serde_json::Value = match serde_json::from_str(data) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let text = json["candidates"][0]["content"]["parts"][0]["text"]
+                    .as_str().unwrap_or("").to_string();
+                if text.is_empty() { continue; }
+                let finish = json["candidates"][0]["finishReason"]
+                    .as_str().map(|s| s.to_lowercase());
+                let chunk = StreamChunk {
+                    id: "gemini-stream".to_string(),
+                    object: "chat.completion.chunk".to_string(),
+                    created: 0,
+                    model: model.clone(),
+                    choices: vec![StreamChoice {
+                        index: 0,
+                        delta: Some(ChatMessage {
+                            role: MessageRole::Assistant,
+                            content: text,
+                            name: None, tool_calls: None, tool_call_id: None,
+                        }),
+                        finish_reason: finish,
+                    }],
+                };
+                if tx.send(Ok(chunk)).await.is_err() { return; }
             }
         });
 

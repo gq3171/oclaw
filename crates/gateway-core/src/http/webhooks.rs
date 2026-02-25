@@ -34,6 +34,24 @@ fn verify_feishu_signature(encrypt_key: &str, timestamp: &str, body: &str, expec
     constant_time_eq(hash.as_bytes(), expected_sig.as_bytes())
 }
 
+/// Verify Discord webhook signature (Ed25519).
+fn verify_discord_signature(public_key_hex: &str, signature_hex: &str, timestamp: &str, body: &str) -> bool {
+    use ed25519_dalek::{Signature, VerifyingKey, Verifier};
+
+    let Ok(key_bytes) = hex::decode(public_key_hex) else { return false };
+    let Ok(sig_bytes) = hex::decode(signature_hex) else { return false };
+
+    let key_arr: [u8; 32] = match key_bytes.try_into() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&key_arr) else { return false };
+    let Ok(signature) = Signature::from_slice(&sig_bytes) else { return false };
+
+    let message = format!("{}{}", timestamp, body);
+    verifying_key.verify(message.as_bytes(), &signature).is_ok()
+}
+
 /// Verify Telegram secret_token header.
 fn verify_telegram_secret(expected: &str, actual: &str) -> bool {
     constant_time_eq(expected.as_bytes(), actual.as_bytes())
@@ -65,7 +83,10 @@ async fn get_channel_and_forward(
     let mgr = manager.read().await;
     let channel = match mgr.get(channel_name).await {
         Some(c) => c,
-        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("Channel '{}' not found", channel_name)}))).into_response(),
+        None => {
+            tracing::warn!("Webhook for unregistered channel '{}'", channel_name);
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("Channel '{}' not found", channel_name)}))).into_response();
+        }
     };
     let ch = channel.read().await;
     match ch.handle_event(event).await {
@@ -114,8 +135,14 @@ pub async fn telegram_webhook(
 
     if let (Some(chat_id), Some(text)) = (chat_id, text) {
         let is_echo = state.echo_tracker.lock().await.has(&text);
-        // Telegram: check for @bot mention in text for group gating
-        let has_mention = text.contains('@');
+        // Telegram: check for @bot mention via entities (type=mention or bot_command)
+        // This is more accurate than naive text.contains('@') which matches any @ symbol
+        let has_mention = payload.pointer("/message/entities")
+            .and_then(|v| v.as_array())
+            .is_some_and(|arr| arr.iter().any(|e| {
+                let t = e["type"].as_str().unwrap_or("");
+                t == "mention" || t == "bot_command"
+            }));
         let should = group_gate::should_process(is_group, state.group_activation, has_mention);
 
         if !is_echo && should {
@@ -216,6 +243,18 @@ pub async fn slack_webhook(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
 
+        // Reject requests older than 5 minutes to prevent replay attacks
+        if let Ok(ts) = timestamp.parse::<i64>() {
+            let now = chrono::Utc::now().timestamp();
+            if (now - ts).unsigned_abs() > 300 {
+                warn!("Slack webhook: timestamp too old (replay attack?)");
+                return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Request too old"}))).into_response();
+            }
+        } else {
+            warn!("Slack webhook: missing or invalid timestamp");
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid timestamp"}))).into_response();
+        }
+
         if !verify_slack_signature(&signing_secret, timestamp, &body_str, signature) {
             warn!("Slack webhook: invalid signature");
             return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid signature"}))).into_response();
@@ -235,13 +274,14 @@ pub async fn slack_webhook(
         return Json(serde_json::json!({"challenge": challenge})).into_response();
     }
 
-    // Inject Slack signature headers into payload for downstream HMAC verification
+    // Inject Slack signature headers + raw body into payload for downstream verification
     if let Some(ts) = headers.get("x-slack-request-timestamp").and_then(|v| v.to_str().ok()) {
         payload["_slack_timestamp"] = serde_json::json!(ts);
     }
     if let Some(sig) = headers.get("x-slack-signature").and_then(|v| v.to_str().ok()) {
         payload["_slack_signature"] = serde_json::json!(sig);
     }
+    payload["_slack_raw_body"] = serde_json::json!(body_str);
 
     let event_type = payload.get("event").and_then(|e| e.get("type")).and_then(|t| t.as_str()).unwrap_or("event");
     info!("Slack webhook: {}", event_type);
@@ -255,8 +295,40 @@ pub async fn slack_webhook(
 
 pub async fn discord_webhook(
     State(state): State<Arc<HttpState>>,
-    Json(payload): Json<serde_json::Value>,
+    headers: HeaderMap,
+    raw_body: axum::body::Bytes,
 ) -> Response {
+    let body_str = String::from_utf8_lossy(&raw_body).to_string();
+
+    // Verify Discord signature (Ed25519) if public key is configured
+    if let Ok(public_key) = std::env::var("DISCORD_PUBLIC_KEY") {
+        let signature = headers
+            .get("x-signature-ed25519")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let timestamp = headers
+            .get("x-signature-timestamp")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        if signature.is_empty() || timestamp.is_empty() {
+            warn!("Discord webhook: missing signature or timestamp");
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Missing signature"}))).into_response();
+        }
+
+        if !verify_discord_signature(&public_key, signature, timestamp, &body_str) {
+            warn!("Discord webhook: invalid signature");
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid signature"}))).into_response();
+        }
+    }
+
+    let payload: serde_json::Value = match serde_json::from_str(&body_str) {
+        Ok(v) => v,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
     // Handle Discord PING interaction (type 1)
     if payload.get("type").and_then(|t| t.as_u64()) == Some(1) {
         return Json(serde_json::json!({"type": 1})).into_response();
@@ -289,9 +361,11 @@ pub async fn feishu_webhook(
             .unwrap_or("");
         let body_str = serde_json::to_string(&payload).unwrap_or_default();
 
-        if !signature.is_empty()
-            && !verify_feishu_signature(&encrypt_key, timestamp, &body_str, signature)
-        {
+        if signature.is_empty() || timestamp.is_empty() {
+            warn!("Feishu webhook: missing signature or timestamp");
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Missing signature"}))).into_response();
+        }
+        if !verify_feishu_signature(&encrypt_key, timestamp, &body_str, signature) {
             warn!("Feishu webhook: invalid signature");
             return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid signature"}))).into_response();
         }

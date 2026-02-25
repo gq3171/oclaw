@@ -68,11 +68,9 @@ impl EmbeddingProvider for OpenAIEmbedding {
 
 /// Factory: create an embedding provider from config.
 pub fn create_embedding_provider(
-    provider: &str,
+    _provider: &str,
     api_key: &str,
     model: Option<&str>,
 ) -> Box<dyn EmbeddingProvider> {
-    match provider {
-        "openai" | _ => Box::new(OpenAIEmbedding::new(api_key, model)),
-    }
+    Box::new(OpenAIEmbedding::new(api_key, model))
 }

@@ -3,19 +3,14 @@
 use oclaws_llm_core::chat::ChatMessage;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningLevel {
+    #[default]
     Off,
     Low,
     Medium,
     High,
-}
-
-impl Default for ReasoningLevel {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 #[derive(Debug, Clone, Default)]

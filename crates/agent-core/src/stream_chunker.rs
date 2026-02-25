@@ -104,16 +104,21 @@ impl StreamChunker {
     }
 
     fn find_paragraph_break(&self, buf: &str, spans: &[FenceSpan]) -> Option<usize> {
-        // Search backwards for \n\n
+        // Search backwards for \n\n, jumping past unsafe positions
         let mut i = buf.len();
         while i > self.config.min_chars {
-            if let Some(pos) = buf[..i].rfind("\n\n")
-                && pos >= self.config.min_chars && is_safe_fence_break(spans, pos)
-            {
-                return Some(pos);
+            if let Some(pos) = buf[..i].rfind("\n\n") {
+                if pos < self.config.min_chars {
+                    break;
+                }
+                if is_safe_fence_break(spans, pos) {
+                    return Some(pos);
+                }
+                // Jump to before this match to find the next one
+                i = pos;
+            } else {
+                break;
             }
-            i = i.saturating_sub(1);
-            if i <= self.config.min_chars { break; }
         }
         None
     }
@@ -121,13 +126,17 @@ impl StreamChunker {
     fn find_newline_break(&self, buf: &str, spans: &[FenceSpan]) -> Option<usize> {
         let mut i = buf.len();
         while i > self.config.min_chars {
-            if let Some(pos) = buf[..i].rfind('\n')
-                && pos >= self.config.min_chars && is_safe_fence_break(spans, pos)
-            {
-                return Some(pos);
+            if let Some(pos) = buf[..i].rfind('\n') {
+                if pos < self.config.min_chars {
+                    break;
+                }
+                if is_safe_fence_break(spans, pos) {
+                    return Some(pos);
+                }
+                i = pos;
+            } else {
+                break;
             }
-            i = i.saturating_sub(1);
-            if i <= self.config.min_chars { break; }
         }
         None
     }

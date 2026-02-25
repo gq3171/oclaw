@@ -72,18 +72,18 @@ impl ToolExecutor for ToolRegistryExecutor {
         }).collect();
 
         // Merge plugin tools (blocking read via try_read to avoid async in sync fn)
-        if let Some(regs) = &self.plugin_regs {
-            if let Ok(plugin_tools) = regs.tools.try_read() {
-                for pt in plugin_tools.iter() {
-                    tools.push(Tool {
-                        type_: "function".into(),
-                        function: ToolFunction {
-                            name: pt.name.clone(),
-                            description: pt.description.clone(),
-                            parameters: pt.input_schema.clone(),
-                        },
-                    });
-                }
+        if let Some(regs) = &self.plugin_regs
+            && let Ok(plugin_tools) = regs.tools.try_read()
+        {
+            for pt in plugin_tools.iter() {
+                tools.push(Tool {
+                    type_: "function".into(),
+                    function: ToolFunction {
+                        name: pt.name.clone(),
+                        description: pt.description.clone(),
+                        parameters: pt.input_schema.clone(),
+                    },
+                });
             }
         }
 

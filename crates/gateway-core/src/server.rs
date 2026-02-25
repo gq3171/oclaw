@@ -59,6 +59,27 @@ impl GatewayServer {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let mut connections = JoinSet::new();
 
+        // Periodic session cleanup: every 10 minutes, remove sessions idle > 24h
+        let cleanup_sm = Arc::clone(&session_manager);
+        let mut cleanup_shutdown = self.shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let mgr = cleanup_sm.read().await;
+                        let max_age_ms = 24 * 60 * 60 * 1000; // 24 hours
+                        match mgr.cleanup_stale(max_age_ms) {
+                            Ok(n) if n > 0 => info!("Cleaned up {} stale sessions", n),
+                            Err(e) => error!("Session cleanup failed: {}", e),
+                            _ => {}
+                        }
+                    }
+                    _ = cleanup_shutdown.recv() => break,
+                }
+            }
+        });
+
         loop {
             tokio::select! {
                 result = listener.accept() => {
@@ -174,17 +195,25 @@ async fn handle_connection(
             msg = read.next() => {
                 match msg {
                     Some(Ok(Message::Binary(data))) => {
+                        const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024; // 2 MB
+                        if data.len() > MAX_FRAME_BYTES {
+                            error!("Frame too large ({} bytes), dropping", data.len());
+                            break;
+                        }
                         let frame: GatewayFrame = serde_json::from_slice(&data).map_err(|e| {
                             GatewayError::InvalidFrame(e.to_string())
                         })?;
-                        
                         handle_frame(frame, &mut write, &session_manager).await?;
                     }
                     Some(Ok(Message::Text(text))) => {
+                        const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
+                        if text.len() > MAX_FRAME_BYTES {
+                            error!("Frame too large ({} bytes), dropping", text.len());
+                            break;
+                        }
                         let frame: GatewayFrame = serde_json::from_str(&text).map_err(|e| {
                             GatewayError::InvalidFrame(e.to_string())
                         })?;
-                        
                         handle_frame(frame, &mut write, &session_manager).await?;
                     }
                     Some(Ok(Message::Close(_))) => {
@@ -192,7 +221,13 @@ async fn handle_connection(
                         break;
                     }
                     Some(Err(e)) => {
-                        error!("WebSocket error: {}", e);
+                        error!("WebSocket error from {}: {}", addr, e);
+                        let _ = write.send(Message::Close(Some(
+                            tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                                code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Error,
+                                reason: "Internal error".into(),
+                            },
+                        ))).await;
                         break;
                     }
                     None => {

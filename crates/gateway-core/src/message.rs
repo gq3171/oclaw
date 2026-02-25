@@ -114,19 +114,23 @@ impl SessionManager {
 
     pub fn create_session(&self, key: &str, agent_id: &str) -> Result<SessionInfo, String> {
         let now = chrono::Utc::now().timestamp_millis();
-        let session = SessionInfo {
-            key: key.to_string(),
-            agent_id: agent_id.to_string(),
-            created_at: now,
-            updated_at: now,
-            message_count: 0,
-        };
         let db = self.db.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+
+        // Use INSERT OR IGNORE to avoid overwriting existing sessions,
+        // then UPDATE to refresh the agent_id and updated_at timestamp.
         db.execute(
-            "INSERT OR REPLACE INTO sessions (key, agent_id, created_at, updated_at, message_count) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![session.key, session.agent_id, session.created_at, session.updated_at, session.message_count],
-        ).ok();
-        Ok(session)
+            "INSERT OR IGNORE INTO sessions (key, agent_id, created_at, updated_at, message_count) VALUES (?1, ?2, ?3, ?4, 0)",
+            rusqlite::params![key, agent_id, now, now],
+        ).map_err(|e| format!("Failed to create session: {}", e))?;
+
+        db.execute(
+            "UPDATE sessions SET agent_id = ?1, updated_at = ?2 WHERE key = ?3",
+            rusqlite::params![agent_id, now, key],
+        ).map_err(|e| format!("Failed to update session: {}", e))?;
+
+        // Return the actual session state (preserving message_count)
+        self.get_session(key)?
+            .ok_or_else(|| "Session created but not found".to_string())
     }
 
     pub fn get_session(&self, key: &str) -> Result<Option<SessionInfo>, String> {

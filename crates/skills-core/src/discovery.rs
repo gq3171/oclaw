@@ -27,10 +27,10 @@ pub fn skill_dirs(workspace: Option<&Path>) -> Vec<(PathBuf, SkillTier)> {
         dirs.push((home.join(".oclaw").join("skills"), SkillTier::User));
     }
     // Bundled: next to executable
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            dirs.push((parent.join("skills"), SkillTier::Bundled));
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(parent) = exe.parent()
+    {
+        dirs.push((parent.join("skills"), SkillTier::Bundled));
     }
     dirs
 }

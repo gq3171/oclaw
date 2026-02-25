@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 const CODE_EXPIRY_SECS: i64 = 300; // 5 minutes
-const CODE_LENGTH: usize = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

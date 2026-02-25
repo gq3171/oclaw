@@ -32,6 +32,9 @@ pub enum ApprovalDecision {
     Pending,
 }
 
+/// Default TTL for approval requests: 5 minutes.
+const APPROVAL_TTL_MS: u64 = 5 * 60 * 1000;
+
 pub struct ApprovalGate {
     policy: ApprovalPolicy,
     pending: Arc<RwLock<Vec<ApprovalRequest>>>,
@@ -44,6 +47,7 @@ pub struct ApprovalRequest {
     pub tool: String,
     pub arguments_summary: String,
     pub decision: ApprovalDecision,
+    pub created_at_ms: u64,
 }
 
 impl ApprovalGate {
@@ -70,11 +74,16 @@ impl ApprovalGate {
     }
 
     pub async fn request_approval(&self, tool: &str, args: &str) -> ApprovalRequest {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         let req = ApprovalRequest {
             id: uuid::Uuid::new_v4().to_string(),
             tool: tool.into(),
             arguments_summary: args.chars().take(200).collect(),
             decision: ApprovalDecision::Pending,
+            created_at_ms: now,
         };
         self.pending.write().await.push(req.clone());
         req
@@ -101,7 +110,17 @@ impl ApprovalGate {
     }
 
     pub async fn pending_requests(&self) -> Vec<ApprovalRequest> {
-        self.pending.read().await.iter()
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let mut pending = self.pending.write().await;
+        // Evict expired requests
+        pending.retain(|r| {
+            r.decision != ApprovalDecision::Pending
+                || now.saturating_sub(r.created_at_ms) < APPROVAL_TTL_MS
+        });
+        pending.iter()
             .filter(|r| r.decision == ApprovalDecision::Pending)
             .cloned()
             .collect()

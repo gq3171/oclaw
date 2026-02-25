@@ -1,6 +1,6 @@
 use crate::store::CronStore;
 use crate::schedule::compute_next_run;
-use crate::types::{CronJob, CronJobState, CronPayloadKind, CronScheduleKind};
+use crate::types::{CronJob, CronScheduleKind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;

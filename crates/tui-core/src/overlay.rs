@@ -1,5 +1,4 @@
 /// Overlay selection list with fuzzy filtering.
-
 pub struct SelectList {
     title: String,
     items: Vec<SelectItem>,

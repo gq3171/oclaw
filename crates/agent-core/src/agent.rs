@@ -337,7 +337,7 @@ impl Agent {
         format!("{}{}", &s[..cut], TRUNCATION_SUFFIX)
     }
 
-    fn is_context_overflow(err: &str) -> bool {
+    fn _is_context_overflow(err: &str) -> bool {
         let e = err.to_lowercase();
         e.contains("context length exceeded")
             || e.contains("maximum context")
@@ -533,9 +533,10 @@ impl Agent {
 
             tracing::info!("Iteration {}: executing {} tool call(s)", iteration, tool_calls.len());
             for tc in &tool_calls {
-                // Record + detect loop
-                loop_detector.record(&tc.function.name, &tc.function.arguments);
+                // Detect loop BEFORE recording current call, so no_progress_streak
+                // only examines completed records that already have result_hash.
                 let detection = loop_detector.detect(&tc.function.name, &tc.function.arguments);
+                loop_detector.record(&tc.function.name, &tc.function.arguments);
                 match detection.level {
                     LoopLevel::Critical => {
                         self.state = AgentState::Error;

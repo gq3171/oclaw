@@ -221,7 +221,25 @@ impl BashTool {
         }
 
         if let Some(env_vars) = args.env {
+            // Block dangerous environment variables that could hijack execution
+            const BLOCKED_ENV: &[&str] = &[
+                "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+                "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+                "PATH", "HOME", "SHELL", "USER", "LOGNAME",
+                "BASH_ENV", "ENV", "CDPATH", "GLOBIGNORE",
+                "BASH_FUNC_", "PS4", "PROMPT_COMMAND",
+                "PYTHONSTARTUP", "PERL5OPT", "RUBYOPT", "NODE_OPTIONS",
+            ];
             for (key, value) in env_vars {
+                let key_upper = key.to_uppercase();
+                let is_blocked = BLOCKED_ENV.iter().any(|b| {
+                    key_upper == *b || key_upper.starts_with("LD_") || key_upper.starts_with("DYLD_")
+                });
+                if is_blocked {
+                    return Err(crate::ToolError::InvalidInput(
+                        format!("Environment variable '{}' is blocked for security", key),
+                    ));
+                }
                 cmd.env(&key, &value);
             }
         }
@@ -553,21 +571,45 @@ impl WebFetchTool {
     }
 
     fn is_url_allowed(url: &str) -> bool {
-        let host = url
-            .strip_prefix("https://").or_else(|| url.strip_prefix("http://"))
-            .and_then(|s| s.split('/').next())
-            .and_then(|s| s.split(':').next())
-            .unwrap_or("");
-        let blocked = ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"];
+        let parsed = match url::Url::parse(url) {
+            Ok(u) => u,
+            Err(_) => return false,
+        };
+
+        // Only allow http/https schemes
+        match parsed.scheme() {
+            "http" | "https" => {}
+            _ => return false,
+        }
+
+        let host = match parsed.host_str() {
+            Some(h) => h,
+            None => return false,
+        };
+
+        let blocked = ["localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1"];
         if blocked.contains(&host) {
             return std::env::var("OCLAWS_ALLOW_PRIVATE_FETCH").is_ok();
         }
-        if host.starts_with("10.")
-            || host.starts_with("192.168.")
-            || host.starts_with("172.")
-        {
-            return std::env::var("OCLAWS_ALLOW_PRIVATE_FETCH").is_ok();
+
+        // Block private IP ranges (RFC 1918 + link-local)
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            let is_private = match ip {
+                std::net::IpAddr::V4(v4) => {
+                    v4.is_loopback()
+                        || v4.is_private()
+                        || v4.is_link_local()
+                        || v4.is_unspecified()
+                }
+                std::net::IpAddr::V6(v6) => {
+                    v6.is_loopback() || v6.is_unspecified()
+                }
+            };
+            if is_private {
+                return std::env::var("OCLAWS_ALLOW_PRIVATE_FETCH").is_ok();
+            }
         }
+
         true
     }
 
@@ -578,6 +620,7 @@ impl WebFetchTool {
     ) -> ToolResult<serde_json::Value> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.timeout_seconds))
+            .redirect(reqwest::redirect::Policy::limited(5))
             .build()
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 

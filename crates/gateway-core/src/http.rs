@@ -208,7 +208,7 @@ impl HttpServer {
             .nest("/webchat", webchat_routes);
 
         // Plugin HTTP routes
-        if let Some(ref regs) = self.plugin_registrations {
+        if let Some(ref _regs) = self.plugin_registrations {
             let plugin_routes = Router::new()
                 .route("/plugins/{plugin_id}/{*rest}", any(plugin_route_handler))
                 .with_state(state);

@@ -199,7 +199,7 @@ impl LlmProvider for OllamaProvider {
                     let finish = if parsed.done { Some("stop".to_string()) } else { None };
 
                     let chunk = StreamChunk {
-                        id: format!("ollama-stream"),
+                        id: "ollama-stream".to_string(),
                         object: "chat.completion.chunk".to_string(),
                         created: 0,
                         model: model.clone(),

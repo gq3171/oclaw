@@ -184,17 +184,19 @@ impl RateLimiter {
             locked_until: None,
         });
 
+        // Reset window BEFORE counting — otherwise an expired window
+        // triggers a lockout that is immediately cleared.
+        let window = Duration::from_millis(window_ms as u64);
+        if state.first_attempt + window < Instant::now() {
+            state.attempts = 0;
+            state.first_attempt = Instant::now();
+            state.locked_until = None;
+        }
+
         state.attempts += 1;
 
         if state.attempts >= max_attempts {
             state.locked_until = Some(Instant::now() + Duration::from_millis(lockout_ms as u64));
-        }
-
-        let window = Duration::from_millis(window_ms as u64);
-        if state.first_attempt + window < Instant::now() {
-            state.attempts = 1;
-            state.first_attempt = Instant::now();
-            state.locked_until = None;
         }
     }
 }

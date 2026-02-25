@@ -158,11 +158,15 @@ impl LlmProvider for BedrockProvider {
                 },
                 finish_reason: json["stop_reason"].as_str().map(|s| s.into()),
             }],
-            usage: Some(Usage {
-                prompt_tokens: json["usage"]["input_tokens"].as_i64().unwrap_or(0) as i32,
-                completion_tokens: json["usage"]["output_tokens"].as_i64().unwrap_or(0) as i32,
-                total_tokens: 0,
-            }),
+            usage: {
+                let pt = json["usage"]["input_tokens"].as_i64().unwrap_or(0) as i32;
+                let ct = json["usage"]["output_tokens"].as_i64().unwrap_or(0) as i32;
+                Some(Usage {
+                    prompt_tokens: pt,
+                    completion_tokens: ct,
+                    total_tokens: pt + ct,
+                })
+            },
             system_fingerprint: None,
         })
     }

@@ -122,15 +122,15 @@ fn collect_files_recursive(
                 continue;
             }
             collect_files_recursive(&path, results)?;
-        } else if path.is_file() {
-            if let Ok(meta) = path.metadata() {
-                let mtime = meta.modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                results.push((path, mtime));
-            }
+        } else if path.is_file()
+            && let Ok(meta) = path.metadata()
+        {
+            let mtime = meta.modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            results.push((path, mtime));
         }
     }
     Ok(())

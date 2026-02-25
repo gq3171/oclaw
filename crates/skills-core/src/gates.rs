@@ -25,20 +25,19 @@ pub fn check_gates(
     };
 
     // OS gate
-    if let Some(meta) = &manifest.metadata {
-        if let Some(oc) = &meta.openclaw {
-            if !oc.os.is_empty() {
-                let current = std::env::consts::OS; // "windows", "linux", "macos"
-                let matches = oc.os.iter().any(|o| {
-                    let o = o.to_lowercase();
-                    o == current || (o == "macos" && current == "macos")
-                        || (o == "darwin" && current == "macos")
-                });
-                if !matches {
-                    result.os_mismatch = true;
-                    result.passed = false;
-                }
-            }
+    if let Some(meta) = &manifest.metadata
+        && let Some(oc) = &meta.openclaw
+        && !oc.os.is_empty()
+    {
+        let current = std::env::consts::OS; // "windows", "linux", "macos"
+        let matches = oc.os.iter().any(|o| {
+            let o = o.to_lowercase();
+            o == current || (o == "macos" && current == "macos")
+                || (o == "darwin" && current == "macos")
+        });
+        if !matches {
+            result.os_mismatch = true;
+            result.passed = false;
         }
     }
 

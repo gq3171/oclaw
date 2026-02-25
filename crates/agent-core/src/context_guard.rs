@@ -78,7 +78,7 @@ impl ContextGuard {
     }
 
     /// Truncate oversized tool results in-place, oldest first.
-    pub fn truncate_tool_results(&self, messages: &mut Vec<ChatMessage>, model: &str) {
+    pub fn truncate_tool_results(&self, messages: &mut [ChatMessage], model: &str) {
         let budget = self.input_budget();
         let limit_per_tool = self.tool_result_limit();
 
@@ -105,6 +105,7 @@ impl ContextGuard {
 
         // Second pass: if still over budget, progressively halve oldest tool results
         let mut iterations = 0;
+        const MIN_TOOL_CHARS: usize = 200;
         while iterations < 5 {
             let used = Self::estimate_tokens(messages, model);
             if used <= budget {
@@ -121,6 +122,11 @@ impl ContextGuard {
             else {
                 break;
             };
+
+            // Stop if the largest tool result is already small — no progress possible
+            if messages[idx].content.len() <= MIN_TOOL_CHARS {
+                break;
+            }
 
             let content = &messages[idx].content;
             let half = content.len() / 2;

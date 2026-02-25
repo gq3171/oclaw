@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
@@ -238,14 +238,14 @@ impl Message {
 }
 
 pub struct MessageQueue {
-    queue: Arc<RwLock<Vec<Message>>>,
+    queue: Arc<RwLock<VecDeque<Message>>>,
     max_size: usize,
 }
 
 impl MessageQueue {
     pub fn new(max_size: usize) -> Self {
         Self {
-            queue: Arc::new(RwLock::new(Vec::new())),
+            queue: Arc::new(RwLock::new(VecDeque::new())),
             max_size,
         }
     }
@@ -255,18 +255,18 @@ impl MessageQueue {
         if queue.len() >= self.max_size {
             return Err(QueueError::QueueFull);
         }
-        queue.push(message);
+        queue.push_back(message);
         Ok(())
     }
 
     pub async fn dequeue(&self) -> Option<Message> {
         let mut queue = self.queue.write().await;
-        queue.pop()
+        queue.pop_front()
     }
 
     pub async fn peek(&self) -> Option<Message> {
         let queue = self.queue.read().await;
-        queue.last().cloned()
+        queue.front().cloned()
     }
 
     pub async fn len(&self) -> usize {

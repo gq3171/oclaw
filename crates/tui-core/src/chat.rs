@@ -86,10 +86,10 @@ impl ChatLog {
     }
 
     pub fn append_assistant_chunk(&mut self, chunk: &str) {
-        if let Some(ChatMessage::Assistant { text, streaming, .. }) = self.messages.back_mut() {
-            if *streaming {
-                text.push_str(chunk);
-            }
+        if let Some(ChatMessage::Assistant { text, streaming, .. }) = self.messages.back_mut()
+            && *streaming
+        {
+            text.push_str(chunk);
         }
     }
 
@@ -112,34 +112,34 @@ impl ChatLog {
 
     pub fn finish_tool(&mut self, id: &str, result: &str) {
         for msg in self.messages.iter_mut().rev() {
-            if let ChatMessage::ToolCall { id: tid, result: r, status, .. } = msg {
-                if tid == id {
-                    *r = Some(result.to_string());
-                    *status = ToolStatus::Success;
-                    break;
-                }
+            if let ChatMessage::ToolCall { id: tid, result: r, status, .. } = msg
+                && tid == id
+            {
+                *r = Some(result.to_string());
+                *status = ToolStatus::Success;
+                break;
             }
         }
     }
 
     pub fn fail_tool(&mut self, id: &str, error: &str) {
         for msg in self.messages.iter_mut().rev() {
-            if let ChatMessage::ToolCall { id: tid, status, .. } = msg {
-                if tid == id {
-                    *status = ToolStatus::Error(error.to_string());
-                    break;
-                }
+            if let ChatMessage::ToolCall { id: tid, status, .. } = msg
+                && tid == id
+            {
+                *status = ToolStatus::Error(error.to_string());
+                break;
             }
         }
     }
 
     pub fn toggle_tool_expand(&mut self, id: &str) {
         for msg in self.messages.iter_mut().rev() {
-            if let ChatMessage::ToolCall { id: tid, expanded, .. } = msg {
-                if tid == id {
-                    *expanded = !*expanded;
-                    break;
-                }
+            if let ChatMessage::ToolCall { id: tid, expanded, .. } = msg
+                && tid == id
+            {
+                *expanded = !*expanded;
+                break;
             }
         }
     }

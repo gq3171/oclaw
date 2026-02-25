@@ -8,7 +8,6 @@ license.workspace = true
 [dependencies]
 oclaws-llm-core.workspace = true
 oclaws-protocol.workspace = true
-storage-core.workspace = true
 oclaws-tools-core.workspace = true
 tokio.workspace = true
 serde.workspace = true

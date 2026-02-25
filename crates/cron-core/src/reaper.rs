@@ -57,6 +57,22 @@ impl SessionReaper {
 
             let mod_time: chrono::DateTime<chrono::Utc> = modified.into();
             if mod_time < cutoff {
+                // Safety: skip files that are currently locked (being written to)
+                let lock_path = path.with_extension("lock");
+                if lock_path.exists() {
+                    tracing::debug!("Skipping active session (lock exists): {}", path.display());
+                    continue;
+                }
+                // Double-check: re-read mtime to avoid TOCTOU race
+                if let Ok(m2) = tokio::fs::metadata(&path).await
+                    && let Ok(t2) = m2.modified()
+                {
+                    let t2: chrono::DateTime<chrono::Utc> = t2.into();
+                    if t2 >= cutoff {
+                        tracing::debug!("Skipping session (modified during sweep): {}", path.display());
+                        continue;
+                    }
+                }
                 match tokio::fs::remove_file(&path).await {
                     Ok(_) => {
                         tracing::info!("Reaped session: {}", path.display());

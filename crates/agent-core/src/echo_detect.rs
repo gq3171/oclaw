@@ -30,8 +30,15 @@ impl EchoTracker {
         self.recent.push_back(key);
     }
 
-    pub fn has(&self, text: &str) -> bool {
-        self.set.contains(text)
+    /// Check if text was recently sent by us (echo). Consumes the entry on match
+    /// so that future messages with the same content are not falsely blocked.
+    pub fn has(&mut self, text: &str) -> bool {
+        if self.set.remove(text) {
+            self.recent.retain(|s| s != text);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn forget(&mut self, text: &str) {

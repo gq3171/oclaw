@@ -100,10 +100,10 @@ impl TuiApp {
         loop {
             terminal.draw(|f| self.render(f))?;
 
-            if event::poll(Duration::from_millis(30))? {
-                if let Event::Key(key) = event::read()? {
-                    self.handle_key_event(key, &tx).await;
-                }
+            if event::poll(Duration::from_millis(30))?
+                && let Event::Key(key) = event::read()?
+            {
+                self.handle_key_event(key, &tx).await;
             }
 
             while let Ok(ev) = rx.try_recv() {

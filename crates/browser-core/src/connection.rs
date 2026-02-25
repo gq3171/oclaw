@@ -13,6 +13,13 @@ pub struct CdpConnection {
     event_receiver: broadcast::Receiver<CdpEvent>,
     next_id: Arc<RwLock<i32>>,
     pending_commands: Arc<RwLock<HashMap<i32, mpsc::Sender<BrowserResult<CdpResponse>>>>>,
+    _task_handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for CdpConnection {
+    fn drop(&mut self) {
+        self._task_handle.abort();
+    }
 }
 
 impl CdpConnection {
@@ -36,10 +43,15 @@ impl CdpConnection {
         let pending_clone = Arc::clone(&pending_commands);
         let event_tx_clone = event_tx.clone();
 
-        tokio::spawn(async move {
+        let task_handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Some(cmd) = cmd_rx.recv() => {
+                    cmd = cmd_rx.recv() => {
+                        let Some(cmd) = cmd else {
+                            // CdpConnection dropped — sender closed
+                            info!("CDP command channel closed, shutting down");
+                            break;
+                        };
                         let json = match serde_json::to_string(&cmd) {
                             Ok(j) => j,
                             Err(e) => {
@@ -92,6 +104,7 @@ impl CdpConnection {
             event_receiver: event_rx,
             next_id,
             pending_commands,
+            _task_handle: task_handle,
         })
     }
 

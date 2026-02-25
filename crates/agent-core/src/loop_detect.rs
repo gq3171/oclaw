@@ -156,14 +156,15 @@ impl LoopDetector {
     }
 
     /// Count consecutive no-progress calls (same tool+args+result) from the tail.
+    /// Breaks on any non-matching record to ensure only truly consecutive calls are counted.
     fn no_progress_streak(&self, tool_name: &str, args_hash: u64) -> usize {
         let mut streak = 0usize;
         let mut expected_result: Option<u64> = None;
         for rec in self.history.iter().rev() {
             if rec.tool_name != tool_name || rec.args_hash != args_hash {
-                continue;
+                break; // Stop at first non-matching record — streak must be consecutive
             }
-            let Some(rh) = rec.result_hash else { continue };
+            let Some(rh) = rec.result_hash else { break };
             match expected_result {
                 None => {
                     expected_result = Some(rh);

@@ -11,14 +11,16 @@ pub struct ChannelPolicy {
 }
 
 impl ChannelPolicy {
-    pub fn is_allowed(&self, channel_id: &str) -> bool {
+    /// Check whether a given sender is allowed by this policy.
+    /// The allowlist/blocklist contain sender (user) IDs, not channel IDs.
+    pub fn is_allowed(&self, sender_id: &str) -> bool {
         if let Some(blocklist) = &self.blocklist
-            && blocklist.contains(channel_id)
+            && blocklist.contains(sender_id)
         {
             return false;
         }
         if let Some(allowlist) = &self.allowlist {
-            return allowlist.contains(channel_id);
+            return allowlist.contains(sender_id);
         }
         true
     }
@@ -45,9 +47,12 @@ impl ChannelAccessManager {
         self.default_policy = policy;
     }
 
-    pub fn check_access(&self, channel_id: &str) -> bool {
+    /// Check whether `sender_id` is allowed to interact in `channel_id`.
+    /// The policy is looked up by channel, but the allowlist/blocklist
+    /// within that policy contain sender (user) IDs.
+    pub fn check_access(&self, channel_id: &str, sender_id: &str) -> bool {
         let policy = self.policies.get(channel_id).unwrap_or(&self.default_policy);
-        policy.is_allowed(channel_id)
+        policy.is_allowed(sender_id)
     }
 
     pub fn get_model_override(&self, channel_id: &str) -> Option<&str> {
@@ -114,11 +119,13 @@ mod tests {
     fn test_manager_per_channel_policy() {
         let mut mgr = ChannelAccessManager::new();
         mgr.set_policy("ch1", ChannelPolicy {
-            blocklist: Some(HashSet::from(["ch1".to_string()])),
+            blocklist: Some(HashSet::from(["bad_user".to_string()])),
             ..Default::default()
         });
-        assert!(!mgr.check_access("ch1"));
-        assert!(mgr.check_access("ch2"));
+        assert!(!mgr.check_access("ch1", "bad_user"));
+        assert!(mgr.check_access("ch1", "good_user"));
+        // Channel without a specific policy falls back to default (allow all)
+        assert!(mgr.check_access("ch2", "anyone"));
     }
 
     #[test]

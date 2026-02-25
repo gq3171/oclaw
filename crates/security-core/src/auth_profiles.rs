@@ -34,11 +34,15 @@ pub struct AuthProfile {
 impl AuthProfile {
     fn is_available(&self) -> bool {
         let now = chrono::Utc::now().timestamp();
-        if let Some(cd) = self.cooldown_until {
-            if now < cd { return false; }
+        if let Some(cd) = self.cooldown_until
+            && now < cd
+        {
+            return false;
         }
-        if let Some(dis) = self.disabled_until {
-            if now < dis { return false; }
+        if let Some(dis) = self.disabled_until
+            && now < dis
+        {
+            return false;
         }
         true
     }
@@ -92,10 +96,10 @@ impl AuthProfileStore {
         // Try ordered list first
         if let Some(order) = self.data.order.get(provider) {
             for id in order {
-                if let Some(p) = self.data.profiles.get(id) {
-                    if p.is_available() {
-                        return Some(p);
-                    }
+                if let Some(p) = self.data.profiles.get(id)
+                    && p.is_available()
+                {
+                    return Some(p);
                 }
             }
         }
@@ -110,7 +114,7 @@ impl AuthProfileStore {
             p.error_count += 1;
             let now = chrono::Utc::now().timestamp();
             // Exponential cooldown: 30s * 2^(errors-1), max 1 hour
-            let cooldown = (30 * 2i64.pow(p.error_count.saturating_sub(1).min(6) as u32))
+            let cooldown = (30 * 2i64.pow(p.error_count.saturating_sub(1).min(6)))
                 .min(3600);
             p.cooldown_until = Some(now + cooldown);
             let _ = self.save();

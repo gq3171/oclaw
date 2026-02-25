@@ -338,7 +338,7 @@ async fn main() -> anyhow::Result<()> {
                 None
             };
 
-            // 4b. Start Telegram long-polling if configured
+            // 4b. Start Telegram long-polling if configured (with auto-reconnect)
             if let Some(ref channels) = config.channels
                 && let Some(ref tg) = channels.telegram
                 && tg.enabled.unwrap_or(false)
@@ -349,11 +349,18 @@ async fn main() -> anyhow::Result<()> {
                 let cm = channel_manager.clone();
                 let tr = tool_registry.clone();
                 tokio::spawn(async move {
-                    telegram_poll_loop(token, provider, cm, tr).await;
+                    let mut backoff_secs = 1u64;
+                    loop {
+                        info!("Starting Telegram polling loop");
+                        telegram_poll_loop(token.clone(), provider.clone(), cm.clone(), tr.clone()).await;
+                        error!("Telegram polling loop exited, reconnecting in {}s", backoff_secs);
+                        tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+                        backoff_secs = (backoff_secs * 2).min(60);
+                    }
                 });
             }
 
-            // 4c. Start Feishu WebSocket long connection if configured
+            // 4c. Start Feishu WebSocket long connection if configured (with auto-reconnect)
             if let Some(ref channels) = config.channels
                 && let Some(ref fs) = channels.feishu
                 && fs.enabled.unwrap_or(false)
@@ -365,16 +372,31 @@ async fn main() -> anyhow::Result<()> {
                 let cm = channel_manager.clone();
                 let tr = tool_registry.clone();
                 tokio::spawn(async move {
-                    feishu_ws_loop(aid, asec, provider, cm, tr).await;
+                    let mut backoff_secs = 1u64;
+                    loop {
+                        info!("Starting Feishu WebSocket connection");
+                        feishu_ws_loop(aid.clone(), asec.clone(), provider.clone(), cm.clone(), tr.clone()).await;
+                        error!("Feishu WebSocket disconnected, reconnecting in {}s", backoff_secs);
+                        tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+                        backoff_secs = (backoff_secs * 2).min(60);
+                    }
                 });
             }
 
-            // 5. Start config watcher
+            // 5. Start config watcher (with actual reload)
             let watcher = oclaws_config::ConfigWatcher::new(config_path.clone());
             let mut watch_rx = watcher.watch();
+            let watch_config_path = config_path.clone();
             tokio::spawn(async move {
                 while watch_rx.changed().await.is_ok() {
-                    info!("Config file changed, reload may be needed");
+                    info!("Config file changed, attempting reload");
+                    let mut mgr = oclaws_config::ConfigManager::new(watch_config_path.clone());
+                    match mgr.load() {
+                        Ok(()) => {
+                            info!("Config reloaded successfully (note: some changes require restart)");
+                        }
+                        Err(e) => warn!("Failed to reload config: {}", e),
+                    }
                 }
             });
 
@@ -531,15 +553,15 @@ async fn main() -> anyhow::Result<()> {
                             println!("Tier: {:?}", s.tier);
                             println!("Description: {}", s.manifest.description);
                             println!("Source: {}", s.manifest.source_dir);
-                            if let Some(meta) = &s.manifest.metadata {
-                                if let Some(oc) = &meta.openclaw {
-                                    if let Some(req) = &oc.requires {
-                                        if !req.bins.is_empty() { println!("Requires bins: {}", req.bins.join(", ")); }
-                                        if !req.env.is_empty() { println!("Requires env: {}", req.env.join(", ")); }
-                                    }
-                                    if !oc.install.is_empty() {
-                                        println!("Install specs: {}", oc.install.len());
-                                    }
+                            if let Some(meta) = &s.manifest.metadata
+                                && let Some(oc) = &meta.openclaw
+                            {
+                                if let Some(req) = &oc.requires {
+                                    if !req.bins.is_empty() { println!("Requires bins: {}", req.bins.join(", ")); }
+                                    if !req.env.is_empty() { println!("Requires env: {}", req.env.join(", ")); }
+                                }
+                                if !oc.install.is_empty() {
+                                    println!("Install specs: {}", oc.install.len());
                                 }
                             }
                         }
@@ -959,7 +981,7 @@ fn init_otel_tracing(
 
     let provider = opentelemetry_sdk::trace::TracerProvider::builder()
         .with_simple_exporter(exporter)
-        .with_config(opentelemetry_sdk::trace::Config::default().with_resource(resource))
+        .with_resource(resource)
         .build();
 
     let tracer = provider.tracer("oclaws");

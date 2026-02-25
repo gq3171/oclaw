@@ -40,10 +40,10 @@ impl PluginRegistry {
         }
         drop(deny);
         let allow = self.allow.read().await;
-        if let Some(ref list) = *allow {
-            if !list.contains(&plugin_id) {
-                return Err(PluginError::LoadError(format!("Plugin '{}' not in allow list", plugin_id)));
-            }
+        if let Some(ref list) = *allow
+            && !list.contains(&plugin_id)
+        {
+            return Err(PluginError::LoadError(format!("Plugin '{}' not in allow list", plugin_id)));
         }
         drop(allow);
 

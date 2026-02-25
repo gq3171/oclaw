@@ -1,5 +1,4 @@
 /// Gateway HTTP client for TUI — talks to the OCLAWS gateway REST API.
-
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
@@ -118,24 +117,22 @@ impl GatewayClient {
                 buf = buf[pos + 2..].to_string();
 
                 for line in event_block.lines() {
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if data.trim() == "[DONE]" {
-                            let _ = tx.send(GatewayEvent::Done(
-                                full_text.clone()
-                            )).await;
-                            return Ok(());
-                        }
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                            if let Some(content) = json
-                                .pointer("/choices/0/delta/content")
-                                .and_then(|v| v.as_str())
-                            {
-                                full_text.push_str(content);
-                                let _ = tx.send(GatewayEvent::Chunk(
-                                    content.to_string()
-                                )).await;
-                            }
-                        }
+                    let Some(data) = line.strip_prefix("data: ") else { continue };
+                    if data.trim() == "[DONE]" {
+                        let _ = tx.send(GatewayEvent::Done(
+                            full_text.clone()
+                        )).await;
+                        return Ok(());
+                    }
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data)
+                        && let Some(content) = json
+                            .pointer("/choices/0/delta/content")
+                            .and_then(|v| v.as_str())
+                    {
+                        full_text.push_str(content);
+                        let _ = tx.send(GatewayEvent::Chunk(
+                            content.to_string()
+                        )).await;
                     }
                 }
             }

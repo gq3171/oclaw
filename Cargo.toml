@@ -7,17 +7,13 @@ members = [
     "crates/browser-core",
     "crates/llm-core",
     "crates/tools-core",
-    "crates/storage-core",
     "crates/cli",
     "crates/agent-core",
     "crates/plugin-core",
-    "crates/sandbox-core",
     "crates/skills-core",
-    "crates/voice-core",
     "crates/doctor-core",
     "crates/security-core",
     "crates/tui-core",
-    "crates/media-core",
     "crates/daemon-core",
     "crates/cron-core",
     "crates/memory-core",
@@ -80,6 +76,7 @@ image = "0.25"
 hound = "3.5"
 symphonia = { version = "0.5", features = ["all"] }
 async-stream = "0.3"
+ed25519-dalek = { version = "2.1", features = ["std"] }
 cron = "0.15"
 tiktoken-rs = "0.6"
 dotenvy = "0.15"
@@ -97,16 +94,12 @@ oclaws-channel-core = { path = "crates/channel-core" }
 oclaws-browser-core = { path = "crates/browser-core" }
 oclaws-llm-core = { path = "crates/llm-core" }
 oclaws-tools-core = { path = "crates/tools-core" }
-storage-core = { path = "crates/storage-core" }
 oclaws-agent-core = { path = "crates/agent-core" }
 oclaws-plugin-core = { path = "crates/plugin-core" }
-oclaws-sandbox-core = { path = "crates/sandbox-core" }
 oclaws-skills-core = { path = "crates/skills-core" }
-oclaws-voice-core = { path = "crates/voice-core" }
 oclaws-doctor-core = { path = "crates/doctor-core" }
 oclaws-security-core = { path = "crates/security-core" }
 oclaws-tui-core = { path = "crates/tui-core" }
-oclaws-media-core = { path = "crates/media-core" }
 oclaws-daemon-core = { path = "crates/daemon-core" }
 oclaws-cron-core = { path = "crates/cron-core" }
 oclaws-memory-core = { path = "crates/memory-core" }

@@ -50,5 +50,6 @@ pem.workspace = true
 tokio-rustls.workspace = true
 tower-http.workspace = true
 hex.workspace = true
+ed25519-dalek.workspace = true
 async-stream.workspace = true
 rusqlite.workspace = true
