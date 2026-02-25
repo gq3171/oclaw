@@ -19,3 +19,4 @@ urlencoding.workspace = true
 url.workspace = true
 cron.workspace = true
 oclaws-browser-core = { path = "../browser-core" }
+oclaws-memory-core = { path = "../memory-core" }

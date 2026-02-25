@@ -120,13 +120,14 @@ impl SystemPromptBuilder {
             }
         }
 
-        // Memory recall section
+        // Memory recall section (aligned with Node system-prompt.ts)
         if self.memory_hint {
             sections.push(
                 "## Memory Recall\n\
                  Before answering anything about prior work, decisions, dates, \
-                 people, preferences, or todos: search memory first. If low \
-                 confidence after search, say you checked."
+                 people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; \
+                 then use memory_get to pull only the needed lines.\n\
+                 If low confidence after search, say you checked."
                     .to_string(),
             );
         }

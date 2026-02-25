@@ -308,7 +308,24 @@ async fn main() -> anyhow::Result<()> {
             // 3. Create LLM provider from config
             let llm_provider = create_llm_provider(&config);
 
-            // 3b. Create tool registry with browser config
+            // 3b. Initialize memory manager for cross-channel recall (before tool registry)
+            let memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>> = {
+                let store = oclaws_memory_core::MemoryStore::new(
+                    oclaws_memory_core::MemoryStore::default_path(),
+                );
+                match store.init() {
+                    Ok(()) => {
+                        info!("Memory store initialized");
+                        Some(Arc::new(oclaws_memory_core::MemoryManager::new(store, None)))
+                    }
+                    Err(e) => {
+                        warn!("Failed to initialize memory store: {}", e);
+                        None
+                    }
+                }
+            };
+
+            // 3c. Create tool registry with browser config
             let mut tool_registry = oclaws_tools_core::tool::ToolRegistry::new();
             if let Some(ref browser) = config.browser {
                 tool_registry.configure_browser(
@@ -320,6 +337,10 @@ async fn main() -> anyhow::Result<()> {
             // Configure workspace tool if workspace path is resolvable
             if let Ok(ws) = oclaws_workspace_core::files::Workspace::default_location() {
                 tool_registry.configure_workspace(&ws.root().to_string_lossy());
+            }
+            // Inject MemoryManager into memory_search + memory_get tools
+            if let Some(ref mm) = memory_manager {
+                tool_registry.with_memory_manager(mm.clone());
             }
             let tool_registry = Arc::new(tool_registry);
             info!("Tool registry initialized with {} tools", tool_registry.list().len());
@@ -360,23 +381,6 @@ async fn main() -> anyhow::Result<()> {
                 Some(Arc::new(RwLock::new(cm)))
             } else {
                 None
-            };
-
-            // Initialize memory manager for cross-channel recall
-            let memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>> = {
-                let store = oclaws_memory_core::MemoryStore::new(
-                    oclaws_memory_core::MemoryStore::default_path(),
-                );
-                match store.init() {
-                    Ok(()) => {
-                        info!("Memory store initialized");
-                        Some(Arc::new(oclaws_memory_core::MemoryManager::new(store, None)))
-                    }
-                    Err(e) => {
-                        warn!("Failed to initialize memory store: {}", e);
-                        None
-                    }
-                }
             };
 
             // Initialize workspace (bootstrap on first run)
@@ -469,12 +473,37 @@ async fn main() -> anyhow::Result<()> {
                 }
             });
 
-            // 6. Start servers
+            // 6. Parse dm_scope and identity_links from config
+            let dm_scope: oclaws_gateway_core::session_key::DmScope = config.session
+                .as_ref()
+                .and_then(|s| s.dm_scope.as_deref())
+                .map(|s| match s {
+                    "main" => oclaws_gateway_core::session_key::DmScope::Main,
+                    "per-peer" => oclaws_gateway_core::session_key::DmScope::PerPeer,
+                    "per-channel-peer" => oclaws_gateway_core::session_key::DmScope::PerChannelPeer,
+                    "per-account-channel-peer" => oclaws_gateway_core::session_key::DmScope::PerAccountChannelPeer,
+                    _ => oclaws_gateway_core::session_key::DmScope::default(),
+                })
+                .unwrap_or_default();
+            let identity_links: Option<Arc<oclaws_gateway_core::session_key::IdentityLinks>> = config.session
+                .as_ref()
+                .and_then(|s| s.identity_links.as_ref())
+                .map(|links| Arc::new(oclaws_gateway_core::session_key::IdentityLinks { links: links.clone() }));
+            info!("DM scope: {:?}", dm_scope);
+
+            // 7. Start servers
             let gateway_server = Arc::new(GatewayServer::new(port));
 
             if http_only {
                 info!("Starting OCLAWS HTTP server on port {}", port);
-                let server = build_http_server(HttpServerParams { port, gateway: gateway_config, gateway_server, llm_provider, channel_manager, tool_registry: tool_registry.clone(), plugin_registrations: plugin_registrations.clone(), cron_service: cron_service.clone(), memory_manager, workspace: workspace.clone(), full_config: config.clone(), config_path: config_path.clone(), needs_hatching: needs_hatching.clone() }).await?;
+                let server = build_http_server(HttpServerParams {
+                    port, gateway: gateway_config, gateway_server, llm_provider, channel_manager,
+                    tool_registry: tool_registry.clone(), plugin_registrations: plugin_registrations.clone(),
+                    cron_service: cron_service.clone(), memory_manager, workspace: workspace.clone(),
+                    full_config: config.clone(), config_path: config_path.clone(),
+                    needs_hatching: needs_hatching.clone(),
+                    dm_scope, identity_links,
+                }).await?;
                 if let Err(e) = server.start().await {
                     error!("HTTP server error: {}", e);
                     return Err(anyhow::anyhow!(e));
@@ -494,7 +523,14 @@ async fn main() -> anyhow::Result<()> {
                     }
                 });
 
-                let server = build_http_server(HttpServerParams { port: port + 1, gateway: gateway_config, gateway_server, llm_provider, channel_manager, tool_registry: tool_registry.clone(), plugin_registrations: plugin_registrations.clone(), cron_service: cron_service.clone(), memory_manager, workspace: workspace.clone(), full_config: config.clone(), config_path: config_path.clone(), needs_hatching: needs_hatching.clone() }).await?;
+                let server = build_http_server(HttpServerParams {
+                    port: port + 1, gateway: gateway_config, gateway_server, llm_provider, channel_manager,
+                    tool_registry: tool_registry.clone(), plugin_registrations: plugin_registrations.clone(),
+                    cron_service: cron_service.clone(), memory_manager, workspace: workspace.clone(),
+                    full_config: config.clone(), config_path: config_path.clone(),
+                    needs_hatching: needs_hatching.clone(),
+                    dm_scope, identity_links,
+                }).await?;
                 tokio::spawn(async move {
                     if let Err(e) = server.start().await {
                         error!("HTTP server error: {}", e);
@@ -1132,6 +1168,8 @@ struct HttpServerParams {
     full_config: oclaws_config::Config,
     config_path: std::path::PathBuf,
     needs_hatching: Arc<std::sync::atomic::AtomicBool>,
+    dm_scope: oclaws_gateway_core::session_key::DmScope,
+    identity_links: Option<Arc<oclaws_gateway_core::session_key::IdentityLinks>>,
 }
 
 async fn build_http_server(p: HttpServerParams) -> anyhow::Result<oclaws_gateway_core::HttpServer> {
@@ -1139,6 +1177,7 @@ async fn build_http_server(p: HttpServerParams) -> anyhow::Result<oclaws_gateway
         port, gateway, gateway_server, llm_provider, channel_manager,
         tool_registry, plugin_registrations, cron_service, memory_manager,
         workspace, full_config, config_path, needs_hatching,
+        dm_scope, identity_links,
     } = p;
     use oclaws_gateway_core::create_http_server;
     let mut server = create_http_server(port, gateway, gateway_server).await
@@ -1164,6 +1203,10 @@ async fn build_http_server(p: HttpServerParams) -> anyhow::Result<oclaws_gateway
         server = server.with_workspace(ws);
     }
     server = server.with_needs_hatching(needs_hatching);
+    server = server.with_dm_scope(dm_scope);
+    if let Some(links) = identity_links {
+        server = server.with_identity_links(links);
+    }
     Ok(server)
 }
 

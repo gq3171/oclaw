@@ -1059,6 +1059,14 @@ pub struct SessionConfig {
     pub pruning: Option<PruningSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reset: Option<SessionResetConfig>,
+    /// DM session scope: "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer"
+    /// Default is "main" — all DMs share a single session across channels (cross-platform memory).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dm_scope: Option<String>,
+    /// Cross-channel identity links: canonical_id → ["telegram:123", "slack:456"]
+    /// Allows the same person on different channels to share a session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_links: Option<HashMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

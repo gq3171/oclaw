@@ -8,12 +8,12 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum DmScope {
-    /// Single shared session across all channels and peers.
+    /// Single shared session across all channels and peers (default — aligns with Node dmScope="main").
+    #[default]
     Main,
     /// Same peer shares a session across channels (cross-platform identity).
     PerPeer,
-    /// Per-channel per-peer (default — each channel has its own session).
-    #[default]
+    /// Per-channel per-peer (each channel has its own session).
     PerChannelPeer,
     /// Most granular: per-account per-channel per-peer.
     PerAccountChannelPeer,

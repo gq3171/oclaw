@@ -1,36 +1,31 @@
-//! Unified message processing pipeline: recall → agent → capture → reply.
+//! Unified message processing pipeline: agent → flush → reply.
+//!
+//! Memory recall is now handled by the agent itself via `memory_search` and
+//! `memory_get` tools (aligned with Node's tool-based recall pattern).
+//! Auto-capture has been removed; durable memory is written via reactive
+//! memory flush only.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
 use oclaws_agent_core::agent::{Agent, AgentConfig};
-use oclaws_agent_core::auto_recall::AutoRecallConfig;
 use oclaws_llm_core::providers::LlmProvider;
-use oclaws_memory_core::{AutoCaptureConfig, MemoryManager};
 use oclaws_workspace_core::bootstrap::BootstrapRunner;
 use oclaws_workspace_core::memory_flush::{MemoryFlushConfig, SILENT_REPLY_TOKEN};
 use oclaws_workspace_core::system_prompt::{self, RuntimeInfo};
 
 use crate::http::HttpState;
 use crate::http::agent_bridge::ToolRegistryExecutor;
-use crate::memory_bridge::MemoryManagerRecaller;
 
 /// Configuration for the memory-aware pipeline.
 pub struct PipelineConfig {
-    pub auto_recall: AutoRecallConfig,
-    pub auto_capture: AutoCaptureConfig,
     pub memory_flush: MemoryFlushConfig,
 }
 
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
-            auto_recall: AutoRecallConfig {
-                enabled: true,
-                ..AutoRecallConfig::default()
-            },
-            auto_capture: AutoCaptureConfig::default(),
             memory_flush: MemoryFlushConfig::default(),
         }
     }
@@ -65,14 +60,9 @@ pub async fn process_message(
         None,
     );
 
-    // Build agent
+    // Build agent (memory recall is now tool-based via memory_search/memory_get)
     let reply = run_agent(provider, state, &session_id, text).await?;
     info!("[pipeline] agent replied, len={}", reply.len());
-
-    // Auto-capture to memory
-    if let Some(ref mm) = state.memory_manager {
-        try_auto_capture(mm, &session_id, text, &reply).await;
-    }
 
     // Memory flush — write durable memories to workspace files
     if state.workspace.is_some() && state.tool_registry.is_some() {
@@ -142,15 +132,8 @@ async fn run_agent(
     let mut agent = Agent::new(config, provider.clone())
         .with_transcript(session_id);
 
-    // Attach memory recall if available
-    if let Some(ref mm) = state.memory_manager {
-        let recaller = Arc::new(MemoryManagerRecaller::new(mm.clone()));
-        let recall_cfg = AutoRecallConfig {
-            enabled: true,
-            ..AutoRecallConfig::default()
-        };
-        agent = agent.with_auto_recall(recall_cfg, recaller);
-    }
+    // Memory recall is now tool-based (memory_search + memory_get),
+    // no longer injected via auto_recall on the agent.
 
     agent.initialize().await.map_err(|e| e.to_string())?;
 
@@ -171,24 +154,6 @@ async fn run_agent(
     }
 
     result
-}
-
-async fn try_auto_capture(
-    mm: &Arc<MemoryManager>,
-    session_id: &str,
-    user_text: &str,
-    reply: &str,
-) {
-    // Simple heuristic: skip trivially short exchanges
-    if user_text.trim().is_empty() || reply.trim().is_empty() {
-        return;
-    }
-    let content = format!("User: {}\nAssistant: {}", user_text, reply);
-    let source = format!("session:{}", session_id);
-    match mm.add_memory(&content, &source).await {
-        Ok(id) => info!("[pipeline] memory captured: id={}, source={}", id, source),
-        Err(e) => warn!("[pipeline] auto-capture failed: {}", e),
-    }
 }
 
 async fn send_reply(

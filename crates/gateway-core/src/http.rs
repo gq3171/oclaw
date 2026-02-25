@@ -65,6 +65,8 @@ pub struct HttpServer {
     full_config: Option<Arc<RwLock<oclaws_config::settings::Config>>>,
     config_path: Option<PathBuf>,
     needs_hatching: Arc<std::sync::atomic::AtomicBool>,
+    dm_scope: crate::session_key::DmScope,
+    identity_links: Option<Arc<crate::session_key::IdentityLinks>>,
 }
 
 impl HttpServer {
@@ -92,6 +94,8 @@ impl HttpServer {
             full_config: None,
             config_path: None,
             needs_hatching: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            dm_scope: crate::session_key::DmScope::default(),
+            identity_links: None,
         }
     }
 
@@ -156,6 +160,16 @@ impl HttpServer {
         self
     }
 
+    pub fn with_dm_scope(mut self, scope: crate::session_key::DmScope) -> Self {
+        self.dm_scope = scope;
+        self
+    }
+
+    pub fn with_identity_links(mut self, links: Arc<crate::session_key::IdentityLinks>) -> Self {
+        self.identity_links = Some(links);
+        self
+    }
+
     pub fn into_router(self) -> Router {
         let cors = self.build_cors_layer();
         let mut hc = HealthChecker::new();
@@ -185,8 +199,8 @@ impl HttpServer {
             config_path: self.config_path.clone(),
             echo_tracker: Arc::new(tokio::sync::Mutex::new(EchoTracker::default())),
             group_activation: GroupActivation::default(),
-            dm_scope: crate::session_key::DmScope::default(),
-            identity_links: None,
+            dm_scope: self.dm_scope,
+            identity_links: self.identity_links.clone(),
             needs_hatching: self.needs_hatching.clone(),
         });
 

@@ -26,6 +26,8 @@ pub enum Tool {
     ListDir(ListDirTool),
     WebFetch(WebFetchTool),
     Memory(MemoryTool),
+    MemorySearch(MemorySearchTool),
+    MemoryGet(MemoryGetTool),
     Browse(BrowseTool),
     WebSearch(WebSearchTool),
     LinkReader(LinkReaderTool),
@@ -61,6 +63,8 @@ impl Tool {
             Tool::ListDir(_) => "list_dir",
             Tool::WebFetch(_) => "web_fetch",
             Tool::Memory(_) => "memory",
+            Tool::MemorySearch(_) => "memory_search",
+            Tool::MemoryGet(_) => "memory_get",
             Tool::Browse(_) => "browse",
             Tool::WebSearch(_) => "web_search",
             Tool::LinkReader(_) => "link_reader",
@@ -86,6 +90,8 @@ impl Tool {
             Tool::ListDir(_) => "List contents of a directory",
             Tool::WebFetch(_) => "Fetch content from a URL via HTTP GET",
             Tool::Memory(_) => "Store and retrieve key-value memory entries",
+            Tool::MemorySearch(_) => "Mandatory recall step: semantically search memory before answering questions about prior work, decisions, dates, people, preferences, or todos",
+            Tool::MemoryGet(_) => "Read a specific memory entry by ID after memory_search",
             Tool::Browse(_) => "Browser automation: navigate, click, type, screenshot, evaluate JS, get DOM snapshot, console logs, and network requests",
             Tool::WebSearch(_) => "Search the web and return a list of results with titles, URLs, and snippets",
             Tool::LinkReader(_) => "Fetch a URL and extract its main text content",
@@ -149,6 +155,22 @@ impl Tool {
                     "value": { "type": "string" }
                 },
                 "required": ["action"]
+            }),
+            Tool::MemorySearch(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Semantic search query for memory recall" },
+                    "max_results": { "type": "integer", "description": "Maximum results to return (default 5)" },
+                    "min_score": { "type": "number", "description": "Minimum relevance score threshold (0.0-1.0, default 0.0)" }
+                },
+                "required": ["query"]
+            }),
+            Tool::MemoryGet(_) => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Memory entry ID returned by memory_search" }
+                },
+                "required": ["id"]
             }),
             Tool::Browse(_) => serde_json::json!({
                 "type": "object",
@@ -289,6 +311,8 @@ impl Tool {
             Tool::ListDir(tool) => tool.execute(arguments).await,
             Tool::WebFetch(tool) => tool.execute(arguments).await,
             Tool::Memory(tool) => tool.execute(arguments).await,
+            Tool::MemorySearch(tool) => tool.execute(arguments).await,
+            Tool::MemoryGet(tool) => tool.execute(arguments).await,
             Tool::Browse(tool) => tool.execute(arguments).await,
             Tool::WebSearch(tool) => tool.execute(arguments).await,
             Tool::LinkReader(tool) => tool.execute(arguments).await,
@@ -439,6 +463,8 @@ impl ToolRegistry {
         tools.insert("list_dir".to_string(), Tool::ListDir(ListDirTool::new()));
         tools.insert("web_fetch".to_string(), Tool::WebFetch(WebFetchTool::new()));
         tools.insert("memory".to_string(), Tool::Memory(MemoryTool::new()));
+        tools.insert("memory_search".to_string(), Tool::MemorySearch(MemorySearchTool::new()));
+        tools.insert("memory_get".to_string(), Tool::MemoryGet(MemoryGetTool::new()));
         tools.insert("browse".to_string(), Tool::Browse(BrowseTool::new()));
         tools.insert("web_search".to_string(), Tool::WebSearch(WebSearchTool::new()));
         tools.insert("link_reader".to_string(), Tool::LinkReader(LinkReaderTool::new()));
@@ -470,6 +496,19 @@ impl ToolRegistry {
         );
     }
 
+    /// Inject a MemoryManager into the memory_search and memory_get tools,
+    /// replacing the default no-op instances.
+    pub fn with_memory_manager(&mut self, manager: std::sync::Arc<oclaws_memory_core::MemoryManager>) {
+        self.tools.insert(
+            "memory_search".to_string(),
+            Tool::MemorySearch(MemorySearchTool::with_manager(manager.clone())),
+        );
+        self.tools.insert(
+            "memory_get".to_string(),
+            Tool::MemoryGet(MemoryGetTool::with_manager(manager)),
+        );
+    }
+
     pub fn register(&mut self, tool: Tool) {
         self.tools.insert(tool.name().to_string(), tool);
     }
@@ -495,7 +534,7 @@ impl ToolRegistry {
     /// Return only essential tools for LLM function calling (reduces token usage).
     pub fn list_for_llm(&self) -> Vec<serde_json::Value> {
         let essential = [
-            "bash", "web_fetch", "web_search", "browse", "memory",
+            "bash", "web_fetch", "web_search", "browse", "memory_search", "memory_get",
             "link_reader", "media_describe", "cron", "message",
             "sessions_list", "sessions_history", "session_status", "tts",
             "workspace",
@@ -929,6 +968,126 @@ impl MemoryTool {
 }
 
 impl Default for MemoryTool {
+    fn default() -> Self { Self::new() }
+}
+
+/// Semantic memory search tool — aligned with Node's `memory_search`.
+/// Holds an optional MemoryManager; without one, returns empty results.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MemorySearchTool {
+    #[serde(skip)]
+    manager: Option<std::sync::Arc<oclaws_memory_core::MemoryManager>>,
+}
+
+impl std::fmt::Debug for MemorySearchTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemorySearchTool")
+            .field("has_manager", &self.manager.is_some())
+            .finish()
+    }
+}
+
+impl MemorySearchTool {
+    pub fn new() -> Self {
+        Self { manager: None }
+    }
+
+    pub fn with_manager(manager: std::sync::Arc<oclaws_memory_core::MemoryManager>) -> Self {
+        Self { manager: Some(manager) }
+    }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            query: String,
+            max_results: Option<usize>,
+            min_score: Option<f64>,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        let Some(ref mm) = self.manager else {
+            return Ok(serde_json::json!({ "results": [], "note": "memory manager not configured" }));
+        };
+
+        let results = mm.search(&args.query).await
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+
+        let min_score = args.min_score.unwrap_or(0.0);
+        let max_results = args.max_results.unwrap_or(5);
+
+        let filtered: Vec<serde_json::Value> = results.into_iter()
+            .filter(|r| r.score >= min_score)
+            .take(max_results)
+            .map(|r| serde_json::json!({
+                "path": r.path,
+                "snippet": r.snippet,
+                "score": r.score,
+                "source": r.source,
+            }))
+            .collect();
+
+        Ok(serde_json::json!({ "results": filtered }))
+    }
+}
+
+impl Default for MemorySearchTool {
+    fn default() -> Self { Self::new() }
+}
+
+/// Retrieve a specific memory entry by ID — aligned with Node's `memory_get`.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MemoryGetTool {
+    #[serde(skip)]
+    manager: Option<std::sync::Arc<oclaws_memory_core::MemoryManager>>,
+}
+
+impl std::fmt::Debug for MemoryGetTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryGetTool")
+            .field("has_manager", &self.manager.is_some())
+            .finish()
+    }
+}
+
+impl MemoryGetTool {
+    pub fn new() -> Self {
+        Self { manager: None }
+    }
+
+    pub fn with_manager(manager: std::sync::Arc<oclaws_memory_core::MemoryManager>) -> Self {
+        Self { manager: Some(manager) }
+    }
+
+    pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            id: String,
+        }
+
+        let args: Args = serde_json::from_value(arguments)
+            .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+
+        let Some(ref mm) = self.manager else {
+            return Err(crate::ToolError::ExecutionFailed("memory manager not configured".into()));
+        };
+
+        match mm.get_memory(&args.id) {
+            Ok(Some(chunk)) => Ok(serde_json::json!({
+                "id": chunk.id,
+                "path": chunk.path,
+                "content": chunk.content,
+                "source": chunk.source,
+                "updated_at_ms": chunk.updated_at_ms,
+            })),
+            Ok(None) => Ok(serde_json::json!({ "error": "not_found", "id": args.id })),
+            Err(e) => Err(crate::ToolError::ExecutionFailed(e.to_string())),
+        }
+    }
+}
+
+impl Default for MemoryGetTool {
     fn default() -> Self { Self::new() }
 }
 

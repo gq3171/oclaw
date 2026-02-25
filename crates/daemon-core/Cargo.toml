@@ -19,3 +19,6 @@ dirs.workspace = true
 once_cell.workspace = true
 parking_lot.workspace = true
 sysinfo = "0.33"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
