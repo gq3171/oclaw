@@ -54,6 +54,14 @@ impl Workspace {
         self.root.join("MEMORY.md")
     }
 
+    pub fn user_path(&self) -> PathBuf {
+        self.root.join("USER.md")
+    }
+
+    pub async fn has_user(&self) -> bool {
+        tokio::fs::metadata(self.user_path()).await.is_ok()
+    }
+
     pub fn memory_dir(&self) -> PathBuf {
         self.root.join("memory")
     }

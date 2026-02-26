@@ -221,12 +221,14 @@ impl MemoryStore {
         let rows = stmt.query_map(params![query, limit as i64], |row| {
             let rank: f64 = row.get(6)?;
             Ok(MemorySearchResult {
+                id: row.get::<_, i64>(0)?.to_string(),
                 path: row.get(1)?,
                 start_line: row.get::<_, i64>(2)? as usize,
                 end_line: row.get::<_, i64>(3)? as usize,
                 score: -rank,
                 snippet: row.get(4)?,
                 source: row.get(5)?,
+                updated_at_ms: 0,
             })
         })?;
         let mut results = Vec::new();
@@ -274,12 +276,14 @@ impl MemoryStore {
         let rows = stmt.query_map(param_values.as_slice(), |row| {
             let match_score: i64 = row.get(6)?;
             Ok(MemorySearchResult {
+                id: row.get::<_, i64>(0)?.to_string(),
                 path: row.get(1)?,
                 start_line: row.get::<_, i64>(2)? as usize,
                 end_line: row.get::<_, i64>(3)? as usize,
                 score: match_score as f64,
                 snippet: row.get(4)?,
                 source: row.get(5)?,
+                updated_at_ms: 0,
             })
         })?;
         let mut results = Vec::new();
@@ -300,12 +304,14 @@ impl MemoryStore {
         )?;
         let rows = stmt.query_map(params![pattern, limit as i64], |row| {
             Ok(MemorySearchResult {
+                id: row.get::<_, i64>(0)?.to_string(),
                 path: row.get(1)?,
                 start_line: row.get::<_, i64>(2)? as usize,
                 end_line: row.get::<_, i64>(3)? as usize,
                 score: 1.0, // fixed score for LIKE results
                 snippet: row.get(4)?,
                 source: row.get(5)?,
+                updated_at_ms: 0,
             })
         })?;
         let mut results = Vec::new();

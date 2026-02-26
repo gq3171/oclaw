@@ -4,19 +4,86 @@
 //! `memory_get` tools (aligned with Node's tool-based recall pattern).
 //! Auto-capture has been removed; durable memory is written via reactive
 //! memory flush only.
+//!
+//! Agent binding resolution selects the named agent for each message using an
+//! 8-tier priority system (peer > guild-roles > guild > team > account > channel > default).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use oclaws_agent_core::agent::{Agent, AgentConfig};
-use oclaws_llm_core::providers::LlmProvider;
-use oclaws_workspace_core::bootstrap::BootstrapRunner;
-use oclaws_workspace_core::memory_flush::{MemoryFlushConfig, SILENT_REPLY_TOKEN};
-use oclaws_workspace_core::system_prompt::{self, RuntimeInfo};
+use oclaw_config::settings::AgentBinding;
+
+use oclaw_agent_core::agent::{Agent, AgentConfig};
+use oclaw_llm_core::providers::LlmProvider;
+use oclaw_workspace_core::bootstrap::BootstrapRunner;
+use oclaw_workspace_core::memory_flush::{
+    MemoryFlushConfig, SILENT_REPLY_TOKEN, default_flush_prompt, should_run_memory_flush,
+};
+use oclaw_workspace_core::heartbeat::HEARTBEAT_OK_TOKEN;
+use oclaw_workspace_core::system_prompt::{self, RuntimeInfo};
 
 use crate::http::HttpState;
 use crate::http::agent_bridge::ToolRegistryExecutor;
+
+/// Message context extracted from metadata for agent binding resolution.
+#[derive(Debug, Default)]
+pub struct MessageContext<'a> {
+    pub channel: &'a str,
+    pub peer_id: &'a str,
+    pub guild_id: Option<&'a str>,
+    pub team_id: Option<&'a str>,
+    pub account_id: Option<&'a str>,
+    pub role_ids: Vec<String>,
+}
+
+/// Resolve which agent binding applies to this message context.
+///
+/// Evaluates each binding in priority order and returns the agent_id of the
+/// first match. Returns `None` if no bindings are configured or none match.
+pub fn resolve_agent_for_message(
+    bindings: &[AgentBinding],
+    ctx: &MessageContext<'_>,
+) -> Option<String> {
+    let mut best: Option<(u8, &AgentBinding)> = None;
+
+    for binding in bindings {
+        let matches = match binding {
+            AgentBinding::Peer { channel, peer_id, .. } => {
+                channel == ctx.channel && peer_id == ctx.peer_id
+            }
+            AgentBinding::GuildRoles { channel, guild_id, role_ids, .. } => {
+                channel == ctx.channel
+                    && ctx.guild_id.map(|g| g == guild_id).unwrap_or(false)
+                    && !role_ids.is_empty()
+                    && role_ids.iter().all(|r| ctx.role_ids.contains(r))
+            }
+            AgentBinding::Guild { channel, guild_id, .. } => {
+                channel == ctx.channel
+                    && ctx.guild_id.map(|g| g == guild_id).unwrap_or(false)
+            }
+            AgentBinding::Team { channel, team_id, .. } => {
+                channel == ctx.channel
+                    && ctx.team_id.map(|t| t == team_id).unwrap_or(false)
+            }
+            AgentBinding::Account { channel, account_id, .. } => {
+                channel == ctx.channel
+                    && ctx.account_id.map(|a| a == account_id).unwrap_or(false)
+            }
+            AgentBinding::Channel { channel, .. } => channel == ctx.channel,
+            AgentBinding::Default { .. } => true,
+        };
+
+        if matches {
+            let priority = binding.priority();
+            if best.map(|(p, _)| priority < p).unwrap_or(true) {
+                best = Some((priority, binding));
+            }
+        }
+    }
+
+    best.map(|(_, b)| b.agent_id().to_string())
+}
 
 /// Configuration for the memory-aware pipeline.
 pub struct PipelineConfig {
@@ -60,13 +127,44 @@ pub async fn process_message(
         None,
     );
 
+    // Resolve agent binding (8-tier priority routing)
+    let resolved_agent_id = if let Some(ref cfg) = state.full_config {
+        let config = cfg.read().await;
+        if let Some(ref bindings) = config.bindings {
+            let ctx = MessageContext {
+                channel: channel_name,
+                peer_id: metadata.get("user_id").map(|s| s.as_str()).unwrap_or(chat_id),
+                guild_id: metadata.get("guild_id").map(|s| s.as_str()),
+                team_id: metadata.get("team_id").map(|s| s.as_str()),
+                account_id: metadata.get("account_id").map(|s| s.as_str()),
+                role_ids: metadata.get("role_ids")
+                    .map(|r| r.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                    .unwrap_or_default(),
+            };
+            let agent_id = resolve_agent_for_message(bindings, &ctx);
+            if let Some(ref aid) = agent_id {
+                info!("[pipeline] binding matched agent_id={} for channel={}", aid, channel_name);
+            }
+            agent_id
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let agent_id = resolved_agent_id.as_deref().unwrap_or("channel-agent");
+
     // Build agent (memory recall is now tool-based via memory_search/memory_get)
-    let reply = run_agent(provider, state, &session_id, text).await?;
+    let reply = run_agent(provider, state, &session_id, text, agent_id).await?;
     info!("[pipeline] agent replied, len={}", reply.len());
 
-    // Memory flush — write durable memories to workspace files
+    // Memory flush — only triggers near context limit (not every message)
     if state.workspace.is_some() && state.tool_registry.is_some() {
-        try_memory_flush(provider, state, &session_id, text, &reply).await;
+        // TODO: get actual token counts from agent result when agent exposes them
+        // For now use a placeholder; real integration needs AgentRunResult with usage
+        let total_tokens = 0u64;  // Will be wired up when agent exposes usage
+        let compaction_count = 0u64;
+        try_memory_flush(provider, state, &session_id, total_tokens, compaction_count).await;
     }
 
     // Echo tracking
@@ -84,6 +182,7 @@ async fn run_agent(
     state: &HttpState,
     session_id: &str,
     text: &str,
+    agent_id: &str,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let model = provider.default_model().to_string();
 
@@ -96,7 +195,7 @@ async fn run_agent(
 
     // Build runtime info for agent self-awareness
     let runtime = RuntimeInfo {
-        agent_id: Some("channel-agent".to_string()),
+        agent_id: Some(agent_id.to_string()),
         model: Some(model.clone()),
         default_model: Some(provider.default_model().to_string()),
         os: Some(std::env::consts::OS.to_string()),
@@ -127,7 +226,7 @@ async fn run_agent(
         })
     };
 
-    let config = AgentConfig::new("channel-agent", &model, "default")
+    let config = AgentConfig::new(agent_id, &model, "default")
         .with_system_prompt(&prompt);
     let mut agent = Agent::new(config, provider.clone())
         .with_transcript(session_id);
@@ -147,10 +246,29 @@ async fn run_agent(
         agent.run(text).await.map_err(|e| e.to_string().into())
     };
 
-    // Clear hatching flag after successful first-run conversation
+    // After a hatching turn, check if identity is fully personalized.
+    // Require name + at least one extra (emoji/creature/vibe) to avoid
+    // clearing the flag before the multi-turn conversation finishes.
     if is_hatching && result.is_ok() {
-        state.needs_hatching.store(false, std::sync::atomic::Ordering::Relaxed);
-        info!("[pipeline] hatching complete — identity established");
+        if let Some(ref ws) = state.workspace {
+            if let Ok(Some(identity)) = oclaw_workspace_core::identity::AgentIdentity::load(ws).await {
+                let has_name = identity.name.is_some();
+                let has_extras = identity.emoji.is_some()
+                    || identity.creature.is_some()
+                    || identity.vibe.is_some();
+                if has_name && has_extras {
+                    state.needs_hatching.store(false, std::sync::atomic::Ordering::Relaxed);
+                    info!("[pipeline] hatching complete — identity personalized: {}", identity.display_name());
+
+                    // Clear old session transcripts so every channel starts fresh
+                    if let Err(e) = oclaw_agent_core::transcript::Transcript::clear_all_sessions().await {
+                        warn!("[pipeline] failed to clear old session transcripts: {}", e);
+                    } else {
+                        info!("[pipeline] cleared old session transcripts after hatching");
+                    }
+                }
+            }
+        }
     }
 
     result
@@ -168,7 +286,7 @@ async fn send_reply(
     let channel = mgr.get(channel_name).await
         .ok_or_else(|| format!("{} channel not found", channel_name))?;
 
-    let msg = oclaws_channel_core::traits::ChannelMessage {
+    let msg = oclaw_channel_core::traits::ChannelMessage {
         id: uuid::Uuid::new_v4().to_string(),
         channel: channel_name.to_string(),
         sender: "bot".to_string(),
@@ -185,18 +303,33 @@ async fn send_reply(
 
 /// Run a lightweight agent turn to flush durable memories to workspace files.
 ///
-/// Uses the memory flush system prompt from `BootstrapRunner`. The agent writes
-/// key facts to `memory/YYYY-MM-DD.md` via the workspace tool. If nothing is
-/// worth storing, the agent replies with `HEARTBEAT_OK` and we skip silently.
-async fn try_memory_flush(
+/// Triggered only when the session is near its context limit (token threshold),
+/// NOT on every exchange. Mirrors Node's shouldRunMemoryFlush logic.
+pub async fn try_memory_flush(
     provider: &Arc<dyn LlmProvider>,
     state: &HttpState,
     session_id: &str,
-    user_text: &str,
-    reply: &str,
+    total_tokens: u64,
+    compaction_count: u64,
 ) {
-    // Skip trivially short exchanges
-    if user_text.split_whitespace().count() < 5 && reply.split_whitespace().count() < 10 {
+    let config = &state.pipeline_config.memory_flush;
+    if !config.enabled {
+        return;
+    }
+
+    // Get last flush compaction count for this session
+    let last_flush = state.last_flush_compaction_count(session_id);
+
+    // Context window from provider (default 128k tokens)
+    let context_window = 128_000u64;
+
+    if !should_run_memory_flush(
+        total_tokens,
+        context_window,
+        config,
+        last_flush,
+        compaction_count,
+    ) {
         return;
     }
 
@@ -206,35 +339,152 @@ async fn try_memory_flush(
     };
 
     let model = provider.default_model().to_string();
-    let flush_prompt = BootstrapRunner::memory_flush_system_prompt();
+    let flush_prompt = config.prompt.as_deref()
+        .map(|s| s.to_string())
+        .unwrap_or_else(default_flush_prompt);
 
-    let config = AgentConfig::new("memory-flush", &model, "default")
-        .with_system_prompt(flush_prompt)
+    let flush_config = AgentConfig::new("memory-flush", &model, "default")
+        .with_system_prompt(&flush_prompt)
         .with_temperature(0.2);
-    let mut agent = Agent::new(config, provider.clone());
+    let mut agent = Agent::new(flush_config, provider.clone());
     if let Err(e) = agent.initialize().await {
         warn!("[pipeline] memory-flush agent init failed: {}", e);
         return;
     }
 
-    // Feed the conversation as context for the flush agent
-    let context = format!(
-        "Session: {}\n\nUser: {}\n\nAssistant: {}",
-        session_id, user_text, reply
-    );
-
     let executor = ToolRegistryExecutor::new(registry.clone());
-    match agent.run_with_tools(&context, &executor).await {
-        Ok(flush_reply) => {
-            let trimmed = flush_reply.trim();
-            if trimmed == SILENT_REPLY_TOKEN || trimmed.is_empty() {
+    match agent.run_with_tools("Flush session memories now.", &executor).await {
+        Ok(reply) => {
+            let trimmed = reply.trim();
+            if trimmed == SILENT_REPLY_TOKEN
+                || trimmed == HEARTBEAT_OK_TOKEN
+                || trimmed.is_empty()
+            {
                 info!("[pipeline] memory-flush: nothing to store");
             } else {
                 info!("[pipeline] memory-flush: wrote durable memories");
             }
+            // Record that we flushed at this compaction level
+            state.set_last_flush_compaction_count(session_id, compaction_count);
         }
         Err(e) => {
             warn!("[pipeline] memory-flush agent error: {}", e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oclaw_config::settings::AgentBinding;
+
+    fn peer(channel: &str, peer_id: &str, agent_id: &str) -> AgentBinding {
+        AgentBinding::Peer {
+            channel: channel.to_string(),
+            peer_id: peer_id.to_string(),
+            agent_id: agent_id.to_string(),
+        }
+    }
+    fn guild_roles(channel: &str, guild_id: &str, roles: &[&str], agent_id: &str) -> AgentBinding {
+        AgentBinding::GuildRoles {
+            channel: channel.to_string(),
+            guild_id: guild_id.to_string(),
+            role_ids: roles.iter().map(|s| s.to_string()).collect(),
+            agent_id: agent_id.to_string(),
+        }
+    }
+    fn guild(channel: &str, guild_id: &str, agent_id: &str) -> AgentBinding {
+        AgentBinding::Guild {
+            channel: channel.to_string(),
+            guild_id: guild_id.to_string(),
+            agent_id: agent_id.to_string(),
+        }
+    }
+    fn channel_binding(channel: &str, agent_id: &str) -> AgentBinding {
+        AgentBinding::Channel { channel: channel.to_string(), agent_id: agent_id.to_string() }
+    }
+    fn default_binding(agent_id: &str) -> AgentBinding {
+        AgentBinding::Default { agent_id: agent_id.to_string() }
+    }
+
+    #[test]
+    fn peer_beats_channel() {
+        let bindings = vec![
+            channel_binding("discord", "channel-agent"),
+            peer("discord", "u1", "vip-agent"),
+        ];
+        let ctx = MessageContext { channel: "discord", peer_id: "u1", ..Default::default() };
+        assert_eq!(resolve_agent_for_message(&bindings, &ctx), Some("vip-agent".to_string()));
+    }
+
+    #[test]
+    fn guild_roles_beats_guild() {
+        let bindings = vec![
+            guild("discord", "G1", "guild-agent"),
+            guild_roles("discord", "G1", &["admin"], "admin-agent"),
+        ];
+        let ctx = MessageContext {
+            channel: "discord",
+            peer_id: "u1",
+            guild_id: Some("G1"),
+            role_ids: vec!["admin".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(resolve_agent_for_message(&bindings, &ctx), Some("admin-agent".to_string()));
+    }
+
+    #[test]
+    fn guild_roles_skipped_when_roles_missing() {
+        let bindings = vec![
+            guild("discord", "G1", "guild-agent"),
+            guild_roles("discord", "G1", &["admin"], "admin-agent"),
+        ];
+        // User has no roles — falls back to guild binding
+        let ctx = MessageContext {
+            channel: "discord",
+            peer_id: "u2",
+            guild_id: Some("G1"),
+            role_ids: vec![],
+            ..Default::default()
+        };
+        assert_eq!(resolve_agent_for_message(&bindings, &ctx), Some("guild-agent".to_string()));
+    }
+
+    #[test]
+    fn default_fallback_when_no_match() {
+        let bindings = vec![
+            peer("telegram", "123", "tg-agent"),
+            default_binding("fallback"),
+        ];
+        let ctx = MessageContext { channel: "slack", peer_id: "U9", ..Default::default() };
+        assert_eq!(resolve_agent_for_message(&bindings, &ctx), Some("fallback".to_string()));
+    }
+
+    #[test]
+    fn no_match_returns_none() {
+        let bindings = vec![peer("telegram", "123", "tg-agent")];
+        let ctx = MessageContext { channel: "slack", peer_id: "X", ..Default::default() };
+        assert_eq!(resolve_agent_for_message(&bindings, &ctx), None);
+    }
+
+    #[test]
+    fn empty_bindings_returns_none() {
+        let ctx = MessageContext { channel: "telegram", peer_id: "1", ..Default::default() };
+        assert_eq!(resolve_agent_for_message(&[], &ctx), None);
+    }
+
+    #[test]
+    fn agent_binding_json_roundtrip() {
+        let bindings: Vec<AgentBinding> = serde_json::from_str(r#"[
+            {"type": "peer",        "channel": "telegram", "peerId": "123",  "agentId": "vip"},
+            {"type": "guild-roles", "channel": "discord",  "guildId": "G1",  "roleIds": ["admin"], "agentId": "adm"},
+            {"type": "guild",       "channel": "discord",  "guildId": "G1",  "agentId": "gld"},
+            {"type": "channel",     "channel": "slack",    "agentId": "slk"},
+            {"type": "default",     "agentId": "def"}
+        ]"#).unwrap();
+        assert_eq!(bindings.len(), 5);
+        assert_eq!(bindings[0].agent_id(), "vip");
+        assert_eq!(bindings[0].priority(), 1);
+        assert_eq!(bindings[4].priority(), 7);
     }
 }

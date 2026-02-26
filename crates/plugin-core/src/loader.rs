@@ -16,7 +16,7 @@ impl PluginLoader {
         let mut plugin_dirs = Vec::new();
 
         if let Some(data_dir) = dirs::data_local_dir() {
-            plugin_dirs.push(data_dir.join("oclaws").join("plugins"));
+            plugin_dirs.push(data_dir.join("oclaw").join("plugins"));
         }
 
         if let Ok(cwd) = std::env::current_dir() {
@@ -169,9 +169,32 @@ pub fn create_default_manifest(plugin_id: &str, name: &str, version: &str) -> Pl
         builtin: false,
         kind: None,
         config_schema: None,
-        ui_hints: HashMap::new(),
+        ui_hints: None,
         channels: Vec::new(),
         providers: Vec::new(),
         skills: Vec::new(),
     }
+}
+
+/// Validate plugin config against the manifest's JSON Schema (required-fields check).
+/// Does not require a jsonschema crate — performs basic required-field presence check.
+pub fn validate_plugin_config(
+    manifest: &crate::manifest::PluginManifest,
+    config: &serde_json::Value,
+) -> Result<(), String> {
+    if let Some(schema) = &manifest.config_schema {
+        if let Some(required) = schema.get("required").and_then(|r| r.as_array()) {
+            for field in required {
+                if let Some(field_name) = field.as_str() {
+                    if config.get(field_name).is_none() {
+                        return Err(format!(
+                            "Plugin '{}' config missing required field: {}",
+                            manifest.id, field_name
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }

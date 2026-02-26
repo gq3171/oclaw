@@ -31,7 +31,7 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bindings: Option<serde_json::Value>,
+    pub bindings: Option<Vec<AgentBinding>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcast: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1169,6 +1169,110 @@ pub struct MemoryConfig {
     pub text_weight: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_index: Option<bool>,
+}
+
+/// Agent binding rule — maps a message context to a named agent.
+///
+/// Bindings are evaluated in priority order (lowest number = highest priority).
+/// The first binding that matches the incoming message determines which agent
+/// is used to handle it.
+///
+/// In `config.json`, bindings is an array:
+/// ```json
+/// "bindings": [
+///   { "type": "peer",        "channel": "telegram", "peerId": "123", "agentId": "vip-agent" },
+///   { "type": "guild-roles", "channel": "discord",  "guildId": "G1", "roleIds": ["admin"], "agentId": "admin-agent" },
+///   { "type": "guild",       "channel": "discord",  "guildId": "G1", "agentId": "guild-agent" },
+///   { "type": "team",        "channel": "slack",    "teamId": "T1",  "agentId": "work-agent" },
+///   { "type": "account",     "channel": "slack",    "accountId": "A1","agentId": "acct-agent" },
+///   { "type": "channel",     "channel": "telegram", "agentId": "tg-agent" },
+///   { "type": "default",                            "agentId": "fallback" }
+/// ]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum AgentBinding {
+    /// Priority 1 — exact peer on a specific channel.
+    Peer {
+        channel: String,
+        #[serde(rename = "peerId")]
+        peer_id: String,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+    },
+    /// Priority 2 — guild member with all specified roles (Discord, Slack with groups).
+    GuildRoles {
+        channel: String,
+        #[serde(rename = "guildId")]
+        guild_id: String,
+        #[serde(rename = "roleIds")]
+        role_ids: Vec<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+    },
+    /// Priority 3 — any message in a specific guild/server/workspace.
+    Guild {
+        channel: String,
+        #[serde(rename = "guildId")]
+        guild_id: String,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+    },
+    /// Priority 4 — Slack team / MS Teams team.
+    Team {
+        channel: String,
+        #[serde(rename = "teamId")]
+        team_id: String,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+    },
+    /// Priority 5 — messages from a specific account on a channel.
+    Account {
+        channel: String,
+        #[serde(rename = "accountId")]
+        account_id: String,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+    },
+    /// Priority 6 — any message from a named channel (platform).
+    Channel {
+        channel: String,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+    },
+    /// Priority 7 — catch-all default.
+    Default {
+        #[serde(rename = "agentId")]
+        agent_id: String,
+    },
+}
+
+impl AgentBinding {
+    /// The agent ID this binding routes to.
+    pub fn agent_id(&self) -> &str {
+        match self {
+            Self::Peer       { agent_id, .. } => agent_id,
+            Self::GuildRoles { agent_id, .. } => agent_id,
+            Self::Guild      { agent_id, .. } => agent_id,
+            Self::Team       { agent_id, .. } => agent_id,
+            Self::Account    { agent_id, .. } => agent_id,
+            Self::Channel    { agent_id, .. } => agent_id,
+            Self::Default    { agent_id }     => agent_id,
+        }
+    }
+
+    /// Numeric priority tier (lower = evaluated first).
+    pub fn priority(&self) -> u8 {
+        match self {
+            Self::Peer       { .. } => 1,
+            Self::GuildRoles { .. } => 2,
+            Self::Guild      { .. } => 3,
+            Self::Team       { .. } => 4,
+            Self::Account    { .. } => 5,
+            Self::Channel    { .. } => 6,
+            Self::Default    { .. } => 7,
+        }
+    }
 }
 
 #[cfg(test)]

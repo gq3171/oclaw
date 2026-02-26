@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-memory-core"
+name = "oclaw-memory-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -17,3 +17,4 @@ dirs.workspace = true
 rusqlite.workspace = true
 reqwest.workspace = true
 async-trait.workspace = true
+tiktoken-rs = { workspace = true }

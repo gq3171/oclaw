@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-plugin-core"
+name = "oclaw-plugin-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -7,51 +7,62 @@ pub struct PluginManifest {
     pub id: String,
     pub name: String,
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
     pub entry_point: String,
+    #[serde(default)]
     pub dependencies: HashMap<String, String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub optional_dependencies: HashMap<String, String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<HookDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub platform: Option<PlatformRequirements>,
     #[serde(default)]
     pub builtin: bool,
-    /// Plugin kind — e.g. "memory" for memory-slot plugins.
+    /// Plugin kind: "memory" | "channel" | "provider" | "tool".
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
-    /// JSON Schema for plugin config validation.
+    /// JSON Schema for plugin configuration validation.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub config_schema: Option<serde_json::Value>,
-    /// UI hints for config fields.
-    #[serde(default)]
-    pub ui_hints: HashMap<String, UiHint>,
-    /// Channel IDs this plugin provides.
-    #[serde(default)]
+    /// UI hints for config fields (label, help, sensitive, placeholder).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_hints: Option<HashMap<String, UiHint>>,
+    /// Channels this plugin supports (informational).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub channels: Vec<String>,
-    /// Provider IDs this plugin provides.
-    #[serde(default)]
+    /// Providers this plugin supports (informational).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<String>,
     /// Skill directories this plugin provides.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+/// UI rendering hints for a plugin configuration field.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiHint {
+    /// Display label for the field.
     pub label: Option<String>,
+    /// Help text shown below the field.
     pub help: Option<String>,
-    #[serde(default)]
-    pub advanced: bool,
+    /// Whether the field contains sensitive data (mask in UI).
     #[serde(default)]
     pub sensitive: bool,
+    /// Placeholder text for empty fields.
     pub placeholder: Option<String>,
 }
 

@@ -9,7 +9,7 @@ use axum::{
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use oclaws_config::settings::Gateway;
+use oclaw_config::settings::Gateway;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,22 +21,22 @@ use tower_http::trace::TraceLayer;
 use tower_http::services::ServeDir;
 use tracing::{error, info};
 
-use oclaws_llm_core::providers::LlmProvider;
-use oclaws_plugin_core::HookPipeline;
-use oclaws_channel_core::ChannelManager;
-use oclaws_channel_core::group_gate::GroupActivation;
-use oclaws_agent_core::EchoTracker;
-use oclaws_doctor_core::{HealthChecker, SystemHealthCheck};
-use oclaws_tools_core::tool::ToolRegistry;
-use oclaws_plugin_core::PluginRegistrations;
-use oclaws_memory_core::MemoryManager;
+use oclaw_llm_core::providers::LlmProvider;
+use oclaw_plugin_core::HookPipeline;
+use oclaw_channel_core::ChannelManager;
+use oclaw_channel_core::group_gate::GroupActivation;
+use oclaw_agent_core::EchoTracker;
+use oclaw_doctor_core::{HealthChecker, SystemHealthCheck};
+use oclaw_tools_core::tool::ToolRegistry;
+use oclaw_plugin_core::PluginRegistrations;
+use oclaw_memory_core::MemoryManager;
 
 use crate::auth::AuthState;
 use crate::error::{GatewayError, GatewayResult};
 use crate::message::MessageHandler;
 use crate::server::GatewayServer;
-use oclaws_protocol::frames::{ErrorDetails, GatewayFrame, HelloOk, ServerFeatures, ServerInfo, Policy};
-use oclaws_protocol::snapshot::{AuthMode, Snapshot, StateVersion};
+use oclaw_protocol::frames::{ErrorDetails, GatewayFrame, HelloOk, ServerFeatures, ServerInfo, Policy};
+use oclaw_protocol::snapshot::{AuthMode, Snapshot, StateVersion};
 
 pub mod agent_bridge;
 pub mod auth;
@@ -59,10 +59,10 @@ pub struct HttpServer {
     channel_manager: Option<Arc<RwLock<ChannelManager>>>,
     tool_registry: Option<Arc<ToolRegistry>>,
     plugin_registrations: Option<Arc<PluginRegistrations>>,
-    cron_service: Option<Arc<oclaws_cron_core::CronService>>,
+    cron_service: Option<Arc<oclaw_cron_core::CronService>>,
     memory_manager: Option<Arc<MemoryManager>>,
-    workspace: Option<Arc<oclaws_workspace_core::files::Workspace>>,
-    full_config: Option<Arc<RwLock<oclaws_config::settings::Config>>>,
+    workspace: Option<Arc<oclaw_workspace_core::files::Workspace>>,
+    full_config: Option<Arc<RwLock<oclaw_config::settings::Config>>>,
     config_path: Option<PathBuf>,
     needs_hatching: Arc<std::sync::atomic::AtomicBool>,
     dm_scope: crate::session_key::DmScope,
@@ -134,7 +134,7 @@ impl HttpServer {
         self
     }
 
-    pub fn with_cron_service(mut self, svc: Arc<oclaws_cron_core::CronService>) -> Self {
+    pub fn with_cron_service(mut self, svc: Arc<oclaw_cron_core::CronService>) -> Self {
         self.cron_service = Some(svc);
         self
     }
@@ -144,12 +144,12 @@ impl HttpServer {
         self
     }
 
-    pub fn with_workspace(mut self, workspace: Arc<oclaws_workspace_core::files::Workspace>) -> Self {
+    pub fn with_workspace(mut self, workspace: Arc<oclaw_workspace_core::files::Workspace>) -> Self {
         self.workspace = Some(workspace);
         self
     }
 
-    pub fn with_full_config(mut self, config: oclaws_config::settings::Config, path: PathBuf) -> Self {
+    pub fn with_full_config(mut self, config: oclaw_config::settings::Config, path: PathBuf) -> Self {
         self.full_config = Some(Arc::new(RwLock::new(config)));
         self.config_path = Some(path);
         self
@@ -202,6 +202,8 @@ impl HttpServer {
             dm_scope: self.dm_scope,
             identity_links: self.identity_links.clone(),
             needs_hatching: self.needs_hatching.clone(),
+            pipeline_config: Arc::new(crate::pipeline::PipelineConfig::default()),
+            flush_tracker: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         });
 
         // Start the cron scheduler background loop
@@ -239,6 +241,7 @@ impl HttpServer {
             .route("/v1/responses", post(routes::responses_handler))
             .route("/ws", get(ws_handler))
             .route("/agent/status", get(routes::agent_status_handler))
+            .route("/transcript/{session_key}", get(routes::transcript_history_handler))
             .route("/sessions", get(routes::sessions_list_handler))
             .route("/sessions/{key}", delete(routes::sessions_delete_handler))
             .route("/config", get(routes::config_get_handler))
@@ -348,7 +351,7 @@ impl HttpServer {
                     provider, hb_channel_mgr,
                 ),
             );
-            let hb_config = oclaws_workspace_core::heartbeat::HeartbeatConfig::default();
+            let hb_config = oclaw_workspace_core::heartbeat::HeartbeatConfig::default();
             let mut runner = crate::heartbeat_runner::HeartbeatRunner::new(
                 hb_config, workspace, delivery,
             );
@@ -415,9 +418,9 @@ impl HttpServer {
     fn build_cron_scheduler(
         &self,
     ) -> (
-        Option<Arc<oclaws_cron_core::scheduler::CronScheduler>>,
-        Option<oclaws_cron_core::events::CronEventSender>,
-        Option<Arc<oclaws_cron_core::run_log::RunLog>>,
+        Option<Arc<oclaw_cron_core::scheduler::CronScheduler>>,
+        Option<oclaw_cron_core::events::CronEventSender>,
+        Option<Arc<oclaw_cron_core::run_log::RunLog>>,
     ) {
         let (Some(cron_svc), Some(provider)) =
             (&self.cron_service, &self.llm_provider)
@@ -438,13 +441,13 @@ impl HttpServer {
 
         let log_dir = dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("oclaws")
+            .join("oclaw")
             .join("cron")
             .join("logs");
-        let run_log = Arc::new(oclaws_cron_core::run_log::RunLog::new(log_dir));
-        let (events_tx, _) = oclaws_cron_core::events::event_channel();
+        let run_log = Arc::new(oclaw_cron_core::run_log::RunLog::new(log_dir));
+        let (events_tx, _) = oclaw_cron_core::events::event_channel();
 
-        let scheduler = Arc::new(oclaws_cron_core::scheduler::CronScheduler::new(
+        let scheduler = Arc::new(oclaw_cron_core::scheduler::CronScheduler::new(
             cron_svc.clone(),
             Arc::new(exec),
             run_log.clone(),
@@ -465,21 +468,44 @@ pub struct HttpState {
     pub channel_manager: Option<Arc<RwLock<ChannelManager>>>,
     pub tool_registry: Option<Arc<ToolRegistry>>,
     pub plugin_registrations: Option<Arc<PluginRegistrations>>,
-    pub cron_service: Option<Arc<oclaws_cron_core::CronService>>,
-    pub cron_scheduler: Option<Arc<oclaws_cron_core::scheduler::CronScheduler>>,
-    pub cron_events: Option<oclaws_cron_core::events::CronEventSender>,
-    pub cron_run_log: Option<Arc<oclaws_cron_core::run_log::RunLog>>,
+    pub cron_service: Option<Arc<oclaw_cron_core::CronService>>,
+    pub cron_scheduler: Option<Arc<oclaw_cron_core::scheduler::CronScheduler>>,
+    pub cron_events: Option<oclaw_cron_core::events::CronEventSender>,
+    pub cron_run_log: Option<Arc<oclaw_cron_core::run_log::RunLog>>,
     pub memory_manager: Option<Arc<MemoryManager>>,
-    pub workspace: Option<Arc<oclaws_workspace_core::files::Workspace>>,
+    pub workspace: Option<Arc<oclaw_workspace_core::files::Workspace>>,
     pub metrics: Arc<metrics::AppMetrics>,
     pub health_checker: Arc<HealthChecker>,
-    pub full_config: Option<Arc<RwLock<oclaws_config::settings::Config>>>,
+    pub full_config: Option<Arc<RwLock<oclaw_config::settings::Config>>>,
     pub config_path: Option<PathBuf>,
     pub echo_tracker: Arc<tokio::sync::Mutex<EchoTracker>>,
     pub group_activation: GroupActivation,
     pub dm_scope: crate::session_key::DmScope,
     pub identity_links: Option<Arc<crate::session_key::IdentityLinks>>,
     pub needs_hatching: Arc<std::sync::atomic::AtomicBool>,
+    pub pipeline_config: Arc<crate::pipeline::PipelineConfig>,
+    /// Per-session compaction count at which flush last ran. u64::MAX = never flushed.
+    pub flush_tracker: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+}
+
+impl HttpState {
+    /// Returns the compaction count at which memory flush last ran for this session.
+    /// Returns u64::MAX if the session has never been flushed.
+    pub fn last_flush_compaction_count(&self, session_id: &str) -> u64 {
+        self.flush_tracker
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(session_id)
+            .copied()
+            .unwrap_or(u64::MAX)
+    }
+
+    /// Record that a memory flush ran for `session_id` at `compaction_count`.
+    pub fn set_last_flush_compaction_count(&self, session_id: &str, compaction_count: u64) {
+        if let Ok(mut map) = self.flush_tracker.lock() {
+            map.insert(session_id.to_string(), compaction_count);
+        }
+    }
 }
 
 async fn health_handler() -> impl IntoResponse {
@@ -525,7 +551,7 @@ async fn plugin_route_handler(
 
 async fn root_handler() -> impl IntoResponse {
     Json(serde_json::json!({
-        "service": "oclaws-gateway",
+        "service": "oclaw-gateway",
         "version": env!("CARGO_PKG_VERSION"),
         "endpoints": [
             "/health",
@@ -581,7 +607,7 @@ async fn handle_ws(
     let (mut write, mut read) = socket.split();
     
     let hello = HelloOk {
-        frame_type: oclaws_protocol::frames::HelloOkType::HelloOk,
+        frame_type: oclaw_protocol::frames::HelloOkType::HelloOk,
         protocol: 1,
         server: ServerInfo {
             version: "0.1.0".to_string(),
@@ -676,7 +702,7 @@ async fn handle_ws(
 async fn handle_frame(
     frame: GatewayFrame,
     state: &Arc<HttpState>,
-) -> Result<Option<oclaws_protocol::frames::ResponseFrame>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Option<oclaw_protocol::frames::ResponseFrame>, Box<dyn std::error::Error + Send + Sync>> {
     match frame {
         GatewayFrame::Request(req) => {
             let response = dispatch_rpc(&req.id, &req.method, req.params, state).await;
@@ -692,7 +718,7 @@ async fn dispatch_rpc(
     method: &str,
     params: Option<serde_json::Value>,
     state: &Arc<HttpState>,
-) -> oclaws_protocol::frames::ResponseFrame {
+) -> oclaw_protocol::frames::ResponseFrame {
     let p = params.unwrap_or(serde_json::Value::Null);
     let result = match method {
         // ── Session RPCs ──
@@ -967,10 +993,10 @@ async fn rpc_chat_send(p: &serde_json::Value, state: &HttpState) -> RpcResult {
         agent_bridge::agent_reply_with_session(provider, &executor, message, session_id).await
             .unwrap_or_else(|e| format!("Agent error: {}", e))
     } else {
-        let request = oclaws_llm_core::chat::ChatRequest {
+        let request = oclaw_llm_core::chat::ChatRequest {
             model: provider.default_model().to_string(),
-            messages: vec![oclaws_llm_core::chat::ChatMessage {
-                role: oclaws_llm_core::chat::MessageRole::User,
+            messages: vec![oclaw_llm_core::chat::ChatMessage {
+                role: oclaw_llm_core::chat::MessageRole::User,
                 content: message.to_string(),
                 name: None, tool_calls: None, tool_call_id: None,
             }],
@@ -1125,7 +1151,7 @@ async fn rpc_config_set(p: &serde_json::Value, state: &HttpState) -> RpcResult {
     let Some(ref cfg) = state.full_config else {
         return Err(rpc_error("NO_CONFIG", "No configuration loaded"));
     };
-    let new_config: oclaws_config::settings::Config = serde_json::from_value(p.clone())
+    let new_config: oclaw_config::settings::Config = serde_json::from_value(p.clone())
         .map_err(|e| rpc_error("INVALID_PARAMS", &format!("Invalid config: {}", e)))?;
 
     {
@@ -1198,7 +1224,7 @@ async fn rpc_cron_create(p: &serde_json::Value, state: &HttpState) -> RpcResult 
         .ok_or_else(|| rpc_error("NO_CRON", "Cron service not configured"))?;
 
     // Accept a full CronJob JSON or build one from simple params
-    let job: oclaws_cron_core::CronJob = serde_json::from_value(p.clone())
+    let job: oclaw_cron_core::CronJob = serde_json::from_value(p.clone())
         .map_err(|e| rpc_error("INVALID_PARAMS", &format!("Invalid job: {}", e)))?;
 
     let created = svc.add(job).await

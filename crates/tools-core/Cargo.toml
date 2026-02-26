@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-tools-core"
+name = "oclaw-tools-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -18,5 +18,5 @@ base64.workspace = true
 urlencoding.workspace = true
 url.workspace = true
 cron.workspace = true
-oclaws-browser-core = { path = "../browser-core" }
-oclaws-memory-core = { path = "../memory-core" }
+oclaw-browser-core = { path = "../browser-core" }
+oclaw-memory-core = { path = "../memory-core" }

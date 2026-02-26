@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tracing::{info, warn, error};
 
 use crate::http::HttpState;
-use oclaws_memory_core::MemoryManager;
+use oclaw_memory_core::MemoryManager;
 
 /// Fire-and-forget: store a user↔assistant exchange into long-term memory.
 fn spawn_memory_capture(mm: Arc<MemoryManager>, user_text: String, assistant_text: String) {
@@ -112,15 +112,15 @@ pub struct ChunkDelta {
     pub content: Option<String>,
 }
 
-fn to_llm_messages(msgs: &[ChatMessage]) -> Vec<oclaws_llm_core::chat::ChatMessage> {
+fn to_llm_messages(msgs: &[ChatMessage]) -> Vec<oclaw_llm_core::chat::ChatMessage> {
     msgs.iter().map(|m| {
         let role = match m.role.as_str() {
-            "system" => oclaws_llm_core::chat::MessageRole::System,
-            "assistant" => oclaws_llm_core::chat::MessageRole::Assistant,
-            "tool" => oclaws_llm_core::chat::MessageRole::Tool,
-            _ => oclaws_llm_core::chat::MessageRole::User,
+            "system" => oclaw_llm_core::chat::MessageRole::System,
+            "assistant" => oclaw_llm_core::chat::MessageRole::Assistant,
+            "tool" => oclaw_llm_core::chat::MessageRole::Tool,
+            _ => oclaw_llm_core::chat::MessageRole::User,
         };
-        oclaws_llm_core::chat::ChatMessage {
+        oclaw_llm_core::chat::ChatMessage {
             role,
             content: m.content.clone(),
             name: m.name.clone(),
@@ -135,7 +135,18 @@ pub async fn chat_completions_handler(
     _headers: HeaderMap,
     Json(payload): Json<ChatCompletionsRequest>,
 ) -> Response {
-    info!("Chat completions request for model: {}", payload.model);
+    let is_hatching = state.needs_hatching.load(std::sync::atomic::Ordering::Relaxed);
+    info!(
+        "Chat completions: model={}, messages={}, hatching={}",
+        payload.model, payload.messages.len(), is_hatching
+    );
+    // Log message roles for debugging hatching conversation flow
+    if is_hatching {
+        for (i, m) in payload.messages.iter().enumerate() {
+            let preview: String = m.content.chars().take(60).collect();
+            info!("  [{}] {}: {}", i, m.role, preview);
+        }
+    }
 
     let provider = match &state.llm_provider {
         Some(p) => p.clone(),
@@ -143,6 +154,18 @@ pub async fn chat_completions_handler(
     };
 
     let mut messages = to_llm_messages(&payload.messages);
+
+    // Inject hatching system prompt if first run
+    if is_hatching {
+        let hatching_prompt = oclaw_workspace_core::bootstrap::BootstrapRunner::hatching_system_prompt();
+        messages.insert(0, oclaw_llm_core::chat::ChatMessage {
+            role: oclaw_llm_core::chat::MessageRole::System,
+            content: hatching_prompt.to_string(),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
 
     // Memory recall: inject relevant context from long-term memory
     if let Some(ref mm) = state.memory_manager {
@@ -152,13 +175,13 @@ pub async fn chat_completions_handler(
             .unwrap_or_default();
         if !query.is_empty() {
             let recaller = crate::memory_bridge::MemoryManagerRecaller::new(mm.clone());
-            let results = oclaws_agent_core::auto_recall::MemoryRecaller::recall(
+            let results = oclaw_agent_core::auto_recall::MemoryRecaller::recall(
                 &recaller, &query, 5, 0.3,
             ).await;
-            if let Some(ctx_msg) = oclaws_agent_core::auto_recall::format_recall_context(&results) {
+            if let Some(ctx_msg) = oclaw_agent_core::auto_recall::format_recall_context(&results) {
                 // Insert recall context right after any system messages
                 let insert_pos = messages.iter()
-                    .position(|m| m.role != oclaws_llm_core::chat::MessageRole::System)
+                    .position(|m| m.role != oclaw_llm_core::chat::MessageRole::System)
                     .unwrap_or(0);
                 messages.insert(insert_pos, ctx_msg);
             }
@@ -171,20 +194,41 @@ pub async fn chat_completions_handler(
         .map(|m| m.content.clone())
         .unwrap_or_default();
 
-    let request = oclaws_llm_core::chat::ChatRequest {
+    // Build tool schemas for hatching mode
+    let hatching_tools: Option<Vec<oclaw_llm_core::chat::Tool>> = if is_hatching {
+        state.tool_registry.as_ref().map(|r| {
+            r.list_for_llm().into_iter().filter_map(|v| {
+                Some(oclaw_llm_core::chat::Tool {
+                    type_: "function".to_string(),
+                    function: oclaw_llm_core::chat::ToolFunction {
+                        name: v["name"].as_str()?.to_string(),
+                        description: v["description"].as_str().unwrap_or("").to_string(),
+                        parameters: v["parameters"].clone(),
+                    },
+                })
+            }).collect()
+        })
+    } else {
+        None
+    };
+
+    // During hatching, force non-streaming so we can run the tool loop server-side
+    let force_non_stream = is_hatching;
+
+    let request = oclaw_llm_core::chat::ChatRequest {
         model: payload.model.clone(),
         messages,
         temperature: payload.temperature,
         top_p: None,
         max_tokens: payload.max_tokens,
         stop: None,
-        tools: None,
+        tools: hatching_tools.clone(),
         tool_choice: None,
-        stream: Some(payload.stream),
+        stream: Some(payload.stream && !force_non_stream),
         response_format: None,
     };
 
-    if payload.stream {
+    if payload.stream && !force_non_stream {
         let model_name = payload.model.clone();
         let mm_for_stream = state.memory_manager.clone();
         let user_q_for_stream = user_query_for_capture.clone();
@@ -265,46 +309,209 @@ pub async fn chat_completions_handler(
             }
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": {"message": sanitize_error(&e.to_string()), "type": "server_error"}}))).into_response(),
         }
+    } else if is_hatching && state.tool_registry.is_some() {
+        // Hatching mode: inline tool execution loop
+        hatching_tool_loop(
+            &provider, &state, &payload, request, hatching_tools,
+            &user_query_for_capture,
+        ).await
     } else {
-        match provider.chat(request).await {
-            Ok(completion) => {
-                // Memory capture: store user↔assistant exchange
-                let assistant_text = completion.choices.first()
-                    .map(|c| c.message.content.clone())
-                    .unwrap_or_default();
-                if let Some(ref mm) = state.memory_manager {
-                    spawn_memory_capture(mm.clone(), user_query_for_capture, assistant_text);
-                }
+        // Standard non-streaming path
+        non_streaming_response(
+            &provider, &state, request, &user_query_for_capture,
+        ).await
+    }
+}
 
-                let choices: Vec<Choice> = completion.choices.iter().map(|c| Choice {
-                    index: c.index,
-                    message: ChatMessage {
-                        role: "assistant".to_string(),
-                        content: c.message.content.clone(),
-                        name: c.message.name.clone(),
-                        tool_calls: None,
-                        tool_call_id: c.message.tool_call_id.clone(),
-                    },
-                    finish_reason: c.finish_reason.clone().unwrap_or("stop".to_string()),
-                }).collect();
+/// Hatching mode: run LLM with tool execution loop until we get a pure-text reply.
+async fn hatching_tool_loop(
+    provider: &Arc<dyn oclaw_llm_core::providers::LlmProvider>,
+    state: &Arc<HttpState>,
+    payload: &ChatCompletionsRequest,
+    initial_request: oclaw_llm_core::chat::ChatRequest,
+    tools: Option<Vec<oclaw_llm_core::chat::Tool>>,
+    user_query: &str,
+) -> Response {
+    let registry = state.tool_registry.as_ref().unwrap();
+    let mut loop_messages = initial_request.messages.clone();
+    let mut final_content = String::new();
+    let mut last_model = payload.model.clone();
+    let mut last_id = String::new();
 
-                let usage = completion.usage.map(|u| Usage {
-                    prompt_tokens: u.prompt_tokens,
-                    completion_tokens: u.completion_tokens,
-                    total_tokens: u.total_tokens,
-                }).unwrap_or(Usage { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+    for _round in 0..10 {
+        let req = oclaw_llm_core::chat::ChatRequest {
+            model: payload.model.clone(),
+            messages: loop_messages.clone(),
+            temperature: payload.temperature,
+            top_p: None,
+            max_tokens: payload.max_tokens,
+            stop: None,
+            tools: tools.clone(),
+            tool_choice: None,
+            stream: Some(false),
+            response_format: None,
+        };
 
-                Json(ChatCompletionsResponse {
-                    id: completion.id,
-                    object: "chat.completion".to_string(),
-                    created: completion.created,
-                    model: completion.model,
-                    choices,
-                    usage,
-                }).into_response()
+        let completion = match provider.chat(req).await {
+            Ok(c) => c,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": {"message": sanitize_error(&e.to_string()), "type": "server_error"}})),
+                ).into_response();
             }
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": {"message": sanitize_error(&e.to_string()), "type": "server_error"}}))).into_response(),
+        };
+
+        last_model = completion.model.clone();
+        last_id = completion.id.clone();
+
+        let choice = match completion.choices.first() {
+            Some(c) => c,
+            None => break,
+        };
+
+        // No tool_calls → we have a final text reply
+        if choice.message.tool_calls.is_none() || choice.message.tool_calls.as_ref().is_some_and(|tc| tc.is_empty()) {
+            final_content = choice.message.content.clone();
+            info!("[hatching] round {}: text reply ({} chars), no tool calls", _round, final_content.len());
+            break;
         }
+
+        // Append assistant message (with tool_calls) to conversation
+        loop_messages.push(choice.message.clone());
+
+        // Execute each tool call and append results
+        let tool_calls = choice.message.tool_calls.as_ref().unwrap();
+        info!("[hatching] round {}: {} tool call(s)", _round, tool_calls.len());
+        for tc in tool_calls {
+            let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                .unwrap_or(serde_json::Value::Null);
+            let call = oclaw_tools_core::tool::ToolCall {
+                id: tc.id.clone(),
+                name: tc.function.name.clone(),
+                arguments: args,
+            };
+            let resp = registry.execute_call(call).await;
+            let result_text = if let Some(err) = resp.error {
+                format!("Error: {}", err)
+            } else {
+                resp.result.to_string()
+            };
+            loop_messages.push(oclaw_llm_core::chat::ChatMessage {
+                role: oclaw_llm_core::chat::MessageRole::Tool,
+                content: result_text,
+                name: None,
+                tool_calls: None,
+                tool_call_id: Some(tc.id.clone()),
+            });
+        }
+    }
+
+    // Check if hatching is complete (identity personalized)
+    check_hatching_complete(state).await;
+
+    // Memory capture
+    if let Some(ref mm) = state.memory_manager {
+        spawn_memory_capture(mm.clone(), user_query.to_string(), final_content.clone());
+    }
+
+    // Return final text as a standard ChatCompletionsResponse
+    Json(ChatCompletionsResponse {
+        id: last_id,
+        object: "chat.completion".to_string(),
+        created: chrono::Utc::now().timestamp(),
+        model: last_model,
+        choices: vec![Choice {
+            index: 0,
+            message: ChatMessage {
+                role: "assistant".to_string(),
+                content: final_content,
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            finish_reason: "stop".to_string(),
+        }],
+        usage: Usage { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    }).into_response()
+}
+
+/// Check if the agent identity has been fully personalized and clear the hatching flag.
+/// Requires name + at least one of (emoji, creature, vibe) to prevent premature completion
+/// when the agent writes the name before finishing the full hatching conversation.
+async fn check_hatching_complete(state: &Arc<HttpState>) {
+    if !state.needs_hatching.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    if let Some(ref ws) = state.workspace {
+        if let Ok(Some(identity)) = oclaw_workspace_core::identity::AgentIdentity::load(ws).await {
+            let has_name = identity.name.is_some();
+            let has_extras = identity.emoji.is_some()
+                || identity.creature.is_some()
+                || identity.vibe.is_some();
+            if has_name && has_extras {
+                state.needs_hatching.store(false, std::sync::atomic::Ordering::Relaxed);
+                info!("Hatching complete — identity personalized: {}", identity.display_name());
+
+                // Clear all old session transcripts so every channel
+                // picks up the new identity on next message.
+                if let Err(e) = oclaw_agent_core::transcript::Transcript::clear_all_sessions().await {
+                    warn!("Failed to clear old session transcripts: {}", e);
+                } else {
+                    info!("Cleared old session transcripts after hatching");
+                }
+            }
+        }
+    }
+}
+
+/// Standard non-streaming chat completion (extracted for readability).
+async fn non_streaming_response(
+    provider: &Arc<dyn oclaw_llm_core::providers::LlmProvider>,
+    state: &Arc<HttpState>,
+    request: oclaw_llm_core::chat::ChatRequest,
+    user_query: &str,
+) -> Response {
+    match provider.chat(request).await {
+        Ok(completion) => {
+            let assistant_text = completion.choices.first()
+                .map(|c| c.message.content.clone())
+                .unwrap_or_default();
+            if let Some(ref mm) = state.memory_manager {
+                spawn_memory_capture(mm.clone(), user_query.to_string(), assistant_text);
+            }
+
+            let choices: Vec<Choice> = completion.choices.iter().map(|c| Choice {
+                index: c.index,
+                message: ChatMessage {
+                    role: "assistant".to_string(),
+                    content: c.message.content.clone(),
+                    name: c.message.name.clone(),
+                    tool_calls: None,
+                    tool_call_id: c.message.tool_call_id.clone(),
+                },
+                finish_reason: c.finish_reason.clone().unwrap_or("stop".to_string()),
+            }).collect();
+
+            let usage = completion.usage.map(|u| Usage {
+                prompt_tokens: u.prompt_tokens,
+                completion_tokens: u.completion_tokens,
+                total_tokens: u.total_tokens,
+            }).unwrap_or(Usage { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+
+            Json(ChatCompletionsResponse {
+                id: completion.id,
+                object: "chat.completion".to_string(),
+                created: completion.created,
+                model: completion.model,
+                choices,
+                usage,
+            }).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": {"message": sanitize_error(&e.to_string()), "type": "server_error"}})),
+        ).into_response(),
     }
 }
 
@@ -364,10 +571,10 @@ pub async fn responses_handler(
         _ => String::new(),
     };
 
-    let request = oclaws_llm_core::chat::ChatRequest {
+    let request = oclaw_llm_core::chat::ChatRequest {
         model: payload.model.clone(),
-        messages: vec![oclaws_llm_core::chat::ChatMessage {
-            role: oclaws_llm_core::chat::MessageRole::User,
+        messages: vec![oclaw_llm_core::chat::ChatMessage {
+            role: oclaw_llm_core::chat::MessageRole::User,
             content: input_text,
             name: None, tool_calls: None, tool_call_id: None,
         }],
@@ -408,11 +615,45 @@ pub async fn agent_status_handler(
     State(state): State<Arc<HttpState>>,
 ) -> impl IntoResponse {
     let has_provider = state.llm_provider.is_some();
+    let needs_hatching = state.needs_hatching.load(std::sync::atomic::Ordering::Relaxed);
     Json(serde_json::json!({
         "status": if has_provider { "ready" } else { "no_provider" },
         "provider_configured": has_provider,
+        "needs_hatching": needs_hatching,
         "timestamp": chrono::Utc::now().to_rfc3339()
     }))
+}
+
+/// Read recent transcript history for a given session key.
+/// Returns the last N messages from the JSONL transcript file.
+pub async fn transcript_history_handler(
+    State(_state): State<Arc<HttpState>>,
+    axum::extract::Path(session_key): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let limit = params.get("limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(30);
+
+    let transcript = oclaw_agent_core::Transcript::new(&session_key);
+    if !transcript.exists().await {
+        return Json(serde_json::json!({ "messages": [], "total": 0 }));
+    }
+
+    let all = transcript.load().await;
+    let total = all.len();
+    let recent: Vec<serde_json::Value> = all.iter().rev().take(limit).rev().map(|m| {
+        serde_json::json!({
+            "role": match m.role {
+                oclaw_llm_core::chat::MessageRole::Assistant => "assistant",
+                oclaw_llm_core::chat::MessageRole::System => "system",
+                _ => "user",
+            },
+            "content": m.content,
+        })
+    }).collect();
+
+    Json(serde_json::json!({ "messages": recent, "total": total }))
 }
 
 pub async fn sessions_list_handler(
@@ -471,7 +712,7 @@ pub async fn config_full_get_handler(
 
 pub async fn config_full_put_handler(
     State(state): State<Arc<HttpState>>,
-    Json(new_config): Json<oclaws_config::settings::Config>,
+    Json(new_config): Json<oclaw_config::settings::Config>,
 ) -> Response {
     let errors = new_config.validate();
     if !errors.is_empty() {
@@ -1102,7 +1343,7 @@ const ct=document.createElement('div');ct.className='card-title';ct.textContent=
 c.appendChild(mkInput('logging.level','Log Level','select',{options:['trace','debug','info','warn','error']}));
 c.appendChild(mkInput('logging.consoleLevel','Console Level','select',{options:['','trace','debug','info','warn','error']}));
 c.appendChild(mkInput('logging.consoleStyle','Console Style','select',{options:['','text','json','pretty']}));
-c.appendChild(mkInput('logging.file','Log File Path','text',{placeholder:'/var/log/oclaws.log'}));
+c.appendChild(mkInput('logging.file','Log File Path','text',{placeholder:'/var/log/oclaw.log'}));
 c.appendChild(mkInput('logging.redactSensitive','Redact Sensitive','select',{options:['','true','false','partial']}));
 c.appendChild(mkInput('logging.redactPatterns','Redact Patterns','textarea',{placeholder:'["sk-.*","token-.*"]',arrayMode:true}));
 pg.appendChild(c);
@@ -1123,7 +1364,7 @@ if(!cfg.diagnostics.otel)cfg.diagnostics.otel={};
 dc.appendChild(mkInput('diagnostics.otel.enabled','Enable OTel','toggle'));
 dc.appendChild(mkInput('diagnostics.otel.endpoint','OTel Endpoint','text',{placeholder:'http://localhost:4318'}));
 dc.appendChild(mkRow([mkInput('diagnostics.otel.traces','Traces','toggle'),mkInput('diagnostics.otel.metrics','Metrics','toggle'),mkInput('diagnostics.otel.logs','Logs','toggle')]));
-dc.appendChild(mkInput('diagnostics.otel.serviceName','Service Name','text',{placeholder:'oclaws'}));
+dc.appendChild(mkInput('diagnostics.otel.serviceName','Service Name','text',{placeholder:'oclaw'}));
 dc.appendChild(mkInput('diagnostics.otel.sampleRate','Sample Rate','number',{placeholder:'1.0',step:'0.1'}));
 pg.appendChild(dc);
 // Talk / Voice
@@ -1243,7 +1484,7 @@ btn.disabled=false;btn.textContent=t('save');
 function exportCfg(){
 const data=JSON.stringify(collect(),null,2);
 const blob=new Blob([data],{type:'application/json'});
-const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='oclaws-config.json';a.click();
+const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='oclaw-config.json';a.click();
 URL.revokeObjectURL(a.href);toast(t('exportOk'),true);
 }
 function importCfg(e){
@@ -1716,7 +1957,7 @@ pub async fn cron_list_handler(
 
 pub async fn cron_create_handler(
     State(state): State<Arc<HttpState>>,
-    Json(payload): Json<oclaws_cron_core::CronJob>,
+    Json(payload): Json<oclaw_cron_core::CronJob>,
 ) -> Response {
     let Some(ref svc) = state.cron_service else {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "cron not enabled"}))).into_response();
@@ -1851,11 +2092,11 @@ mod tests {
     use crate::http::{HttpState, health_handler};
     use crate::http::auth::AuthState;
     use crate::server::GatewayServer;
-    use oclaws_config::settings::Gateway;
-    use oclaws_llm_core::providers::MockLlmProvider;
+    use oclaw_config::settings::Gateway;
+    use oclaw_llm_core::providers::MockLlmProvider;
     use tokio::sync::RwLock;
 
-    fn test_state(provider: Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>) -> Arc<HttpState> {
+    fn test_state(provider: Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>>) -> Arc<HttpState> {
         Arc::new(HttpState {
             auth_state: Arc::new(RwLock::new(AuthState::new(None))),
             gateway_server: Arc::new(GatewayServer::new(0)),
@@ -1872,14 +2113,16 @@ mod tests {
             memory_manager: None,
             workspace: None,
             metrics: Arc::new(crate::http::metrics::AppMetrics::new()),
-            health_checker: Arc::new(oclaws_doctor_core::HealthChecker::new()),
+            health_checker: Arc::new(oclaw_doctor_core::HealthChecker::new()),
             full_config: None,
             config_path: None,
-            echo_tracker: Arc::new(tokio::sync::Mutex::new(oclaws_agent_core::EchoTracker::default())),
-            group_activation: oclaws_channel_core::group_gate::GroupActivation::default(),
+            echo_tracker: Arc::new(tokio::sync::Mutex::new(oclaw_agent_core::EchoTracker::default())),
+            group_activation: oclaw_channel_core::group_gate::GroupActivation::default(),
             dm_scope: crate::session_key::DmScope::default(),
             identity_links: None,
             needs_hatching: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pipeline_config: Arc::new(crate::pipeline::PipelineConfig::default()),
+            flush_tracker: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         })
     }
 
@@ -2038,7 +2281,7 @@ mod tests {
     async fn test_generic_webhook_unknown_channel() {
         let state = {
             let mut s = (*test_state(None)).clone();
-            s.channel_manager = Some(Arc::new(RwLock::new(oclaws_channel_core::ChannelManager::new())));
+            s.channel_manager = Some(Arc::new(RwLock::new(oclaw_channel_core::ChannelManager::new())));
             Arc::new(s)
         };
         let app = test_router(state);

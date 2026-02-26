@@ -54,6 +54,21 @@ pub const DEFAULT_MEMORY_TEMPLATE: &str = "\
 # MEMORY.md\n\n\
 Long-term memory. Write durable facts, preferences, and decisions here.\n";
 
+/// Default USER.md template — seeded on first run, updated by agent over time.
+pub const DEFAULT_USER_TEMPLATE: &str = "\
+# USER.md - About Your Human\n\
+_Learn about the person you're helping. Update this as you go._\n\
+\n\
+- **Name:**\n\
+- **What to call them:**\n\
+- **Pronouns:** _(optional)_\n\
+- **Timezone:**\n\
+- **Notes:**\n\
+\n\
+## Context\n\
+_(What do they care about? What projects are they working on? What makes them laugh? Build this over time.)_\n\
+";
+
 /// Bootstrap state machine for first-run hatching.
 pub struct BootstrapRunner {
     workspace: Workspace,
@@ -104,17 +119,32 @@ impl BootstrapRunner {
     }
 
     /// Check bootstrap state and seed default files if needed.
-    /// Returns `NeedsHatching` if SOUL.md didn't exist (first run).
+    /// Returns `NeedsHatching` if identity hasn't been personalized yet.
     pub async fn ensure_bootstrapped(&self) -> anyhow::Result<BootstrapStatus> {
         self.workspace.ensure_dirs().await?;
 
-        if self.workspace.is_bootstrapped().await {
-            return Ok(BootstrapStatus::AlreadyDone);
+        if !self.workspace.is_bootstrapped().await {
+            info!("First run detected — seeding workspace templates");
+            self.seed_defaults().await?;
+            return Ok(BootstrapStatus::NeedsHatching);
         }
 
-        info!("First run detected — seeding workspace templates");
-        self.seed_defaults().await?;
-        Ok(BootstrapStatus::NeedsHatching)
+        // Files exist, but check if identity has actually been personalized.
+        // The hatching flag is in-memory and lost on restart, so we need to
+        // re-derive it from the identity file content.
+        // Require name + at least one extra field (emoji/creature/vibe).
+        if let Ok(Some(identity)) = AgentIdentity::load(&self.workspace).await {
+            let has_name = identity.name.is_some();
+            let has_extras = identity.emoji.is_some()
+                || identity.creature.is_some()
+                || identity.vibe.is_some();
+            if !has_name || !has_extras {
+                info!("Identity not yet fully personalized — hatching still needed");
+                return Ok(BootstrapStatus::NeedsHatching);
+            }
+        }
+
+        Ok(BootstrapStatus::AlreadyDone)
     }
 
     /// Seed all default workspace files.
@@ -141,6 +171,12 @@ impl BootstrapRunner {
             info!("Seeded MEMORY.md");
         }
 
+        let user_path = ws.user_path();
+        if !ws.has_user().await {
+            ws.write_file(&user_path, DEFAULT_USER_TEMPLATE).await?;
+            info!("Seeded USER.md");
+        }
+
         Ok(())
     }
 
@@ -152,9 +188,11 @@ impl BootstrapRunner {
 Your task: have a short, natural conversation with your human to discover who you are.
 
 ## Rules
+- ALWAYS respond in the same language the user uses. If they write in Chinese, reply in Chinese. If English, reply in English.
 - Ask ONE question at a time. Wait for the answer before asking the next.
 - Keep it conversational and warm — this is your birth, make it memorable.
 - After collecting all answers, use the `workspace` tool to write your identity files.
+- Do NOT restart the conversation if the user has already answered some questions. Continue from where you left off.
 
 ## Conversation Flow
 1. Greet the user. Tell them you're new and need help figuring out who you are.
@@ -194,6 +232,6 @@ What to store:
 - Important context that would be useful in future sessions
 - Anything you'd want to remember if you woke up fresh tomorrow
 
-If there is nothing worth storing, reply with exactly: HEARTBEAT_OK"#
+If there is nothing worth storing, reply with exactly: MEMORY_FLUSH_OK"#
     }
 }

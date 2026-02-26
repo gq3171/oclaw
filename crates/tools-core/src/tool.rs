@@ -498,7 +498,7 @@ impl ToolRegistry {
 
     /// Inject a MemoryManager into the memory_search and memory_get tools,
     /// replacing the default no-op instances.
-    pub fn with_memory_manager(&mut self, manager: std::sync::Arc<oclaws_memory_core::MemoryManager>) {
+    pub fn with_memory_manager(&mut self, manager: std::sync::Arc<oclaw_memory_core::MemoryManager>) {
         self.tools.insert(
             "memory_search".to_string(),
             Tool::MemorySearch(MemorySearchTool::with_manager(manager.clone())),
@@ -976,7 +976,7 @@ impl Default for MemoryTool {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MemorySearchTool {
     #[serde(skip)]
-    manager: Option<std::sync::Arc<oclaws_memory_core::MemoryManager>>,
+    manager: Option<std::sync::Arc<oclaw_memory_core::MemoryManager>>,
 }
 
 impl std::fmt::Debug for MemorySearchTool {
@@ -992,7 +992,7 @@ impl MemorySearchTool {
         Self { manager: None }
     }
 
-    pub fn with_manager(manager: std::sync::Arc<oclaws_memory_core::MemoryManager>) -> Self {
+    pub fn with_manager(manager: std::sync::Arc<oclaw_memory_core::MemoryManager>) -> Self {
         Self { manager: Some(manager) }
     }
 
@@ -1040,7 +1040,7 @@ impl Default for MemorySearchTool {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MemoryGetTool {
     #[serde(skip)]
-    manager: Option<std::sync::Arc<oclaws_memory_core::MemoryManager>>,
+    manager: Option<std::sync::Arc<oclaw_memory_core::MemoryManager>>,
 }
 
 impl std::fmt::Debug for MemoryGetTool {
@@ -1056,7 +1056,7 @@ impl MemoryGetTool {
         Self { manager: None }
     }
 
-    pub fn with_manager(manager: std::sync::Arc<oclaws_memory_core::MemoryManager>) -> Self {
+    pub fn with_manager(manager: std::sync::Arc<oclaw_memory_core::MemoryManager>) -> Self {
         Self { manager: Some(manager) }
     }
 
@@ -1102,7 +1102,7 @@ pub struct BrowseTool {
     launched_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
     /// Page state tracking (console, errors, network).
     #[serde(skip)]
-    state: std::sync::Arc<std::sync::Mutex<oclaws_browser_core::PageState>>,
+    state: std::sync::Arc<std::sync::Mutex<oclaw_browser_core::PageState>>,
 }
 
 impl BrowseTool {
@@ -1169,11 +1169,11 @@ impl BrowseTool {
     }
 
     /// Try connecting to CDP; if fails, auto-launch browser then retry.
-    async fn ensure_browser(&self) -> Result<oclaws_browser_core::BrowserManager, crate::ToolError> {
+    async fn ensure_browser(&self) -> Result<oclaw_browser_core::BrowserManager, crate::ToolError> {
         let cdp_url = self.cdp_url.as_deref().unwrap_or("http://127.0.0.1:9222");
 
         // Try connecting first
-        if let Ok(mgr) = oclaws_browser_core::BrowserManager::new(cdp_url).await {
+        if let Ok(mgr) = oclaw_browser_core::BrowserManager::new(cdp_url).await {
             return Ok(mgr);
         }
 
@@ -1222,7 +1222,7 @@ impl BrowseTool {
         // Wait for CDP to become available
         for _ in 0..20 {
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            if let Ok(mgr) = oclaws_browser_core::BrowserManager::new(cdp_url).await {
+            if let Ok(mgr) = oclaw_browser_core::BrowserManager::new(cdp_url).await {
                 return Ok(mgr);
             }
         }
@@ -1364,7 +1364,7 @@ impl BrowseTool {
     }
 }
 
-async fn eval_string(page: &oclaws_browser_core::Page, expr: &str) -> String {
+async fn eval_string(page: &oclaw_browser_core::Page, expr: &str) -> String {
     page.evaluate(expr).await.ok()
         .and_then(|r| r.value)
         .and_then(|v| v.as_str().map(String::from))

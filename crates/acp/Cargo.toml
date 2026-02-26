@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-acp"
+name = "oclaw-acp"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -13,3 +13,4 @@ async-trait.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+parking_lot.workspace = true

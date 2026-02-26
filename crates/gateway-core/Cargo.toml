@@ -1,22 +1,22 @@
 [package]
-name = "oclaws-gateway-core"
+name = "oclaw-gateway-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [dependencies]
-oclaws-protocol.workspace = true
-oclaws-config.workspace = true
-oclaws-llm-core.workspace = true
-oclaws-plugin-core.workspace = true
-oclaws-agent-core.workspace = true
-oclaws-tools-core.workspace = true
-oclaws-channel-core.workspace = true
-oclaws-memory-core.workspace = true
-oclaws-doctor-core.workspace = true
-oclaws-cron-core.workspace = true
-oclaws-workspace-core.workspace = true
+oclaw-protocol.workspace = true
+oclaw-config.workspace = true
+oclaw-llm-core.workspace = true
+oclaw-plugin-core.workspace = true
+oclaw-agent-core.workspace = true
+oclaw-tools-core.workspace = true
+oclaw-channel-core.workspace = true
+oclaw-memory-core.workspace = true
+oclaw-doctor-core.workspace = true
+oclaw-cron-core.workspace = true
+oclaw-workspace-core.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
