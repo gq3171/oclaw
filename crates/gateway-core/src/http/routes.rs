@@ -443,23 +443,23 @@ async fn check_hatching_complete(state: &Arc<HttpState>) {
     if !state.needs_hatching.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    if let Some(ref ws) = state.workspace {
-        if let Ok(Some(identity)) = oclaw_workspace_core::identity::AgentIdentity::load(ws).await {
-            let has_name = identity.name.is_some();
-            let has_extras = identity.emoji.is_some()
-                || identity.creature.is_some()
-                || identity.vibe.is_some();
-            if has_name && has_extras {
-                state.needs_hatching.store(false, std::sync::atomic::Ordering::Relaxed);
-                info!("Hatching complete — identity personalized: {}", identity.display_name());
+    if let Some(ref ws) = state.workspace
+        && let Ok(Some(identity)) = oclaw_workspace_core::identity::AgentIdentity::load(ws).await
+    {
+        let has_name = identity.name.is_some();
+        let has_extras = identity.emoji.is_some()
+            || identity.creature.is_some()
+            || identity.vibe.is_some();
+        if has_name && has_extras {
+            state.needs_hatching.store(false, std::sync::atomic::Ordering::Relaxed);
+            info!("Hatching complete — identity personalized: {}", identity.display_name());
 
-                // Clear all old session transcripts so every channel
-                // picks up the new identity on next message.
-                if let Err(e) = oclaw_agent_core::transcript::Transcript::clear_all_sessions().await {
-                    warn!("Failed to clear old session transcripts: {}", e);
-                } else {
-                    info!("Cleared old session transcripts after hatching");
-                }
+            // Clear all old session transcripts so every channel
+            // picks up the new identity on next message.
+            if let Err(e) = oclaw_agent_core::transcript::Transcript::clear_all_sessions().await {
+                warn!("Failed to clear old session transcripts: {}", e);
+            } else {
+                info!("Cleared old session transcripts after hatching");
             }
         }
     }

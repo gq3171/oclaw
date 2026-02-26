@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod str_util;
 pub mod subagent;
+pub mod task_graph;
 pub mod model_fallback;
 pub mod auth;
 pub mod command;
@@ -24,7 +25,8 @@ pub mod error_classify;
 pub mod usage;
 
 pub use agent::{Agent, AgentConfig, AgentState, ToolExecutor};
-pub use subagent::{Subagent, SubagentRegistry, SubagentStatus};
+pub use subagent::{Subagent, SubagentConfig, SubagentRegistry, SubagentStatus};
+pub use task_graph::{TaskGraph, TaskNode, TaskGraphRunner, TaskGraphResult};
 pub use model_fallback::{ModelFallback, ModelChain, FallbackConfig, ModelCandidate, CooldownTracker, FallbackAttempt, FallbackResult, run_with_fallback};
 pub use auth::{AuthManager, AuthProvider, ProviderCredentials};
 pub use loop_detect::{LoopDetector, LoopLevel, LoopDetectionResult};

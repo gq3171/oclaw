@@ -1,5 +1,6 @@
 //! SOUL.md — agent personality, values, and behavioral boundaries.
 
+use std::path::PathBuf;
 use crate::files::Workspace;
 
 /// Parsed soul file content.
@@ -69,6 +70,27 @@ impl Soul {
             }
         }
         soul
+    }
+
+    /// Save a dated snapshot of SOUL.md to `soul_versions/YYYY-MM-DD.md`.
+    ///
+    /// Idempotent: if a snapshot already exists for today it is **not**
+    /// overwritten and `Ok(None)` is returned.  Returns the path written on
+    /// success.
+    pub async fn backup(ws: &Workspace) -> anyhow::Result<Option<PathBuf>> {
+        let Some(content) = ws.read_file(&ws.soul_path()).await? else {
+            return Ok(None);
+        };
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let versions_dir = ws.soul_versions_dir();
+        tokio::fs::create_dir_all(&versions_dir).await?;
+        let path = versions_dir.join(format!("{}.md", today));
+        // Already backed up today — skip to preserve the morning snapshot.
+        if tokio::fs::metadata(&path).await.is_ok() {
+            return Ok(None);
+        }
+        tokio::fs::write(&path, content).await?;
+        Ok(Some(path))
     }
 
     /// Inject soul guidance into a system prompt fragment.

@@ -11,6 +11,7 @@ pub mod heartbeat;
 pub mod bootstrap;
 pub mod system_prompt;
 pub mod memory_flush;
+pub mod evolution;
 
 pub use files::Workspace;
 pub use identity::AgentIdentity;
@@ -19,3 +20,4 @@ pub use heartbeat::HeartbeatFile;
 pub use bootstrap::{BootstrapRunner, BootstrapStatus, HatchingPhase};
 pub use system_prompt::SystemPromptBuilder;
 pub use memory_flush::MemoryFlushConfig;
+pub use evolution::{EvolutionConfig, EvolutionState, EVOLUTION_OK_TOKEN, should_run_evolution};

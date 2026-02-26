@@ -134,9 +134,8 @@ pub fn strip_heartbeat_token(text: &str) -> (String, bool) {
     }
 
     // Strip from end of text
-    if trimmed.ends_with(HEARTBEAT_OK_TOKEN) {
-        let rest = trimmed[..trimmed.len() - HEARTBEAT_OK_TOKEN.len()].trim();
-        return (rest.to_string(), true);
+    if let Some(rest) = trimmed.strip_suffix(HEARTBEAT_OK_TOKEN) {
+        return (rest.trim().to_string(), true);
     }
     if trimmed.ends_with(&format!("**{}**", HEARTBEAT_OK_TOKEN)) {
         let suffix_len = HEARTBEAT_OK_TOKEN.len() + 4;

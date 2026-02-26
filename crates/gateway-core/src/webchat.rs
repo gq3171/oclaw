@@ -266,7 +266,7 @@ async fn handle_user_message(
     let session_id = WEBCHAT_SESSION;
 
     // Store user message
-    webchat.add_message(&session_id, ChatMessage {
+    webchat.add_message(session_id, ChatMessage {
         id: Uuid::new_v4().to_string(),
         role: "user".to_string(),
         content: content.clone(),
@@ -338,7 +338,7 @@ async fn handle_user_message(
     match result {
         Ok(reply) => {
             // Store assistant message
-            webchat.add_message(&session_id, ChatMessage {
+            webchat.add_message(session_id, ChatMessage {
                 id: Uuid::new_v4().to_string(),
                 role: "assistant".to_string(),
                 content: reply.clone(),
@@ -454,12 +454,12 @@ async fn build_system_prompt(
     }
 
     // Load from workspace
-    if let Some(ref ws) = state.workspace {
-        if let Ok(prompt) = system_prompt::load_and_build_with_runtime(
+    if let Some(ref ws) = state.workspace
+        && let Ok(prompt) = system_prompt::load_and_build_with_runtime(
             ws, None, false, Some(runtime), &tool_names,
-        ).await {
-            return prompt;
-        }
+        ).await
+    {
+        return prompt;
     }
 
     // Fallback

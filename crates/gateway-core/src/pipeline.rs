@@ -16,11 +16,13 @@ use oclaw_config::settings::AgentBinding;
 
 use oclaw_agent_core::agent::{Agent, AgentConfig};
 use oclaw_llm_core::providers::LlmProvider;
-use oclaw_workspace_core::bootstrap::BootstrapRunner;
+use oclaw_workspace_core::bootstrap::{BootstrapRunner, evolution_system_prompt};
+use oclaw_workspace_core::evolution::{EvolutionConfig, EvolutionState, should_run_evolution};
 use oclaw_workspace_core::memory_flush::{
     MemoryFlushConfig, SILENT_REPLY_TOKEN, default_flush_prompt, should_run_memory_flush,
 };
 use oclaw_workspace_core::heartbeat::HEARTBEAT_OK_TOKEN;
+use oclaw_workspace_core::soul::Soul;
 use oclaw_workspace_core::system_prompt::{self, RuntimeInfo};
 
 use crate::http::HttpState;
@@ -86,16 +88,9 @@ pub fn resolve_agent_for_message(
 }
 
 /// Configuration for the memory-aware pipeline.
+#[derive(Default)]
 pub struct PipelineConfig {
     pub memory_flush: MemoryFlushConfig,
-}
-
-impl Default for PipelineConfig {
-    fn default() -> Self {
-        Self {
-            memory_flush: MemoryFlushConfig::default(),
-        }
-    }
 }
 
 /// Process a message through the full pipeline:
@@ -165,6 +160,11 @@ pub async fn process_message(
         let total_tokens = 0u64;  // Will be wired up when agent exposes usage
         let compaction_count = 0u64;
         try_memory_flush(provider, state, &session_id, total_tokens, compaction_count).await;
+    }
+
+    // Autonomous evolution — periodic self-reflection and SOUL.md growth
+    if state.workspace.is_some() && state.tool_registry.is_some() {
+        try_evolution(provider, state, &session_id, 0).await;
     }
 
     // Echo tracking
@@ -249,24 +249,23 @@ async fn run_agent(
     // After a hatching turn, check if identity is fully personalized.
     // Require name + at least one extra (emoji/creature/vibe) to avoid
     // clearing the flag before the multi-turn conversation finishes.
-    if is_hatching && result.is_ok() {
-        if let Some(ref ws) = state.workspace {
-            if let Ok(Some(identity)) = oclaw_workspace_core::identity::AgentIdentity::load(ws).await {
-                let has_name = identity.name.is_some();
-                let has_extras = identity.emoji.is_some()
-                    || identity.creature.is_some()
-                    || identity.vibe.is_some();
-                if has_name && has_extras {
-                    state.needs_hatching.store(false, std::sync::atomic::Ordering::Relaxed);
-                    info!("[pipeline] hatching complete — identity personalized: {}", identity.display_name());
+    if is_hatching && result.is_ok()
+        && let Some(ref ws) = state.workspace
+        && let Ok(Some(identity)) = oclaw_workspace_core::identity::AgentIdentity::load(ws).await
+    {
+        let has_name = identity.name.is_some();
+        let has_extras = identity.emoji.is_some()
+            || identity.creature.is_some()
+            || identity.vibe.is_some();
+        if has_name && has_extras {
+            state.needs_hatching.store(false, std::sync::atomic::Ordering::Relaxed);
+            info!("[pipeline] hatching complete — identity personalized: {}", identity.display_name());
 
-                    // Clear old session transcripts so every channel starts fresh
-                    if let Err(e) = oclaw_agent_core::transcript::Transcript::clear_all_sessions().await {
-                        warn!("[pipeline] failed to clear old session transcripts: {}", e);
-                    } else {
-                        info!("[pipeline] cleared old session transcripts after hatching");
-                    }
-                }
+            // Clear old session transcripts so every channel starts fresh
+            if let Err(e) = oclaw_agent_core::transcript::Transcript::clear_all_sessions().await {
+                warn!("[pipeline] failed to clear old session transcripts: {}", e);
+            } else {
+                info!("[pipeline] cleared old session transcripts after hatching");
             }
         }
     }
@@ -370,6 +369,79 @@ pub async fn try_memory_flush(
         Err(e) => {
             warn!("[pipeline] memory-flush agent error: {}", e);
         }
+    }
+}
+
+/// Run a lightweight agent turn for autonomous self-reflection and growth.
+///
+/// Triggered periodically (every N counted messages) via [`EvolutionState`].
+/// The evolution agent reads SOUL.md / USER.md, reflects on recent interactions,
+/// and optionally rewrites those files if genuine growth occurred.
+///
+/// Mirrors the Node OpenClaw "try_evolution" pipeline step.
+pub async fn try_evolution(
+    provider: &Arc<dyn LlmProvider>,
+    state: &HttpState,
+    _session_id: &str,
+    usage_tokens: u64,
+) {
+    let ws = match state.workspace.as_ref() {
+        Some(ws) => ws,
+        None => return,
+    };
+    let registry = match state.tool_registry.as_ref() {
+        Some(r) => r,
+        None => return,
+    };
+
+    let config = EvolutionConfig::default();
+    let mut evo_state = EvolutionState::load(ws).await;
+    evo_state.tick(usage_tokens, &config);
+
+    if !should_run_evolution(&evo_state, &config) {
+        if let Err(e) = evo_state.save(ws).await {
+            warn!("[pipeline] evolution state save failed: {}", e);
+        }
+        return;
+    }
+
+    // Snapshot SOUL.md before potential modifications (idempotent per day).
+    if let Err(e) = Soul::backup(ws).await {
+        warn!("[pipeline] soul backup failed: {}", e);
+    }
+
+    let model = provider.default_model().to_string();
+    let prompt = config
+        .prompt
+        .as_deref()
+        .unwrap_or_else(|| evolution_system_prompt())
+        .to_string();
+
+    let evo_config = AgentConfig::new("evolution", &model, "default")
+        .with_system_prompt(&prompt)
+        .with_temperature(0.5);
+    let mut agent = Agent::new(evo_config, provider.clone());
+    if let Err(e) = agent.initialize().await {
+        warn!("[pipeline] evolution agent init failed: {}", e);
+        return;
+    }
+
+    let executor = ToolRegistryExecutor::new(registry.clone());
+    match agent.run_with_tools("Reflect and evolve.", &executor).await {
+        Ok(reply) => {
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            evo_state.last_evolved_at_message = evo_state.message_count;
+            evo_state.last_evolved_date = Some(today);
+            evo_state.evolution_count += 1;
+            info!("[pipeline] evolution complete ({}): {}", evo_state.evolution_count, reply.trim());
+        }
+        Err(e) => {
+            warn!("[pipeline] evolution agent error: {}", e);
+        }
+    }
+
+    if let Err(e) = evo_state.save(ws).await {
+        warn!("[pipeline] evolution state save failed: {}", e);
     }
 }
 

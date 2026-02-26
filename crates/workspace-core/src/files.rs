@@ -62,8 +62,42 @@ impl Workspace {
         tokio::fs::metadata(self.user_path()).await.is_ok()
     }
 
+    pub fn bootstrap_path(&self) -> PathBuf {
+        self.root.join("BOOTSTRAP.md")
+    }
+
+    pub fn agents_path(&self) -> PathBuf {
+        self.root.join("AGENTS.md")
+    }
+
+    pub fn tools_path(&self) -> PathBuf {
+        self.root.join("TOOLS.md")
+    }
+
+    pub async fn has_bootstrap(&self) -> bool {
+        fs::metadata(self.bootstrap_path()).await.is_ok()
+    }
+
+    pub async fn has_agents(&self) -> bool {
+        fs::metadata(self.agents_path()).await.is_ok()
+    }
+
+    pub async fn has_tools(&self) -> bool {
+        fs::metadata(self.tools_path()).await.is_ok()
+    }
+
     pub fn memory_dir(&self) -> PathBuf {
         self.root.join("memory")
+    }
+
+    /// Directory that holds dated SOUL.md snapshots: `soul_versions/`.
+    pub fn soul_versions_dir(&self) -> PathBuf {
+        self.root.join("soul_versions")
+    }
+
+    /// Path to the evolution state file: `.evolution_state.json`.
+    pub fn evolution_state_path(&self) -> PathBuf {
+        self.root.join(".evolution_state.json")
     }
 
     /// Daily memory log path: memory/YYYY-MM-DD.md
