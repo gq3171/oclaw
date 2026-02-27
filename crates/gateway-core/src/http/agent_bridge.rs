@@ -1,4 +1,5 @@
 use crate::message::SessionManager;
+use hmac::{Hmac, Mac};
 use oclaw_agent_core::agent::{Agent, AgentConfig, ToolExecutor};
 use oclaw_agent_core::usage::UsageSummary;
 use oclaw_channel_core::{
@@ -13,6 +14,7 @@ use oclaw_plugin_core::PluginRegistrations;
 use oclaw_tools_core::tool::ToolRegistry;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -6610,6 +6612,138 @@ fn pick_tool_name(tool_names: &[String], candidates: &[&str], fallback: &str) ->
     fallback.to_string()
 }
 
+fn sanitize_for_prompt_literal(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| {
+            if ch.is_control() {
+                return false;
+            }
+            let cp = *ch as u32;
+            if cp == 0x2028 || cp == 0x2029 {
+                return false;
+            }
+            if (0x200B..=0x200F).contains(&cp) || (0x2060..=0x206F).contains(&cp) || cp == 0xFEFF {
+                return false;
+            }
+            true
+        })
+        .collect()
+}
+
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    for ancestor in start.ancestors() {
+        let dot_git = ancestor.join(".git");
+        if dot_git.is_dir() || dot_git.is_file() {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    None
+}
+
+fn resolve_repo_root(
+    tool_executor: &ToolRegistryExecutor,
+    workspace_root: &Path,
+) -> Option<PathBuf> {
+    if let Some(cfg_lock) = tool_executor.full_config.as_ref()
+        && let Ok(cfg) = cfg_lock.try_read()
+        && let Some(agents) = cfg.agents.as_ref()
+    {
+        for pointer in ["/defaults/repoRoot", "/repoRoot"] {
+            if let Some(value) = agents.pointer(pointer).and_then(|v| v.as_str()) {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let candidate = PathBuf::from(trimmed);
+                if candidate.is_dir() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    find_git_root(workspace_root)
+}
+
+fn resolve_default_thinking_level(session_meta: &HashMap<String, String>) -> String {
+    for key in [
+        "defaultThinkLevel",
+        "default_think_level",
+        "thinkLevel",
+        "think_level",
+        "thinking",
+    ] {
+        if let Some(value) = session_meta.get(key) {
+            let normalized = value.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "off" | "minimal" | "low" | "medium" | "high" | "xhigh" => {
+                    return normalized;
+                }
+                _ => {}
+            }
+        }
+    }
+    "off".to_string()
+}
+
+fn resolve_owner_display_settings(
+    tool_executor: &ToolRegistryExecutor,
+    session_meta: &HashMap<String, String>,
+) -> (bool, Option<String>) {
+    let mut owner_display_hash = false;
+    for key in ["ownerDisplay", "owner_display"] {
+        if let Some(value) = session_meta.get(key)
+            && value.trim().eq_ignore_ascii_case("hash")
+        {
+            owner_display_hash = true;
+        }
+    }
+    let mut owner_display_secret = session_meta
+        .get("ownerDisplaySecret")
+        .or_else(|| session_meta.get("owner_display_secret"))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    if let Some(cfg_lock) = tool_executor.full_config.as_ref()
+        && let Ok(cfg) = cfg_lock.try_read()
+        && let Some(commands) = cfg.commands.as_ref()
+    {
+        if !owner_display_hash
+            && let Some(mode) = commands.pointer("/ownerDisplay").and_then(|v| v.as_str())
+            && mode.trim().eq_ignore_ascii_case("hash")
+        {
+            owner_display_hash = true;
+        }
+        if owner_display_secret.is_none()
+            && let Some(secret) = commands
+                .pointer("/ownerDisplaySecret")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+        {
+            owner_display_secret = Some(secret.to_string());
+        }
+    }
+    (owner_display_hash, owner_display_secret)
+}
+
+fn format_owner_display_id(owner_id: &str, owner_display_secret: Option<&str>) -> String {
+    if let Some(secret) = owner_display_secret
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+            .expect("HMAC accepts arbitrary key length");
+        mac.update(owner_id.as_bytes());
+        let digest = mac.finalize().into_bytes();
+        return hex::encode(digest).chars().take(12).collect();
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(owner_id.as_bytes());
+    let digest = hasher.finalize();
+    hex::encode(digest).chars().take(12).collect()
+}
+
 fn resolve_model_alias_lines(tool_executor: &ToolRegistryExecutor) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let Some(cfg_lock) = tool_executor.full_config.as_ref() else {
@@ -6640,6 +6774,139 @@ fn resolve_model_alias_lines(tool_executor: &ToolRegistryExecutor) -> Vec<String
             lines.push(format!("- {}: {}/{}", key, provider_id, model));
         } else {
             lines.push(format!("- {}: {}", key, provider_id));
+        }
+    }
+    lines
+}
+
+fn core_tool_summary(normalized: &str, acp_enabled: bool) -> Option<String> {
+    let summary = match normalized {
+        "read" => "Read file contents".to_string(),
+        "write" => "Create or overwrite files".to_string(),
+        "edit" => "Make precise edits to files".to_string(),
+        "apply_patch" => "Apply multi-file patches".to_string(),
+        "grep" => "Search file contents for patterns".to_string(),
+        "find" => "Find files by glob pattern".to_string(),
+        "ls" => "List directory contents".to_string(),
+        "exec" => "Run shell commands (pty available for TTY-required CLIs)".to_string(),
+        "process" => "Manage background exec sessions".to_string(),
+        "web_search" => "Search the web (Brave API)".to_string(),
+        "web_fetch" => "Fetch and extract readable content from a URL".to_string(),
+        "browser" => "Control web browser".to_string(),
+        "canvas" => "Present/eval/snapshot the Canvas".to_string(),
+        "nodes" => "List/describe/notify/camera/screen on paired nodes".to_string(),
+        "cron" => "Manage cron jobs and wake events (use for reminders; when scheduling a reminder, write the systemEvent text as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate)".to_string(),
+        "message" => "Send messages and channel actions".to_string(),
+        "gateway" => "Restart, apply config, or run updates on the running OpenClaw process".to_string(),
+        "agents_list" => {
+            if acp_enabled {
+                "List OpenClaw agent ids allowed for sessions_spawn when runtime=\"subagent\" (not ACP harness ids)".to_string()
+            } else {
+                "List OpenClaw agent ids allowed for sessions_spawn".to_string()
+            }
+        }
+        "sessions_list" => "List other sessions (incl. sub-agents) with filters/last".to_string(),
+        "sessions_history" => "Fetch history for another session/sub-agent".to_string(),
+        "sessions_send" => "Send a message to another session/sub-agent".to_string(),
+        "sessions_spawn" => {
+            if acp_enabled {
+                "Spawn an isolated sub-agent or ACP coding session (runtime=\"acp\" requires `agentId` unless `acp.defaultAgent` is configured; ACP harness ids follow acp.allowedAgents, not agents_list)".to_string()
+            } else {
+                "Spawn an isolated sub-agent session".to_string()
+            }
+        }
+        "subagents" => "List, steer, or kill sub-agent runs for this requester session".to_string(),
+        "session_status" => "Show a /status-equivalent status card (usage + time + Reasoning/Verbose/Elevated); use for model-use questions (📊 session_status); optional per-session model override".to_string(),
+        "image" => "Analyze an image with the configured image model".to_string(),
+        _ => return None,
+    };
+    Some(summary)
+}
+
+fn build_tool_lines(tool_specs: &[(String, String)], acp_enabled: bool) -> Vec<String> {
+    let tool_order = vec![
+        "read",
+        "write",
+        "edit",
+        "apply_patch",
+        "grep",
+        "find",
+        "ls",
+        "exec",
+        "process",
+        "web_search",
+        "web_fetch",
+        "browser",
+        "canvas",
+        "nodes",
+        "cron",
+        "message",
+        "gateway",
+        "agents_list",
+        "sessions_list",
+        "sessions_history",
+        "sessions_send",
+        "subagents",
+        "session_status",
+        "image",
+    ];
+
+    let mut canonical_by_normalized: HashMap<String, String> = HashMap::new();
+    let mut external_summaries: HashMap<String, String> = HashMap::new();
+    let mut normalized_tools: Vec<String> = Vec::new();
+    for (name, desc) in tool_specs {
+        let normalized = name.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            continue;
+        }
+        normalized_tools.push(normalized.clone());
+        canonical_by_normalized
+            .entry(normalized.clone())
+            .or_insert_with(|| name.clone());
+        let trimmed_desc = desc.trim();
+        if !trimmed_desc.is_empty() {
+            external_summaries
+                .entry(normalized.clone())
+                .or_insert_with(|| trimmed_desc.to_string());
+        }
+    }
+    normalized_tools.sort();
+    normalized_tools.dedup();
+
+    let mut lines: Vec<String> = Vec::new();
+    for tool in &tool_order {
+        if !normalized_tools.iter().any(|name| name == tool) {
+            continue;
+        }
+        let display_name = canonical_by_normalized
+            .get(*tool)
+            .cloned()
+            .unwrap_or_else(|| (*tool).to_string());
+        let summary =
+            core_tool_summary(tool, acp_enabled).or_else(|| external_summaries.get(*tool).cloned());
+        if let Some(summary) = summary {
+            lines.push(format!("- {}: {}", display_name, summary));
+        } else {
+            lines.push(format!("- {}", display_name));
+        }
+    }
+
+    let mut extras: Vec<String> = normalized_tools
+        .into_iter()
+        .filter(|name| !tool_order.iter().any(|item| item == name))
+        .collect();
+    extras.sort();
+    for tool in extras {
+        let display_name = canonical_by_normalized
+            .get(&tool)
+            .cloned()
+            .unwrap_or_else(|| tool.clone());
+        let summary = core_tool_summary(&tool, acp_enabled)
+            .or_else(|| external_summaries.get(&tool).cloned());
+        if let Some(summary) = summary {
+            lines.push(format!("- {}: {}", display_name, summary));
+        } else {
+            lines.push(format!("- {}", display_name));
         }
     }
     lines
@@ -7162,8 +7429,11 @@ fn resolve_acp_enabled(tool_executor: &ToolRegistryExecutor) -> bool {
 fn build_runtime_line(tool_executor: &ToolRegistryExecutor) -> String {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
-    let cwd = tool_executor.resolve_workspace_root().display().to_string();
+    let workspace_root = tool_executor.resolve_workspace_root();
     let session_meta = tool_executor.resolve_session_metadata();
+    let thinking_level = resolve_default_thinking_level(&session_meta);
+    let repo_root = resolve_repo_root(tool_executor, &workspace_root).unwrap_or(workspace_root);
+    let cwd = repo_root.display().to_string();
     let host = std::env::var("HOSTNAME")
         .ok()
         .or_else(|| std::env::var("COMPUTERNAME").ok())
@@ -7219,7 +7489,7 @@ fn build_runtime_line(tool_executor: &ToolRegistryExecutor) -> String {
             }
         ));
     }
-    parts.push("thinking=off".to_string());
+    parts.push(format!("thinking={}", thinking_level));
     format!("Runtime: {}", parts.join(" | "))
 }
 
@@ -7230,17 +7500,6 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
         .map(|tool| (tool.function.name, tool.function.description))
         .collect();
     let tool_names: Vec<String> = tool_specs.iter().map(|(name, _)| name.clone()).collect();
-    let tool_lines: Vec<String> = tool_specs
-        .iter()
-        .map(|(name, description)| {
-            let desc = description.trim();
-            if desc.is_empty() {
-                format!("- {}", name)
-            } else {
-                format!("- {}: {}", name, desc)
-            }
-        })
-        .collect();
 
     let has_tool = |name: &str| has_tool_name(&tool_names, name);
     let has_any_tool = |names: &[&str]| has_any_tool_name(&tool_names, names);
@@ -7250,9 +7509,9 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
     let has_gateway = has_tool("gateway");
     let has_message = has_tool("message");
     let has_memory_tools = has_any_tool(&["memory_search", "memory_get"]);
-    let has_tts = has_tool("tts");
     let has_reaction_tools = has_any_tool(&["send_reaction", "remove_reaction", "list_reactions"]);
     let acp_enabled = resolve_acp_enabled(tool_executor);
+    let tool_lines: Vec<String> = build_tool_lines(&tool_specs, acp_enabled);
     let exec_tool_name = pick_tool_name(&tool_names, &["exec", "bash"], "exec");
     let process_tool_name = pick_tool_name(&tool_names, &["process"], "process");
     let read_tool_name = pick_tool_name(&tool_names, &["read"], "read");
@@ -7266,6 +7525,8 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
     let memory_citations_mode = resolve_memory_citations_mode(&session_meta);
     let message_tool_hints = resolve_message_tool_hints(&session_meta);
     let tts_hint = resolve_tts_hint(&session_meta);
+    let (owner_display_hash, owner_display_secret) =
+        resolve_owner_display_settings(tool_executor, &session_meta);
     let reasoning_level = resolve_reasoning_level(&session_meta);
     let runtime_channel =
         resolve_runtime_channel(&session_meta, tool_executor.turn_source.as_ref());
@@ -7278,12 +7539,13 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
         .iter()
         .any(|cap| cap.eq_ignore_ascii_case("inlineButtons"));
     let message_channel_options = list_deliverable_message_channels().join("|");
-    let workspace_dir = workspace_root.display().to_string();
+    let workspace_dir = sanitize_for_prompt_literal(&workspace_root.display().to_string());
     let display_workspace_dir = if sandbox_info.enabled {
         sandbox_info
             .container_workspace_dir
             .clone()
             .filter(|v| !v.trim().is_empty())
+            .map(|v| sanitize_for_prompt_literal(&v))
             .unwrap_or_else(|| workspace_dir.clone())
     } else {
         workspace_dir.clone()
@@ -7298,10 +7560,12 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
         format!(
             "For read/write/edit/apply_patch, file paths resolve against host workspace: {}. For bash/exec commands, use sandbox container paths under {} (or relative paths from that workdir), not host paths. Prefer relative paths so both sandboxed exec and file tools work consistently.",
             workspace_dir,
-            sandbox_info
-                .container_workspace_dir
-                .as_deref()
-                .unwrap_or("")
+            sanitize_for_prompt_literal(
+                sandbox_info
+                    .container_workspace_dir
+                    .as_deref()
+                    .unwrap_or("")
+            )
         )
     } else {
         "Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.".to_string()
@@ -7351,7 +7615,35 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
         "Tool availability (filtered by policy):".to_string(),
         "Tool names are case-sensitive. Call tools exactly as listed.".to_string(),
     ];
-    lines.extend(tool_lines);
+    if !tool_lines.is_empty() {
+        lines.extend(tool_lines);
+    } else {
+        lines.push("Pi lists the standard tools above. This runtime enables:".to_string());
+        lines.push("- grep: search file contents for patterns".to_string());
+        lines.push("- find: find files by glob pattern".to_string());
+        lines.push("- ls: list directory contents".to_string());
+        lines.push("- apply_patch: apply multi-file patches".to_string());
+        lines.push(format!(
+            "- {}: run shell commands (supports background via yieldMs/background)",
+            exec_tool_name
+        ));
+        lines.push(format!(
+            "- {}: manage background exec sessions",
+            process_tool_name
+        ));
+        lines.push("- browser: control OpenClaw's dedicated browser".to_string());
+        lines.push("- canvas: present/eval/snapshot the Canvas".to_string());
+        lines.push("- nodes: list/describe/notify/camera/screen on paired nodes".to_string());
+        lines.push("- cron: manage cron jobs and wake events (use for reminders; when scheduling a reminder, write the systemEvent text as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate)".to_string());
+        lines.push("- sessions_list: list sessions".to_string());
+        lines.push("- sessions_history: fetch session history".to_string());
+        lines.push("- sessions_send: send to another session".to_string());
+        lines.push("- subagents: list/steer/kill sub-agent runs".to_string());
+        lines.push(
+            "- session_status: show usage/time/model state and answer \"what model are we using?\""
+                .to_string(),
+        );
+    }
     lines.extend([
         "TOOLS.md does not control tool availability; it is user guidance for how to use external tools."
             .to_string(),
@@ -7444,10 +7736,18 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
     }
 
     if !is_minimal && !authorized_senders.is_empty() {
+        let display_senders: Vec<String> = if owner_display_hash {
+            authorized_senders
+                .iter()
+                .map(|owner_id| format_owner_display_id(owner_id, owner_display_secret.as_deref()))
+                .collect()
+        } else {
+            authorized_senders.clone()
+        };
         lines.push("## Authorized Senders".to_string());
         lines.push(format!(
             "Authorized senders: {}. These senders are allowlisted; do not assume they are the owner.",
-            authorized_senders.join(", ")
+            display_senders.join(", ")
         ));
         lines.push(String::new());
     }
@@ -7479,11 +7779,6 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
             lines.push("When diagnosing issues, run `openclaw status` yourself when possible; only ask the user if you lack access (e.g., sandboxed).".to_string());
             lines.push(String::new());
         }
-        if let Some(timezone) = user_timezone {
-            lines.push("## Current Date & Time".to_string());
-            lines.push(format!("Time zone: {}", timezone));
-            lines.push(String::new());
-        }
     }
     if sandbox_info.enabled {
         lines.push("## Sandbox".to_string());
@@ -7493,17 +7788,21 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
         if let Some(container_workspace_dir) = sandbox_info.container_workspace_dir.as_deref() {
             lines.push(format!(
                 "Sandbox container workdir: {}",
-                container_workspace_dir
+                sanitize_for_prompt_literal(container_workspace_dir)
             ));
         }
         if let Some(workspace_dir) = sandbox_info.workspace_dir.as_deref() {
-            lines.push(format!("Sandbox host mount source (file tools bridge only; not valid inside sandbox exec): {}", workspace_dir));
+            lines.push(format!(
+                "Sandbox host mount source (file tools bridge only; not valid inside sandbox exec): {}",
+                sanitize_for_prompt_literal(workspace_dir)
+            ));
         }
         if let Some(workspace_access) = sandbox_info.workspace_access.as_deref() {
             if let Some(mount) = sandbox_info.agent_workspace_mount.as_deref() {
                 lines.push(format!(
                     "Agent workspace access: {} (mounted at {})",
-                    workspace_access, mount
+                    workspace_access,
+                    sanitize_for_prompt_literal(mount)
                 ));
             } else {
                 lines.push(format!("Agent workspace access: {}", workspace_access));
@@ -7513,7 +7812,10 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
             lines.push("Sandbox browser: enabled.".to_string());
         }
         if let Some(vnc) = sandbox_info.browser_novnc_url.as_deref() {
-            lines.push(format!("Sandbox browser observer (noVNC): {}", vnc));
+            lines.push(format!(
+                "Sandbox browser observer (noVNC): {}",
+                sanitize_for_prompt_literal(vnc)
+            ));
         }
         match sandbox_info.host_browser_allowed {
             Some(true) => lines.push("Host browser control: allowed.".to_string()),
@@ -7533,10 +7835,18 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
         }
         lines.push(String::new());
     }
-    if !is_minimal {
-        lines.push("## Workspace Files (injected)".to_string());
-        lines.push("These user-editable files are loaded by OpenClaw and included below in Project Context.".to_string());
+    if let Some(timezone) = user_timezone.as_deref() {
+        lines.push("## Current Date & Time".to_string());
+        lines.push(format!("Time zone: {}", timezone));
         lines.push(String::new());
+    }
+    lines.push("## Workspace Files (injected)".to_string());
+    lines.push(
+        "These user-editable files are loaded by OpenClaw and included below in Project Context."
+            .to_string(),
+    );
+    lines.push(String::new());
+    if !is_minimal {
         lines.push("## Reply Tags".to_string());
         lines.push(
             "To request a native reply/quote on supported surfaces, include one tag in your reply:"
@@ -7583,13 +7893,6 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
         if let Some(hint) = tts_hint.as_deref() {
             lines.push("## Voice (TTS)".to_string());
             lines.push(hint.to_string());
-            lines.push(String::new());
-        } else if has_tts {
-            lines.push("## Voice (TTS)".to_string());
-            lines.push(
-                "When the user wants a voice reply, use the TTS pipeline/tooling configured for this runtime."
-                    .to_string(),
-            );
             lines.push(String::new());
         }
     }
@@ -9060,6 +9363,34 @@ mod tests {
             "If multiple channels are configured, pass `channel` (telegram|whatsapp|discord|irc|googlechat|slack|signal|imessage)."
         ));
         assert!(prompt.contains("⚠️ Rules:"));
+    }
+
+    #[test]
+    fn default_prompt_hashes_authorized_senders_when_configured() {
+        let exec = ToolRegistryExecutor::new(std::sync::Arc::new(ToolRegistry::default()))
+            .with_full_config(std::sync::Arc::new(tokio::sync::RwLock::new(
+                oclaw_config::settings::Config {
+                    commands: Some(serde_json::json!({
+                        "ownerDisplay": "hash",
+                        "ownerDisplaySecret": "secret-key",
+                        "ownerList": ["8613800138000"]
+                    })),
+                    ..Default::default()
+                },
+            )));
+        let prompt = default_agent_system_prompt(&exec);
+        let hashed = format_owner_display_id("8613800138000", Some("secret-key"));
+        assert!(prompt.contains("## Authorized Senders"));
+        assert!(prompt.contains(&hashed));
+        assert!(!prompt.contains("8613800138000"));
+    }
+
+    #[test]
+    fn minimal_prompt_still_includes_workspace_files_section() {
+        let exec = ToolRegistryExecutor::new(std::sync::Arc::new(ToolRegistry::default()));
+        let prompt = agent_system_prompt(&exec, true);
+        assert!(prompt.contains("## Workspace Files (injected)"));
+        assert!(!prompt.contains("## Reply Tags"));
     }
 
     #[test]
