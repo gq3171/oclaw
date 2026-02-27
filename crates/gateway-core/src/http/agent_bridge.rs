@@ -7231,6 +7231,46 @@ fn list_deliverable_message_channels() -> Vec<String> {
     ]
 }
 
+fn resolve_message_channel_options(tool_executor: &ToolRegistryExecutor) -> String {
+    let mut channels = list_deliverable_message_channels();
+    if let Some(cfg_lock) = tool_executor.full_config.as_ref()
+        && let Ok(cfg) = cfg_lock.try_read()
+        && let Some(ch) = cfg.channels.as_ref()
+    {
+        if ch.line.is_some() {
+            push_unique(&mut channels, "line");
+        }
+        if ch.matrix.is_some() {
+            push_unique(&mut channels, "matrix");
+        }
+        if ch.nostr.is_some() {
+            push_unique(&mut channels, "nostr");
+        }
+        if ch.mattermost.is_some() {
+            push_unique(&mut channels, "mattermost");
+        }
+        if ch.feishu.is_some() {
+            push_unique(&mut channels, "feishu");
+        }
+        if ch.msteams.is_some() {
+            push_unique(&mut channels, "msteams");
+        }
+        if ch.twitch.is_some() {
+            push_unique(&mut channels, "twitch");
+        }
+        if ch.zalo.is_some() {
+            push_unique(&mut channels, "zalo");
+        }
+        if ch.nextcloud.is_some() {
+            push_unique(&mut channels, "nextcloud");
+        }
+        if ch.synology.is_some() {
+            push_unique(&mut channels, "synology");
+        }
+    }
+    channels.join("|")
+}
+
 #[derive(Debug, Clone, Default)]
 struct SandboxPromptInfo {
     enabled: bool,
@@ -7538,7 +7578,7 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
     let inline_buttons_enabled = runtime_capabilities
         .iter()
         .any(|cap| cap.eq_ignore_ascii_case("inlineButtons"));
-    let message_channel_options = list_deliverable_message_channels().join("|");
+    let message_channel_options = resolve_message_channel_options(tool_executor);
     let workspace_dir = sanitize_for_prompt_literal(&workspace_root.display().to_string());
     let display_workspace_dir = if sandbox_info.enabled {
         sandbox_info
