@@ -95,7 +95,7 @@ impl Tool {
             }
             Tool::MemoryGet(_) => "Read a specific memory entry by ID after memory_search",
             Tool::Browse(_) => {
-                "Browser automation: navigate, click, type, screenshot, evaluate JS, get DOM snapshot, console logs, and network requests"
+                "Browser automation (alias: browser): open websites, navigate, click, type, screenshot, evaluate JS, get DOM snapshot, console logs, and network requests"
             }
             Tool::WebSearch(_) => {
                 "Search the web and return a list of results with titles, URLs, and snippets"

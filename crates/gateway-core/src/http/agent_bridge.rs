@@ -1358,6 +1358,17 @@ impl ToolRegistryExecutor {
             .any(|v| v == "*" || sanitize_session_token(v) == target)
     }
 
+    fn normalize_tool_call_name(name: &str) -> &str {
+        let normalized = name.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "browser" => "browse",
+            "google" | "search" => "web_search",
+            "fetch" | "http_get" => "web_fetch",
+            "exec" | "shell" => "bash",
+            _ => name.trim(),
+        }
+    }
+
     fn count_active_children_for_requester(&self, requester_session_key: &str) -> usize {
         self.sweep_archived_subagent_runs();
         ensure_subagent_registry_loaded();
@@ -6461,20 +6472,23 @@ impl ToolRegistryExecutor {
 #[async_trait::async_trait]
 impl ToolExecutor for ToolRegistryExecutor {
     async fn execute(&self, name: &str, arguments: &str) -> Result<String, String> {
+        let normalized_name = Self::normalize_tool_call_name(name);
         // Try built-in registry first
-        if self.registry.has_tool(name) {
+        if self.registry.has_tool(normalized_name) {
             let args: serde_json::Value = serde_json::from_str(arguments)
                 .unwrap_or(serde_json::Value::Object(Default::default()));
             let call = oclaw_tools_core::tool::ToolCall {
                 id: uuid::Uuid::new_v4().to_string(),
-                name: name.to_string(),
+                name: normalized_name.to_string(),
                 arguments: args,
             };
             let resp = self.registry.execute_call(call).await;
             return if let Some(err) = resp.error {
                 Err(err)
             } else {
-                let fulfilled = self.fulfill_runtime_intent(name, resp.result).await?;
+                let fulfilled = self
+                    .fulfill_runtime_intent(normalized_name, resp.result)
+                    .await?;
                 Ok(serde_json::to_string(&fulfilled).unwrap_or_default())
             };
         }
@@ -6571,6 +6585,12 @@ fn default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
             "- When users ask for latest/live information, run tools first, then answer with findings."
                 .to_string(),
         );
+        if has_tool("browse") {
+            lines.push(
+                "- If the user asks you to open a website in a browser, call `browse` first (example: {\"action\":\"navigate\",\"url\":\"https://bing.com\"}) instead of saying you cannot open a browser."
+                    .to_string(),
+            );
+        }
     }
 
     if has_tool("memory_search") || has_tool("memory_get") {
@@ -6587,14 +6607,46 @@ fn default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
         }
     }
 
-    if has_tool("message") {
-        lines.push("## Proactive Messaging".to_string());
+    if has_tool("message") || has_tool("sessions_send") || has_tool("subagents") {
+        lines.push("## Messaging".to_string());
         lines.push(
-            "When users ask you to proactively contact someone (Feishu/Telegram/Slack/etc), use the message tool instead of claiming integration is unavailable."
+            "- Reply in current session -> automatically routes to source channel.".to_string(),
+        );
+        if has_tool("sessions_send") {
+            lines.push(
+                "- Cross-session messaging -> use sessions_send(sessionKey, message).".to_string(),
+            );
+        }
+        if has_tool("subagents") {
+            lines.push(
+                "- Sub-agent orchestration -> use subagents(action=list|steer|kill|spawn|focus|unfocus)."
+                    .to_string(),
+            );
+        }
+        lines.push(
+            "- Never use exec/curl for provider messaging; OCLAW handles routing internally."
+                .to_string(),
+        );
+    }
+
+    if has_tool("message") {
+        lines.push("### message tool".to_string());
+        lines.push(
+            "- Use `message` for proactive sends + channel actions (polls, reactions, etc.)."
+                .to_string(),
+        );
+        lines.push("- For `action=send`, include `to` and `message`.".to_string());
+        lines.push("- If multiple channels are configured, pass `channel` explicitly.".to_string());
+        lines.push(
+            "- If you already delivered the user-visible reply via `message` (`action=send`), respond with ONLY: [[SILENT]]."
                 .to_string(),
         );
         lines.push(
-            "If sending fails, report the exact tool error and ask for missing routing fields."
+            "- When users ask to proactively contact someone (Feishu/Telegram/Slack/etc), use `message` instead of claiming integration is unavailable."
+                .to_string(),
+        );
+        lines.push(
+            "- If sending fails, report the exact tool error and ask for missing routing fields."
                 .to_string(),
         );
     }
@@ -7896,6 +7948,27 @@ mod tests {
         );
         assert!(prompt.contains("You are a leaf worker and CANNOT spawn further sub-agents."));
         assert!(prompt.contains("Only use the message tool when explicitly instructed"));
+    }
+
+    #[test]
+    fn default_prompt_includes_browser_open_guidance() {
+        let exec = ToolRegistryExecutor::new(std::sync::Arc::new(ToolRegistry::default()));
+        let prompt = default_agent_system_prompt(&exec);
+        assert!(prompt.contains("Do not claim browsing/network is unavailable"));
+        assert!(prompt.contains("open a website in a browser"));
+        assert!(prompt.contains("### message tool"));
+    }
+
+    #[test]
+    fn tool_name_alias_browser_maps_to_browse() {
+        assert_eq!(
+            ToolRegistryExecutor::normalize_tool_call_name("browser"),
+            "browse"
+        );
+        assert_eq!(
+            ToolRegistryExecutor::normalize_tool_call_name(" exec "),
+            "bash"
+        );
     }
 
     #[tokio::test]

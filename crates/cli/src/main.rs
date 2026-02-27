@@ -2416,13 +2416,25 @@ async fn telegram_poll_loop(
 /// Bridge: wraps ToolRegistry as agent-core's ToolExecutor, then runs Agent.
 struct ToolRegistryExecutor(Arc<oclaw_tools_core::tool::ToolRegistry>);
 
+fn normalize_tool_call_name(name: &str) -> &str {
+    let normalized = name.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "browser" => "browse",
+        "google" | "search" => "web_search",
+        "fetch" | "http_get" => "web_fetch",
+        "exec" | "shell" => "bash",
+        _ => name.trim(),
+    }
+}
+
 #[async_trait::async_trait]
 impl oclaw_agent_core::agent::ToolExecutor for ToolRegistryExecutor {
     async fn execute(&self, name: &str, arguments: &str) -> Result<String, String> {
+        let normalized_name = normalize_tool_call_name(name);
         let args: serde_json::Value = serde_json::from_str(arguments).unwrap_or_default();
         let call = oclaw_tools_core::tool::ToolCall {
             id: uuid::Uuid::new_v4().to_string(),
-            name: name.to_string(),
+            name: normalized_name.to_string(),
             arguments: args,
         };
         let resp = self.0.execute_call(call).await;
@@ -2469,7 +2481,21 @@ fn build_system_prompt(registry: &oclaw_tools_core::tool::ToolRegistry) -> Strin
     format!(
         "You are a helpful AI assistant.\n\n\
          ## Available Tools\n{}\n\n\
-         You CAN access the internet. Use web_fetch for APIs/simple pages, browse for JS-heavy sites.\n\n\
+         ## Internet Access\n\
+         You CAN access the internet. Never claim browsing/network is unavailable when tools exist.\n\
+         - Use web_search for real-time facts/prices/news\n\
+         - Use web_fetch for APIs/simple pages\n\
+         - Use browse for JS-heavy pages\n\
+         - If user asks you to open a website in browser (e.g. 打开bing.com), call browse first with {{\"action\":\"navigate\",\"url\":\"https://bing.com\"}}.\n\n\
+         ## Messaging\n\
+         - Reply in current session -> automatically routes to source channel\n\
+         - Cross-session messaging -> use sessions_send(sessionKey, message)\n\
+         - Sub-agent orchestration -> use subagents(action=list|steer|kill|spawn|focus|unfocus)\n\
+         - Never use exec/curl for provider messaging; OCLAW handles routing internally\n\
+         ### message tool\n\
+         - Use message for proactive sends + channel actions\n\
+         - For action=send, include to + message (+ channel when needed)\n\
+         - If the visible reply was already sent via message(action=send), output ONLY [[SILENT]]\n\n\
          ## Runtime\n\
          Current time: {}\nOS: {} ({})\nWorking directory: {}\n\n\
          Respond in the user's language.",
@@ -3206,7 +3232,9 @@ async fn feishu_on_message_receive(
 
 #[cfg(test)]
 mod tests {
-    use super::{llm_provider_selection_order, provider_requires_api_key};
+    use super::{
+        llm_provider_selection_order, normalize_tool_call_name, provider_requires_api_key,
+    };
     use oclaw_config::settings::{ModelProvider, ModelsConfig};
     use std::collections::HashMap;
 
@@ -3270,5 +3298,11 @@ mod tests {
             Some("https://api.openai.com/v1"),
         );
         assert!(requires);
+    }
+
+    #[test]
+    fn normalize_tool_alias_maps_browser_to_browse() {
+        assert_eq!(normalize_tool_call_name("browser"), "browse");
+        assert_eq!(normalize_tool_call_name("shell"), "bash");
     }
 }
