@@ -6818,6 +6818,68 @@ fn resolve_reasoning_level(session_meta: &HashMap<String, String>) -> String {
     "off".to_string()
 }
 
+fn resolve_memory_citations_mode(session_meta: &HashMap<String, String>) -> String {
+    for key in [
+        "memoryCitations",
+        "memory_citations",
+        "memory.citations",
+        "citations",
+    ] {
+        if let Some(value) = session_meta.get(key) {
+            let normalized = value.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "off" | "on" | "auto" => return normalized,
+                _ => {}
+            }
+        }
+    }
+    for key in ["OCLAW_MEMORY_CITATIONS", "OCLAWS_MEMORY_CITATIONS"] {
+        if let Some(raw) = env_text(key) {
+            let normalized = raw.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "off" | "on" | "auto" => return normalized,
+                _ => {}
+            }
+        }
+    }
+    "auto".to_string()
+}
+
+fn resolve_message_tool_hints(session_meta: &HashMap<String, String>) -> Vec<String> {
+    let mut hints: Vec<String> = Vec::new();
+    for key in [
+        "messageToolHints",
+        "message_tool_hints",
+        "messageHints",
+        "message_hints",
+    ] {
+        if let Some(raw) = session_meta.get(key) {
+            for line in raw.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                hints.push(trimmed.to_string());
+            }
+        }
+    }
+    hints.sort();
+    hints.dedup();
+    hints
+}
+
+fn resolve_tts_hint(session_meta: &HashMap<String, String>) -> Option<String> {
+    for key in ["ttsHint", "tts_hint", "voiceHint", "voice_hint"] {
+        if let Some(value) = session_meta.get(key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    env_text("OCLAW_TTS_PROMPT_HINT").or_else(|| env_text("OCLAWS_TTS_PROMPT_HINT"))
+}
+
 fn resolve_runtime_channel(
     session_meta: &HashMap<String, String>,
     turn_source: Option<&TurnSourceRoute>,
@@ -7201,6 +7263,9 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
     let reasoning_tag_hint = provider_requires_reasoning_tags(tool_executor);
     let context_files = resolve_project_context_files(&workspace_root);
     let user_timezone = resolve_timezone(&session_meta, &workspace_root);
+    let memory_citations_mode = resolve_memory_citations_mode(&session_meta);
+    let message_tool_hints = resolve_message_tool_hints(&session_meta);
+    let tts_hint = resolve_tts_hint(&session_meta);
     let reasoning_level = resolve_reasoning_level(&session_meta);
     let runtime_channel =
         resolve_runtime_channel(&session_meta, tool_executor.turn_source.as_ref());
@@ -7342,10 +7407,14 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
             "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked."
                 .to_string(),
         );
-        lines.push(
-            "Citations: include Source: <path#line> when it helps the user verify memory snippets."
-                .to_string(),
-        );
+        if memory_citations_mode == "off" {
+            lines.push("Citations are disabled: do not mention file paths or line numbers in replies unless the user explicitly asks.".to_string());
+        } else {
+            lines.push(
+                "Citations: include Source: <path#line> when it helps the user verify memory snippets."
+                    .to_string(),
+            );
+        }
         lines.push(String::new());
     }
 
@@ -7508,9 +7577,14 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
             } else if let Some(channel) = runtime_channel.as_deref() {
                 lines.push(format!("- Inline buttons not enabled for {}. If you need them, ask to set {}.capabilities.inlineButtons (\"dm\"|\"group\"|\"all\"|\"allowlist\").", channel, channel));
             }
+            lines.extend(message_tool_hints.clone());
         }
         lines.push(String::new());
-        if has_tts {
+        if let Some(hint) = tts_hint.as_deref() {
+            lines.push("## Voice (TTS)".to_string());
+            lines.push(hint.to_string());
+            lines.push(String::new());
+        } else if has_tts {
             lines.push("## Voice (TTS)".to_string());
             lines.push(
                 "When the user wants a voice reply, use the TTS pipeline/tooling configured for this runtime."
