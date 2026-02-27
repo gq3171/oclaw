@@ -1595,6 +1595,43 @@ impl BrowseTool {
         )))
     }
 
+    fn normalize_navigation_url(url: &str) -> String {
+        let trimmed = url.trim();
+        if trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.starts_with("http://")
+            || lower.starts_with("https://")
+            || lower.starts_with("file://")
+            || lower.starts_with("about:")
+            || lower.starts_with("chrome://")
+            || lower.starts_with("edge://")
+            || lower.starts_with("data:")
+        {
+            return trimmed.to_string();
+        }
+        if trimmed.contains("://") {
+            return trimmed.to_string();
+        }
+        if lower.starts_with("localhost")
+            || lower.starts_with("127.")
+            || lower.starts_with("[::1]")
+            || lower.starts_with("192.168.")
+            || lower.starts_with("10.")
+            || lower.starts_with("172.16.")
+            || lower.starts_with("172.17.")
+            || lower.starts_with("172.18.")
+            || lower.starts_with("172.19.")
+            || lower.starts_with("172.2")
+            || lower.starts_with("172.30.")
+            || lower.starts_with("172.31.")
+        {
+            return format!("http://{}", trimmed);
+        }
+        format!("https://{}", trimmed)
+    }
+
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
         struct Args {
@@ -1648,10 +1685,11 @@ impl BrowseTool {
 
         let result: ToolResult<serde_json::Value> = match action {
             "navigate" => {
-                let url = args.url.as_deref().ok_or_else(|| {
+                let url_raw = args.url.as_deref().ok_or_else(|| {
                     crate::ToolError::InvalidInput("url required for navigate".into())
                 })?;
-                page.navigate(url).await.map_err(|e| {
+                let url = Self::normalize_navigation_url(url_raw);
+                page.navigate(&url).await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Navigation failed: {}", e))
                 })?;
                 tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
