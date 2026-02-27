@@ -1,5 +1,5 @@
 /// Memory auto-recall: search long-term memory before LLM request and inject as context.
-use oclaws_llm_core::chat::{ChatMessage, MessageRole};
+use oclaw_llm_core::chat::{ChatMessage, MessageRole};
 
 #[derive(Debug, Clone)]
 pub struct AutoRecallConfig {
@@ -10,7 +10,11 @@ pub struct AutoRecallConfig {
 
 impl Default for AutoRecallConfig {
     fn default() -> Self {
-        Self { enabled: false, max_results: 5, min_score: 0.3 }
+        Self {
+            enabled: false,
+            max_results: 5,
+            min_score: 0.3,
+        }
     }
 }
 
@@ -28,7 +32,10 @@ pub fn format_recall_context(results: &[RecallResult]) -> Option<ChatMessage> {
     }
     let mut body = String::from("## Recalled from memory\n");
     for r in results {
-        body.push_str(&format!("- [{}] (score {:.2}): {}\n", r.key, r.score, r.content));
+        body.push_str(&format!(
+            "- [{}] (score {:.2}): {}\n",
+            r.key, r.score, r.content
+        ));
     }
     Some(ChatMessage {
         role: MessageRole::System,

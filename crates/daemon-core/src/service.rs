@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::RwLock;
-use tracing::{info, error};
+use tracing::{error, info};
 
 use crate::{DaemonError, DaemonResult};
 
@@ -53,12 +53,23 @@ pub struct DaemonService {
 
 impl DaemonService {
     pub fn new(config: ServiceConfig) -> Self {
-        Self { config, state: ServiceState::Stopped, pid: None, restart_count: 0 }
+        Self {
+            config,
+            state: ServiceState::Stopped,
+            pid: None,
+            restart_count: 0,
+        }
     }
 
-    pub fn config(&self) -> &ServiceConfig { &self.config }
-    pub fn state(&self) -> ServiceState { self.state }
-    pub fn pid(&self) -> Option<u32> { self.pid }
+    pub fn config(&self) -> &ServiceConfig {
+        &self.config
+    }
+    pub fn state(&self) -> ServiceState {
+        self.state
+    }
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
+    }
 
     async fn spawn(&mut self) -> DaemonResult<()> {
         self.state = ServiceState::Starting;
@@ -91,9 +102,15 @@ impl DaemonService {
         if let Some(pid) = self.pid.take() {
             self.state = ServiceState::Stopping;
             #[cfg(unix)]
-            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
             #[cfg(windows)]
-            { let _ = std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).output(); }
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/F"])
+                    .output();
+            }
             self.state = ServiceState::Stopped;
             info!(name = %self.config.name, pid, "service stopped");
         }
@@ -107,7 +124,9 @@ pub struct ServiceManager {
 
 impl ServiceManager {
     pub fn new() -> Self {
-        Self { services: Arc::new(RwLock::new(HashMap::new())) }
+        Self {
+            services: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
     pub async fn register(&self, service: DaemonService) -> DaemonResult<()> {
@@ -118,14 +137,16 @@ impl ServiceManager {
 
     pub async fn start(&self, name: &str) -> DaemonResult<()> {
         let mut services = self.services.write().await;
-        let svc = services.get_mut(name)
+        let svc = services
+            .get_mut(name)
             .ok_or_else(|| DaemonError::NotFound(name.into()))?;
         svc.spawn().await
     }
 
     pub async fn stop(&self, name: &str) -> DaemonResult<()> {
         let mut services = self.services.write().await;
-        let svc = services.get_mut(name)
+        let svc = services
+            .get_mut(name)
             .ok_or_else(|| DaemonError::NotFound(name.into()))?;
         svc.stop_process();
         Ok(())
@@ -145,18 +166,24 @@ impl ServiceManager {
 
     pub async fn status(&self, name: &str) -> DaemonResult<(ServiceState, Option<u32>)> {
         let services = self.services.read().await;
-        let svc = services.get(name)
+        let svc = services
+            .get(name)
             .ok_or_else(|| DaemonError::NotFound(name.into()))?;
         Ok((svc.state, svc.pid))
     }
 
     pub async fn list(&self) -> Vec<(String, ServiceState, Option<u32>)> {
-        self.services.read().await.iter()
+        self.services
+            .read()
+            .await
+            .iter()
             .map(|(n, s)| (n.clone(), s.state, s.pid))
             .collect()
     }
 }
 
 impl Default for ServiceManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

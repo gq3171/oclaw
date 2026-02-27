@@ -21,7 +21,11 @@ impl MigrationRunner {
     }
 
     pub fn current_version(&self) -> u32 {
-        self.migrations.iter().map(|m| m.to_version).max().unwrap_or(1)
+        self.migrations
+            .iter()
+            .map(|m| m.to_version)
+            .max()
+            .unwrap_or(1)
     }
 
     /// Check if a config needs migration based on its version field.
@@ -41,20 +45,19 @@ impl MigrationRunner {
         }
         // Stamp the new version
         if let Some(obj) = config.as_object_mut() {
-            let meta = obj.entry("meta")
+            let meta = obj
+                .entry("meta")
                 .or_insert_with(|| Value::Object(serde_json::Map::new()));
             if let Some(meta_obj) = meta.as_object_mut() {
-                meta_obj.insert(
-                    "configVersion".to_string(),
-                    Value::Number(current.into()),
-                );
+                meta_obj.insert("configVersion".to_string(), Value::Number(current.into()));
             }
         }
         Ok(config)
     }
 
     fn extract_version(config: &Value) -> u32 {
-        config.get("meta")
+        config
+            .get("meta")
             .and_then(|m| m.get("configVersion"))
             .and_then(|v| v.as_u64())
             .unwrap_or(1) as u32
@@ -109,10 +112,7 @@ mod tests {
         let config = json!({"llm": {"provider": "openai"}, "gateway": {"port": 8080}});
         let migrated = runner.migrate(config, 1).unwrap();
         assert!(migrated.get("llm").is_none());
-        assert_eq!(
-            migrated["models"]["provider"],
-            json!("openai")
-        );
+        assert_eq!(migrated["models"]["provider"], json!("openai"));
         assert_eq!(migrated["meta"]["configVersion"], json!(2));
     }
 

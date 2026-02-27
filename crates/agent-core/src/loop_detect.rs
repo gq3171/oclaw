@@ -38,13 +38,22 @@ pub struct LoopDetectionResult {
 
 impl LoopDetectionResult {
     fn ok() -> Self {
-        Self { level: LoopLevel::None, message: None }
+        Self {
+            level: LoopLevel::None,
+            message: None,
+        }
     }
     fn warn(msg: String) -> Self {
-        Self { level: LoopLevel::Warning, message: Some(msg) }
+        Self {
+            level: LoopLevel::Warning,
+            message: Some(msg),
+        }
     }
     fn critical(msg: String) -> Self {
-        Self { level: LoopLevel::Critical, message: Some(msg) }
+        Self {
+            level: LoopLevel::Critical,
+            message: Some(msg),
+        }
     }
 }
 
@@ -64,7 +73,10 @@ pub struct LoopDetector {
 
 impl Default for LoopDetector {
     fn default() -> Self {
-        Self { history: Vec::new(), history_size: HISTORY_SIZE }
+        Self {
+            history: Vec::new(),
+            history_size: HISTORY_SIZE,
+        }
     }
 }
 
@@ -140,7 +152,9 @@ impl LoopDetector {
 
         // 4. Generic repeat — identical calls in window
         if !is_poll {
-            let repeat_count = self.history.iter()
+            let repeat_count = self
+                .history
+                .iter()
                 .filter(|r| r.tool_name == tool_name && r.args_hash == current_hash)
                 .count();
             if repeat_count >= WARNING_THRESHOLD {
@@ -179,8 +193,13 @@ impl LoopDetector {
 
     /// Detect A-B-A-B alternating pattern at the tail of history.
     fn ping_pong_streak(&self, current_hash: u64) -> PingPongResult {
-        let empty = PingPongResult { count: 0, no_progress: false };
-        let Some(last) = self.history.last() else { return empty };
+        let empty = PingPongResult {
+            count: 0,
+            no_progress: false,
+        };
+        let Some(last) = self.history.last() else {
+            return empty;
+        };
 
         // Find the "other" signature (first different one scanning backwards)
         let mut other_hash: Option<u64> = None;
@@ -190,19 +209,31 @@ impl LoopDetector {
                 break;
             }
         }
-        let Some(other) = other_hash else { return empty };
+        let Some(other) = other_hash else {
+            return empty;
+        };
 
         // Count alternating tail
         let mut alt_count = 0usize;
         for rec in self.history.iter().rev() {
-            let expected = if alt_count.is_multiple_of(2) { last.args_hash } else { other };
-            if rec.args_hash != expected { break; }
+            let expected = if alt_count.is_multiple_of(2) {
+                last.args_hash
+            } else {
+                other
+            };
+            if rec.args_hash != expected {
+                break;
+            }
             alt_count += 1;
         }
-        if alt_count < 2 { return empty; }
+        if alt_count < 2 {
+            return empty;
+        }
 
         // Current call must continue the pattern
-        if current_hash != other { return empty; }
+        if current_hash != other {
+            return empty;
+        }
 
         // Check no-progress: all results for each side must be identical
         let tail_start = self.history.len().saturating_sub(alt_count);
@@ -210,24 +241,38 @@ impl LoopDetector {
         let mut hash_b: Option<u64> = None;
         let mut no_progress = true;
         for rec in &self.history[tail_start..] {
-            let Some(rh) = rec.result_hash else { no_progress = false; break };
+            let Some(rh) = rec.result_hash else {
+                no_progress = false;
+                break;
+            };
             if rec.args_hash == last.args_hash {
                 match hash_a {
                     None => hash_a = Some(rh),
-                    Some(h) if h != rh => { no_progress = false; break }
+                    Some(h) if h != rh => {
+                        no_progress = false;
+                        break;
+                    }
                     _ => {}
                 }
             } else {
                 match hash_b {
                     None => hash_b = Some(rh),
-                    Some(h) if h != rh => { no_progress = false; break }
+                    Some(h) if h != rh => {
+                        no_progress = false;
+                        break;
+                    }
                     _ => {}
                 }
             }
         }
-        if hash_a.is_none() || hash_b.is_none() { no_progress = false; }
+        if hash_a.is_none() || hash_b.is_none() {
+            no_progress = false;
+        }
 
-        PingPongResult { count: alt_count + 1, no_progress }
+        PingPongResult {
+            count: alt_count + 1,
+            no_progress,
+        }
     }
 }
 

@@ -21,7 +21,10 @@ impl ConfigOverride {
     /// Merge `other` on top of `self`. Fields in `other` take precedence.
     pub fn merge(&self, other: &ConfigOverride) -> ConfigOverride {
         ConfigOverride {
-            system_prompt: other.system_prompt.clone().or_else(|| self.system_prompt.clone()),
+            system_prompt: other
+                .system_prompt
+                .clone()
+                .or_else(|| self.system_prompt.clone()),
             model: other.model.clone().or_else(|| self.model.clone()),
             temperature: other.temperature.or(self.temperature),
             max_tokens: other.max_tokens.or(self.max_tokens),
@@ -103,14 +106,20 @@ mod tests {
     #[test]
     fn resolve_layers() {
         let mut resolver = OverrideResolver::new();
-        resolver.set_account_override("acct1", ConfigOverride {
-            model: Some("gpt-4o".into()),
-            ..Default::default()
-        });
-        resolver.set_channel_override("telegram", ConfigOverride {
-            temperature: Some(0.3),
-            ..Default::default()
-        });
+        resolver.set_account_override(
+            "acct1",
+            ConfigOverride {
+                model: Some("gpt-4o".into()),
+                ..Default::default()
+            },
+        );
+        resolver.set_channel_override(
+            "telegram",
+            ConfigOverride {
+                temperature: Some(0.3),
+                ..Default::default()
+            },
+        );
 
         let base = ConfigOverride {
             model: Some("gpt-4".into()),
@@ -121,8 +130,8 @@ mod tests {
 
         let result = resolver.resolve(&base, Some("acct1"), Some("telegram"));
         assert_eq!(result.model.as_deref(), Some("gpt-4o")); // account wins
-        assert_eq!(result.temperature, Some(0.3));             // channel wins
-        assert_eq!(result.max_tokens, Some(1000));             // base preserved
+        assert_eq!(result.temperature, Some(0.3)); // channel wins
+        assert_eq!(result.max_tokens, Some(1000)); // base preserved
     }
 
     #[test]

@@ -1,10 +1,10 @@
 //! Moonshot (Kimi) provider - OpenAI-compatible API
 
-use async_trait::async_trait;
-use crate::chat::{ChatRequest, ChatCompletion, StreamChunk};
+use super::{LlmProvider, ProviderType, openai::OpenAiProvider};
+use crate::chat::{ChatCompletion, ChatRequest, StreamChunk};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::LlmResult;
-use super::{LlmProvider, ProviderType, openai::OpenAiProvider};
+use async_trait::async_trait;
 
 pub struct MoonshotProvider {
     inner: OpenAiProvider,
@@ -23,13 +23,18 @@ impl MoonshotProvider {
 
 #[async_trait]
 impl LlmProvider for MoonshotProvider {
-    fn provider_type(&self) -> ProviderType { ProviderType::Moonshot }
+    fn provider_type(&self) -> ProviderType {
+        ProviderType::Moonshot
+    }
 
     async fn chat(&self, request: ChatRequest) -> LlmResult<ChatCompletion> {
         self.inner.chat(request).await
     }
 
-    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
+    async fn chat_stream(
+        &self,
+        request: ChatRequest,
+    ) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
         self.inner.chat_stream(request).await
     }
 
@@ -45,5 +50,7 @@ impl LlmProvider for MoonshotProvider {
         ]
     }
 
-    fn default_model(&self) -> &str { "moonshot-v1-32k" }
+    fn default_model(&self) -> &str {
+        "moonshot-v1-32k"
+    }
 }

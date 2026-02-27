@@ -53,7 +53,13 @@ impl MediaAttachmentCache {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        entries.insert(hash, CacheEntry { result, created_at: now });
+        entries.insert(
+            hash,
+            CacheEntry {
+                result,
+                created_at: now,
+            },
+        );
     }
 
     pub fn clear(&self) {

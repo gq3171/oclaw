@@ -8,7 +8,10 @@ pub fn compute_next_run(schedule: &CronScheduleKind, now_ms: u64) -> Option<u64>
             let ts = dt.timestamp_millis() as u64;
             if ts > now_ms { Some(ts) } else { None }
         }
-        CronScheduleKind::Every { every_ms, anchor_ms } => {
+        CronScheduleKind::Every {
+            every_ms,
+            anchor_ms,
+        } => {
             let anchor = anchor_ms.unwrap_or(0);
             if *every_ms == 0 {
                 return None;
@@ -17,7 +20,11 @@ pub fn compute_next_run(schedule: &CronScheduleKind, now_ms: u64) -> Option<u64>
             let periods = elapsed / every_ms;
             let next = anchor + (periods + 1) * every_ms;
             // Guard against same-second rescheduling
-            if next <= now_ms { Some(next + every_ms) } else { Some(next) }
+            if next <= now_ms {
+                Some(next + every_ms)
+            } else {
+                Some(next)
+            }
         }
         CronScheduleKind::Cron { expr, tz: _ } => {
             use cron::Schedule;

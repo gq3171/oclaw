@@ -88,7 +88,9 @@ impl WhatsAppChannel {
     }
 
     fn get_base_url(&self) -> String {
-        self.api_url.clone().unwrap_or_else(|| "https://graph.facebook.com/v18.0".to_string())
+        self.api_url
+            .clone()
+            .unwrap_or_else(|| "https://graph.facebook.com/v18.0".to_string())
     }
 
     async fn send_api_request(
@@ -97,12 +99,16 @@ impl WhatsAppChannel {
         endpoint: &str,
         body: Option<&serde_json::Value>,
     ) -> ChannelResult<serde_json::Value> {
-        let token = self.api_token.as_ref()
+        let token = self
+            .api_token
+            .as_ref()
             .ok_or_else(|| ChannelError::AuthenticationError("API token not set".to_string()))?;
-        
+
         let url = format!("{}{}", self.get_base_url(), endpoint);
-        
-        let client = self.client.as_ref()
+
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".to_string()))?;
 
         let mut request = match method.to_uppercase().as_str() {
@@ -120,21 +126,26 @@ impl WhatsAppChannel {
             request = request.json(body);
         }
 
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?;
 
         let status = response.status();
-        let json: serde_json::Value = response.json().await
+        let json: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
         if status.is_success() {
             Ok(json)
         } else {
-            let error_msg = json.get("error")
+            let error_msg = json
+                .get("error")
                 .and_then(|e| e.get("message"))
                 .and_then(|m| m.as_str())
                 .unwrap_or("Unknown error");
-            
+
             Err(ChannelError::MessageError(error_msg.to_string()))
         }
     }
@@ -184,7 +195,9 @@ impl Channel for WhatsAppChannel {
             return Err(ChannelError::ConnectionError("Not connected".to_string()));
         }
 
-        let recipient = message.metadata.get("recipient")
+        let recipient = message
+            .metadata
+            .get("recipient")
             .cloned()
             .ok_or_else(|| ChannelError::MessageError("Recipient not specified".to_string()))?;
 
@@ -198,19 +211,26 @@ impl Channel for WhatsAppChannel {
             image: None,
         };
 
-        let phone_number_id = self.phone_number_id.as_ref()
+        let phone_number_id = self
+            .phone_number_id
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Phone number ID not set".to_string()))?;
 
         let endpoint = format!("/{}/messages", phone_number_id);
 
-        let json = self.send_api_request(
-            "POST",
-            &endpoint,
-            Some(&serde_json::to_value(&whatsapp_msg).map_err(|e| ChannelError::MessageError(e.to_string()))?),
-        )
-        .await?;
+        let json = self
+            .send_api_request(
+                "POST",
+                &endpoint,
+                Some(
+                    &serde_json::to_value(&whatsapp_msg)
+                        .map_err(|e| ChannelError::MessageError(e.to_string()))?,
+                ),
+            )
+            .await?;
 
-        let message_id = json.get("messages")
+        let message_id = json
+            .get("messages")
             .and_then(|m| m.as_array())
             .and_then(|arr| arr.first())
             .and_then(|m| m.get("id"))
@@ -237,7 +257,7 @@ impl Channel for WhatsAppChannel {
 
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Received WhatsApp event: {:?}", event);
-        
+
         match event.event_type.as_str() {
             "message" => {
                 tracing::info!("Received WhatsApp message: {:?}", event.payload);
@@ -247,7 +267,7 @@ impl Channel for WhatsAppChannel {
             }
             _ => {}
         }
-        
+
         Ok(())
     }
 
@@ -263,10 +283,15 @@ impl Channel for WhatsAppChannel {
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // WhatsApp Cloud API: /entry/0/changes/0/value/messages/0
         let msg = payload.pointer("/entry/0/changes/0/value/messages/0")?;
-        let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let from = msg
+            .get("from")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("text");
         let text = if msg_type == "text" {
-            msg.pointer("/text/body").and_then(|v| v.as_str()).map(|s| s.to_string())
+            msg.pointer("/text/body")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
         } else if msg_type == "interactive" {
             msg.pointer("/interactive/button_reply/title")
                 .or_else(|| msg.pointer("/interactive/list_reply/title"))
@@ -286,10 +311,18 @@ impl Channel for WhatsAppChannel {
         })
     }
 
-    async fn send_reaction(&self, message_id: &str, emoji: &str, _metadata: &HashMap<String, String>) -> ChannelResult<()> {
-        let recipient = _metadata.get("recipient")
+    async fn send_reaction(
+        &self,
+        message_id: &str,
+        emoji: &str,
+        _metadata: &HashMap<String, String>,
+    ) -> ChannelResult<()> {
+        let recipient = _metadata
+            .get("recipient")
             .ok_or_else(|| ChannelError::MessageError("Recipient required for reaction".into()))?;
-        let phone_number_id = self.phone_number_id.as_ref()
+        let phone_number_id = self
+            .phone_number_id
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Phone number ID not set".into()))?;
         let body = serde_json::json!({
             "messaging_product": "whatsapp",
@@ -301,12 +334,19 @@ impl Channel for WhatsAppChannel {
                 "emoji": emoji,
             }
         });
-        self.send_api_request("POST", &format!("/{}/messages", phone_number_id), Some(&body)).await?;
+        self.send_api_request(
+            "POST",
+            &format!("/{}/messages", phone_number_id),
+            Some(&body),
+        )
+        .await?;
         Ok(())
     }
 
     async fn send_media(&self, target: &str, media: &ChannelMedia) -> ChannelResult<String> {
-        let phone_number_id = self.phone_number_id.as_ref()
+        let phone_number_id = self
+            .phone_number_id
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Phone number ID not set".into()))?;
         let media_type_str = match media.media_type {
             MediaType::Photo => "image",
@@ -319,9 +359,11 @@ impl Channel for WhatsAppChannel {
         let media_obj = match &media.data {
             MediaData::Url(u) => serde_json::json!({"link": u}),
             MediaData::FileId(id) => serde_json::json!({"id": id}),
-            MediaData::Bytes(_) => return Err(ChannelError::UnsupportedOperation(
-                "WhatsApp send_media with raw bytes not supported".into(),
-            )),
+            MediaData::Bytes(_) => {
+                return Err(ChannelError::UnsupportedOperation(
+                    "WhatsApp send_media with raw bytes not supported".into(),
+                ));
+            }
         };
         let mut body = serde_json::json!({
             "messaging_product": "whatsapp",
@@ -332,10 +374,20 @@ impl Channel for WhatsAppChannel {
         if let Some(caption) = &media.caption
             && let Some(obj) = body.get_mut(media_type_str).and_then(|o| o.as_object_mut())
         {
-            obj.insert("caption".to_string(), serde_json::Value::String(caption.clone()));
+            obj.insert(
+                "caption".to_string(),
+                serde_json::Value::String(caption.clone()),
+            );
         }
-        let resp = self.send_api_request("POST", &format!("/{}/messages", phone_number_id), Some(&body)).await?;
-        Ok(resp.get("messages")
+        let resp = self
+            .send_api_request(
+                "POST",
+                &format!("/{}/messages", phone_number_id),
+                Some(&body),
+            )
+            .await?;
+        Ok(resp
+            .get("messages")
             .and_then(|m| m.as_array())
             .and_then(|a| a.first())
             .and_then(|m| m.get("id"))
@@ -345,26 +397,41 @@ impl Channel for WhatsAppChannel {
     }
 
     async fn download_media(&self, media_id: &str) -> ChannelResult<Vec<u8>> {
-        let info = self.send_api_request("GET", &format!("/{}", media_id), None).await?;
-        let url = info.get("url").and_then(|u| u.as_str())
+        let info = self
+            .send_api_request("GET", &format!("/{}", media_id), None)
+            .await?;
+        let url = info
+            .get("url")
+            .and_then(|u| u.as_str())
             .ok_or_else(|| ChannelError::MessageError("No download URL in response".into()))?;
-        let token = self.api_token.as_ref()
+        let token = self
+            .api_token
+            .as_ref()
             .ok_or_else(|| ChannelError::AuthenticationError("API token not set".into()))?;
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".into()))?;
-        let bytes = client.get(url)
+        let bytes = client
+            .get(url)
             .header("Authorization", format!("Bearer {}", token))
-            .send().await
+            .send()
+            .await
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?
-            .bytes().await
+            .bytes()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
         Ok(bytes.to_vec())
     }
 
     async fn send_poll(&self, target: &str, poll: &PollRequest) -> ChannelResult<String> {
-        let phone_number_id = self.phone_number_id.as_ref()
+        let phone_number_id = self
+            .phone_number_id
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Phone number ID not set".into()))?;
-        let buttons: Vec<serde_json::Value> = poll.options.iter()
+        let buttons: Vec<serde_json::Value> = poll
+            .options
+            .iter()
             .take(3)
             .map(|o| serde_json::json!({"type": "reply", "reply": {"id": o, "title": o}}))
             .collect();
@@ -378,8 +445,15 @@ impl Channel for WhatsAppChannel {
                 "action": {"buttons": buttons},
             }
         });
-        let resp = self.send_api_request("POST", &format!("/{}/messages", phone_number_id), Some(&body)).await?;
-        Ok(resp.get("messages")
+        let resp = self
+            .send_api_request(
+                "POST",
+                &format!("/{}/messages", phone_number_id),
+                Some(&body),
+            )
+            .await?;
+        Ok(resp
+            .get("messages")
             .and_then(|m| m.as_array())
             .and_then(|a| a.first())
             .and_then(|m| m.get("id"))
@@ -413,11 +487,15 @@ struct WhatsAppSender {
 }
 
 impl MessageSender for WhatsAppSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
         let channel = self.channel.clone();
         let content = content.to_string();
         let metadata = metadata.clone();
-        
+
         Box::pin(async move {
             let message = ChannelMessage {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -427,7 +505,7 @@ impl MessageSender for WhatsAppSender {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 metadata,
             };
-            
+
             channel.read().await.send_message(&message).await
         })
     }

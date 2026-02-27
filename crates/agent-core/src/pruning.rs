@@ -1,5 +1,5 @@
-use oclaws_llm_core::chat::{ChatMessage, MessageRole};
 use crate::str_util::floor_char_boundary;
+use oclaw_llm_core::chat::{ChatMessage, MessageRole};
 
 pub struct PruningConfig {
     pub soft_trim_max_chars: usize,
@@ -56,7 +56,8 @@ pub fn prune_tool_results(messages: &mut [ChatMessage], config: &PruningConfig) 
             msg.content = format!("[Tool result cleared — {} chars]", len);
         } else if len > config.soft_trim_max_chars {
             let head_end = floor_char_boundary(&msg.content, config.head_chars.min(len));
-            let tail_start = floor_char_boundary(&msg.content, len.saturating_sub(config.tail_chars));
+            let tail_start =
+                floor_char_boundary(&msg.content, len.saturating_sub(config.tail_chars));
             let head = &msg.content[..head_end];
             let tail = &msg.content[tail_start..];
             msg.content = format!("{}...\n[trimmed — {} chars total]\n...{}", head, len, tail);

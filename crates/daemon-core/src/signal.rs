@@ -35,18 +35,27 @@ impl SignalHandler {
         tokio::spawn(async move {
             #[cfg(unix)]
             {
-                use tokio::signal::unix::{signal, SignalKind};
+                use tokio::signal::unix::{SignalKind, signal};
                 let mut sigint = match signal(SignalKind::interrupt()) {
                     Ok(s) => s,
-                    Err(e) => { tracing::error!("Failed to register SIGINT: {}", e); return; }
+                    Err(e) => {
+                        tracing::error!("Failed to register SIGINT: {}", e);
+                        return;
+                    }
                 };
                 let mut sigterm = match signal(SignalKind::terminate()) {
                     Ok(s) => s,
-                    Err(e) => { tracing::error!("Failed to register SIGTERM: {}", e); return; }
+                    Err(e) => {
+                        tracing::error!("Failed to register SIGTERM: {}", e);
+                        return;
+                    }
                 };
                 let mut sighup = match signal(SignalKind::hangup()) {
                     Ok(s) => s,
-                    Err(e) => { tracing::error!("Failed to register SIGHUP: {}", e); return; }
+                    Err(e) => {
+                        tracing::error!("Failed to register SIGHUP: {}", e);
+                        return;
+                    }
                 };
                 loop {
                     tokio::select! {
@@ -67,5 +76,7 @@ impl SignalHandler {
 }
 
 impl Default for SignalHandler {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

@@ -1,5 +1,5 @@
 use crate::wizard::{info, success};
-use oclaws_doctor_core::{CheckCategory, DiagnosticManager};
+use oclaw_doctor_core::{CheckCategory, DiagnosticManager};
 
 pub struct DoctorWizard;
 

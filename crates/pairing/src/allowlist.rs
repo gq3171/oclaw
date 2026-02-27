@@ -1,7 +1,7 @@
 //! Allowlist management for paired devices/users.
 
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Allowlist {

@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use anyhow::Result;
-use oclaws_llm_core::chat::ChatMessage;
+use oclaw_llm_core::chat::ChatMessage;
+use std::path::PathBuf;
 use tokio::io::AsyncWriteExt;
 
 pub struct Transcript {
@@ -63,7 +63,38 @@ impl Transcript {
         Ok(())
     }
 
-    pub async fn append_compaction(&self, summary: &str, _kept_from_id: Option<&str>) -> Result<()> {
+    /// Delete this transcript file.
+    pub async fn clear(&self) -> Result<()> {
+        if self.exists().await {
+            tokio::fs::remove_file(&self.path).await?;
+        }
+        Ok(())
+    }
+
+    /// Delete ALL session transcript files in the sessions directory.
+    pub async fn clear_all_sessions() -> Result<()> {
+        let base = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".oclaw")
+            .join("sessions");
+        if tokio::fs::metadata(&base).await.is_ok() {
+            let mut entries = tokio::fs::read_dir(&base).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                    tracing::info!("Clearing session transcript: {}", path.display());
+                    tokio::fs::remove_file(&path).await.ok();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn append_compaction(
+        &self,
+        summary: &str,
+        _kept_from_id: Option<&str>,
+    ) -> Result<()> {
         let marker = serde_json::json!({
             "type": "compaction",
             "summary": summary,

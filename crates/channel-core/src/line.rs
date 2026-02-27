@@ -66,14 +66,14 @@ impl LineChannel {
         self
     }
 
-    async fn send_api_request(
-        &self,
-        body: &serde_json::Value,
-    ) -> ChannelResult<serde_json::Value> {
-        let token = self.channel_access_token.as_ref()
-            .ok_or_else(|| ChannelError::AuthenticationError("Channel access token not set".to_string()))?;
+    async fn send_api_request(&self, body: &serde_json::Value) -> ChannelResult<serde_json::Value> {
+        let token = self.channel_access_token.as_ref().ok_or_else(|| {
+            ChannelError::AuthenticationError("Channel access token not set".to_string())
+        })?;
 
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".to_string()))?;
 
         let response = client
@@ -88,10 +88,15 @@ impl LineChannel {
         if response.status().is_success() {
             Ok(serde_json::json!({ "sent": true }))
         } else {
-            let line_resp: LineResponse = response.json().await
+            let line_resp: LineResponse = response
+                .json()
+                .await
                 .map_err(|e| ChannelError::MessageError(e.to_string()))?;
             Err(ChannelError::MessageError(
-                line_resp.error.and_then(|e| e.message).unwrap_or_else(|| "Unknown error".to_string())
+                line_resp
+                    .error
+                    .and_then(|e| e.message)
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ))
         }
     }
@@ -141,7 +146,9 @@ impl Channel for LineChannel {
             return Err(ChannelError::ConnectionError("Not connected".to_string()));
         }
 
-        let user_id = message.metadata.get("user_id")
+        let user_id = message
+            .metadata
+            .get("user_id")
             .or(self.user_id.as_ref())
             .cloned()
             .ok_or_else(|| ChannelError::MessageError("User ID not specified".to_string()))?;
@@ -153,7 +160,11 @@ impl Channel for LineChannel {
             }],
         };
 
-        self.send_api_request(&serde_json::to_value(&line_msg).map_err(|e| ChannelError::MessageError(e.to_string()))?).await?;
+        self.send_api_request(
+            &serde_json::to_value(&line_msg)
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?,
+        )
+        .await?;
 
         Ok(format!("{}_{}", user_id, uuid::Uuid::new_v4()))
     }
@@ -176,7 +187,7 @@ impl Channel for LineChannel {
 
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Received LINE event: {:?}", event);
-        
+
         match event.event_type.as_str() {
             "message" => {
                 tracing::info!("Received LINE message: {:?}", event.payload);
@@ -189,7 +200,7 @@ impl Channel for LineChannel {
             }
             _ => {}
         }
-        
+
         Ok(())
     }
 
@@ -202,11 +213,14 @@ impl Channel for LineChannel {
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // LINE: /events/0/message/text
         let event = payload.pointer("/events/0")?;
-        let text = event.pointer("/message/text")
-            .and_then(|v| v.as_str())?;
+        let text = event.pointer("/message/text").and_then(|v| v.as_str())?;
         let source = event.get("source")?;
-        let source_type = source.get("type").and_then(|v| v.as_str()).unwrap_or("user");
-        let chat_id = source.get("groupId")
+        let source_type = source
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("user");
+        let chat_id = source
+            .get("groupId")
             .or_else(|| source.get("roomId"))
             .or_else(|| source.get("userId"))
             .and_then(|v| v.as_str())
@@ -243,11 +257,16 @@ struct LineSender {
 }
 
 impl MessageSender for LineSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>>
+    {
         let channel = self.channel.clone();
         let content = content.to_string();
         let metadata = metadata.clone();
-        
+
         Box::pin(async move {
             let message = ChannelMessage {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -257,7 +276,7 @@ impl MessageSender for LineSender {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 metadata,
             };
-            
+
             channel.read().await.send_message(&message).await
         })
     }

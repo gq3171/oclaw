@@ -1,115 +1,20 @@
-use ratatui::style::{Color, Modifier, Style};
+//! ANSI color constants for terminal output.
 
-pub struct Theme {
-    pub accent: Color,
-    pub text: Color,
-    pub text_muted: Color,
-    pub bg: Color,
-    pub border: Color,
-    pub border_focus: Color,
-    pub error: Color,
-    pub success: Color,
-    pub warning: Color,
-    pub info: Color,
-    pub user_msg: Color,
-    pub assistant_msg: Color,
-    pub tool_pending: Color,
-    pub tool_success: Color,
-    pub tool_error: Color,
-    pub header_bg: Color,
-    pub status_bg: Color,
-    pub timestamp: Color,
-    pub separator: Color,
-    pub scrollbar_track: Color,
-    pub scrollbar_thumb: Color,
-}
+pub const RESET: &str = "\x1b[0m";
+pub const BOLD: &str = "\x1b[1m";
+pub const DIM: &str = "\x1b[2m";
 
-impl Default for Theme {
-    fn default() -> Self {
-        Self {
-            accent: Color::Cyan,
-            text: Color::White,
-            text_muted: Color::DarkGray,
-            bg: Color::Reset,
-            border: Color::DarkGray,
-            border_focus: Color::Cyan,
-            error: Color::Red,
-            success: Color::Green,
-            warning: Color::Yellow,
-            info: Color::Blue,
-            user_msg: Color::Green,
-            assistant_msg: Color::White,
-            tool_pending: Color::Blue,
-            tool_success: Color::Green,
-            tool_error: Color::Red,
-            header_bg: Color::DarkGray,
-            status_bg: Color::DarkGray,
-            timestamp: Color::Rgb(100, 100, 120),
-            separator: Color::Rgb(40, 50, 70),
-            scrollbar_track: Color::Rgb(30, 35, 50),
-            scrollbar_thumb: Color::Rgb(80, 100, 140),
-        }
-    }
-}
+// Foreground colors
+pub const CYAN: &str = "\x1b[36m";
+pub const GREEN: &str = "\x1b[32m";
+pub const RED: &str = "\x1b[31m";
+pub const YELLOW: &str = "\x1b[33m";
+pub const BLUE: &str = "\x1b[34m";
+pub const WHITE: &str = "\x1b[37m";
+pub const GRAY: &str = "\x1b[90m";
 
-impl Theme {
-    pub fn style(&self) -> Style {
-        Style::default().fg(self.text)
-    }
-
-    pub fn accent_style(&self) -> Style {
-        Style::default().fg(self.accent)
-    }
-
-    pub fn muted_style(&self) -> Style {
-        Style::default().fg(self.text_muted)
-    }
-
-    pub fn error_style(&self) -> Style {
-        Style::default().fg(self.error)
-    }
-
-    pub fn success_style(&self) -> Style {
-        Style::default().fg(self.success)
-    }
-
-    pub fn border_style(&self) -> Style {
-        Style::default().fg(self.border)
-    }
-
-    pub fn border_focus_style(&self) -> Style {
-        Style::default().fg(self.border_focus)
-    }
-
-    pub fn header_style(&self) -> Style {
-        Style::default().fg(self.accent).bg(self.header_bg).add_modifier(Modifier::BOLD)
-    }
-
-    pub fn status_style(&self) -> Style {
-        Style::default().fg(self.text_muted).bg(self.status_bg)
-    }
-
-    pub fn user_style(&self) -> Style {
-        Style::default().fg(self.user_msg).add_modifier(Modifier::BOLD)
-    }
-
-    pub fn assistant_style(&self) -> Style {
-        Style::default().fg(self.assistant_msg)
-    }
-
-    pub fn timestamp_style(&self) -> Style {
-        Style::default().fg(self.timestamp)
-    }
-
-    pub fn separator_style(&self) -> Style {
-        Style::default().fg(self.separator)
-    }
-
-    pub fn scrollbar_track_style(&self) -> Style {
-        Style::default().fg(self.scrollbar_track)
-    }
-
-    pub fn scrollbar_thumb_style(&self) -> Style {
-        Style::default().fg(self.scrollbar_thumb)
-    }
-}
+pub const BOLD_CYAN: &str = "\x1b[1;36m";
+pub const BOLD_GREEN: &str = "\x1b[1;32m";
+pub const BOLD_RED: &str = "\x1b[1;31m";
+pub const BOLD_YELLOW: &str = "\x1b[1;33m";
+pub const BOLD_WHITE: &str = "\x1b[1;37m";

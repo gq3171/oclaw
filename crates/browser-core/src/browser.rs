@@ -1,4 +1,4 @@
-use crate::cdp::{build_method, CdpDomain, TargetInfo};
+use crate::cdp::{CdpDomain, TargetInfo, build_method};
 use crate::connection::CdpConnection;
 use crate::error::{BrowserError, BrowserResult};
 use crate::page::Page;
@@ -53,18 +53,23 @@ impl BrowserManager {
             .build()
             .map_err(|e| BrowserError::ConnectionError(e.to_string()))?;
 
-        let resp = client.get(&version_url).send().await
-            .map_err(|e| BrowserError::ConnectionError(format!("CDP discovery failed: {}", e)))?;
+        let resp =
+            client.get(&version_url).send().await.map_err(|e| {
+                BrowserError::ConnectionError(format!("CDP discovery failed: {}", e))
+            })?;
 
-        let json: serde_json::Value = resp.json().await
-            .map_err(|e| BrowserError::ConnectionError(format!("CDP discovery parse error: {}", e)))?;
+        let json: serde_json::Value = resp.json().await.map_err(|e| {
+            BrowserError::ConnectionError(format!("CDP discovery parse error: {}", e))
+        })?;
 
         json.get("webSocketDebuggerUrl")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or_else(|| BrowserError::ConnectionError(
-                "CDP /json/version missing webSocketDebuggerUrl".into()
-            ))
+            .ok_or_else(|| {
+                BrowserError::ConnectionError(
+                    "CDP /json/version missing webSocketDebuggerUrl".into(),
+                )
+            })
     }
 
     pub async fn new(cdp_url: &str) -> BrowserResult<Self> {
@@ -90,10 +95,10 @@ impl BrowserManager {
             args: Vec::new(),
             proxy: None,
         };
-        
+
         let mut profiles = self.profiles.write().await;
         profiles.insert(profile.id.clone(), profile.clone());
-        
+
         profile
     }
 
@@ -124,14 +129,8 @@ impl BrowserManager {
 
     pub async fn connect(&mut self) -> BrowserResult<()> {
         if let Some(conn) = &self.connection {
-            conn.enable_domains(&[
-                "Browser",
-                "Target",
-                "Page",
-                "Network",
-                "Runtime",
-                "Console",
-            ]).await?;
+            conn.enable_domains(&["Browser", "Target", "Page", "Network", "Runtime", "Console"])
+                .await?;
         }
         Ok(())
     }
@@ -144,46 +143,57 @@ impl BrowserManager {
     }
 
     pub async fn list_targets(&self) -> BrowserResult<Vec<TargetInfo>> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
-        let response = conn.send_command(
-            &build_method(CdpDomain::Target, "getTargets"),
-            None,
-        ).await?;
+        let response = conn
+            .send_command(&build_method(CdpDomain::Target, "getTargets"), None)
+            .await?;
 
         let targets: Vec<TargetInfo> = serde_json::from_value(
-            response.result
+            response
+                .result
                 .as_ref()
                 .and_then(|r| r.get("targetInfos"))
                 .cloned()
-                .unwrap_or(serde_json::Value::Array(vec![]))
-        ).unwrap_or_default();
+                .unwrap_or(serde_json::Value::Array(vec![])),
+        )
+        .unwrap_or_default();
 
         Ok(targets)
     }
 
     pub async fn create_page(&mut self) -> BrowserResult<Page> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
         let params = serde_json::json!({
             "url": "about:blank"
         });
 
-        let response = conn.send_command(
-            &build_method(CdpDomain::Target, "createTarget"),
-            Some(params),
-        ).await?;
+        let response = conn
+            .send_command(
+                &build_method(CdpDomain::Target, "createTarget"),
+                Some(params),
+            )
+            .await?;
 
-        let target_id = response.result
+        let target_id = response
+            .result
             .as_ref()
             .and_then(|r| r.get("targetId"))
             .and_then(|id| id.as_str())
             .ok_or_else(|| BrowserError::TargetNotFound("Failed to create target".to_string()))?
             .to_string();
 
-        let host = self.cdp_url.replace("ws://", "").replace("/DevToolsBrowser", "");
+        let host = self
+            .cdp_url
+            .replace("ws://", "")
+            .replace("/DevToolsBrowser", "");
         let page_url = format!("ws://{}/devtools/page/{}", host, target_id);
 
         let page = Page::new(&page_url, target_id.clone(), Arc::clone(&self.pages)).await?;
@@ -200,7 +210,9 @@ impl BrowserManager {
     }
 
     pub async fn close_page(&mut self, target_id: &str) -> BrowserResult<()> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
         let params = serde_json::json!({
@@ -210,7 +222,8 @@ impl BrowserManager {
         conn.send_command(
             &build_method(CdpDomain::Target, "closeTarget"),
             Some(params),
-        ).await?;
+        )
+        .await?;
 
         let mut pages = self.pages.write().await;
         pages.remove(target_id);
@@ -219,15 +232,17 @@ impl BrowserManager {
     }
 
     pub async fn version(&self) -> BrowserResult<String> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
-        let response = conn.send_command(
-            &build_method(CdpDomain::Browser, "getVersion"),
-            None,
-        ).await?;
+        let response = conn
+            .send_command(&build_method(CdpDomain::Browser, "getVersion"), None)
+            .await?;
 
-        let version = response.result
+        let version = response
+            .result
             .as_ref()
             .and_then(|r| r.get("protocolVersion"))
             .and_then(|v| v.as_str())

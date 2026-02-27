@@ -5,9 +5,7 @@ use base64::Engine;
 use reqwest::Client;
 use tracing::debug;
 
-use super::{
-    AudioRequest, ImageRequest, MediaProvider, MediaProviderError, VideoRequest,
-};
+use super::{AudioRequest, ImageRequest, MediaProvider, MediaProviderError, VideoRequest};
 use crate::types::MediaCapability;
 
 pub struct OpenAiMediaProvider {
@@ -50,10 +48,21 @@ impl MediaProvider for OpenAiMediaProvider {
         vec![MediaCapability::Image, MediaCapability::Audio]
     }
 
+    fn model_for(&self, capability: MediaCapability) -> Option<String> {
+        match capability {
+            MediaCapability::Image => Some(self.vision_model.clone()),
+            MediaCapability::Audio => Some(self.whisper_model.clone()),
+            MediaCapability::Video => None,
+        }
+    }
+
     async fn describe_image(&self, req: &ImageRequest) -> Result<String, MediaProviderError> {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&req.image_data);
         let data_url = format!("data:{};base64,{}", req.mime_type, b64);
-        let prompt = req.prompt.as_deref().unwrap_or("Describe this image concisely.");
+        let prompt = req
+            .prompt
+            .as_deref()
+            .unwrap_or("Describe this image concisely.");
 
         let body = serde_json::json!({
             "model": self.vision_model,
@@ -69,7 +78,8 @@ impl MediaProvider for OpenAiMediaProvider {
 
         debug!(provider = "openai", "Sending vision request");
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.api_key)
             .json(&body)
@@ -116,7 +126,8 @@ impl MediaProvider for OpenAiMediaProvider {
 
         debug!(provider = "openai", "Sending whisper transcription request");
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/audio/transcriptions", self.base_url))
             .bearer_auth(&self.api_key)
             .multipart(form)

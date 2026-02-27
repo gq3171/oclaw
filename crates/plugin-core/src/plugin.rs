@@ -1,7 +1,7 @@
+use crate::manifest::PluginManifest;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::manifest::PluginManifest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -56,7 +56,7 @@ impl PluginConfig {
 #[async_trait]
 pub trait Plugin: Send + Sync {
     fn manifest(&self) -> &PluginManifest;
-    
+
     fn state(&self) -> PluginState;
 
     async fn on_load(&self) -> Result<(), String> {
@@ -103,10 +103,18 @@ pub trait Plugin: Send + Sync {
     }
 
     // --- Tool hooks ---
-    async fn hook_before_tool_call(&self, _tool: &str, _args: &str) -> Result<Option<String>, String> {
+    async fn hook_before_tool_call(
+        &self,
+        _tool: &str,
+        _args: &str,
+    ) -> Result<Option<String>, String> {
         Ok(None)
     }
-    async fn hook_after_tool_call(&self, _tool: &str, _result: &str) -> Result<Option<String>, String> {
+    async fn hook_after_tool_call(
+        &self,
+        _tool: &str,
+        _result: &str,
+    ) -> Result<Option<String>, String> {
         Ok(None)
     }
     async fn hook_tool_denied(&self, _tool: &str, _reason: &str) -> Result<(), String> {
@@ -146,10 +154,18 @@ pub trait Plugin: Send + Sync {
     }
 
     // --- LLM hooks ---
-    async fn hook_before_llm_call(&self, _model: &str, _payload: &str) -> Result<Option<String>, String> {
+    async fn hook_before_llm_call(
+        &self,
+        _model: &str,
+        _payload: &str,
+    ) -> Result<Option<String>, String> {
         Ok(None)
     }
-    async fn hook_after_llm_call(&self, _model: &str, _response: &str) -> Result<Option<String>, String> {
+    async fn hook_after_llm_call(
+        &self,
+        _model: &str,
+        _response: &str,
+    ) -> Result<Option<String>, String> {
         Ok(None)
     }
 
@@ -170,7 +186,18 @@ pub trait Plugin: Send + Sync {
     }
 
     // --- Subagent hooks ---
-    async fn hook_subagent_spawning(&self, _agent_id: &str, _config: &str) -> Result<Option<String>, String> {
+    async fn hook_subagent_spawning(
+        &self,
+        _agent_id: &str,
+        _config: &str,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    async fn hook_subagent_delivery_target(
+        &self,
+        _child_session_key: &str,
+        _payload: &str,
+    ) -> Result<Option<String>, String> {
         Ok(None)
     }
     async fn hook_subagent_spawned(&self, _agent_id: &str) -> Result<(), String> {

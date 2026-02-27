@@ -1,6 +1,6 @@
 //! Thinking Mode — extended reasoning support for Claude and OpenAI o-series models.
 
-use oclaws_llm_core::chat::ChatMessage;
+use oclaw_llm_core::chat::ChatMessage;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,7 +76,11 @@ pub fn extract_thinking(content: &str) -> (Option<String>, String) {
         }
     }
 
-    let thinking_opt = if thinking.is_empty() { None } else { Some(thinking) };
+    let thinking_opt = if thinking.is_empty() {
+        None
+    } else {
+        Some(thinking)
+    };
     (thinking_opt, visible)
 }
 
@@ -89,10 +93,15 @@ pub fn supports_thinking(model: &str) -> bool {
 
     // Claude models with extended thinking support
     let claude_thinking = [
-        "claude-3-5-sonnet", "claude-3.5-sonnet",
-        "claude-3-5-opus", "claude-3.5-opus",
-        "claude-3-7-sonnet", "claude-3.7-sonnet",
-        "claude-4", "claude-sonnet-4", "claude-opus-4",
+        "claude-3-5-sonnet",
+        "claude-3.5-sonnet",
+        "claude-3-5-opus",
+        "claude-3.5-opus",
+        "claude-3-7-sonnet",
+        "claude-3.7-sonnet",
+        "claude-4",
+        "claude-sonnet-4",
+        "claude-opus-4",
     ];
     if claude_thinking.iter().any(|pat| m.contains(pat)) {
         return true;
@@ -135,17 +144,20 @@ pub fn anthropic_thinking_param(level: ReasoningLevel) -> Option<serde_json::Val
 
 /// Strip thinking blocks from all assistant messages in a history.
 pub fn strip_thinking_from_history(messages: &[ChatMessage]) -> Vec<ChatMessage> {
-    messages.iter().map(|msg| {
-        if msg.role == oclaws_llm_core::chat::MessageRole::Assistant {
-            let cleaned = drop_thinking_blocks(&msg.content);
-            ChatMessage {
-                content: cleaned,
-                ..msg.clone()
+    messages
+        .iter()
+        .map(|msg| {
+            if msg.role == oclaw_llm_core::chat::MessageRole::Assistant {
+                let cleaned = drop_thinking_blocks(&msg.content);
+                ChatMessage {
+                    content: cleaned,
+                    ..msg.clone()
+                }
+            } else {
+                msg.clone()
             }
-        } else {
-            msg.clone()
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// Apply thinking configuration to a request, with graceful fallback.

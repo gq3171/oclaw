@@ -25,8 +25,7 @@ impl SessionReaper {
         let mut pruned = 0;
         let mut errors = Vec::new();
 
-        let cutoff = chrono::Utc::now()
-            - chrono::Duration::hours(self.retention_hours as i64);
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(self.retention_hours as i64);
 
         let mut entries = match tokio::fs::read_dir(sessions_dir).await {
             Ok(e) => e,
@@ -69,7 +68,10 @@ impl SessionReaper {
                 {
                     let t2: chrono::DateTime<chrono::Utc> = t2.into();
                     if t2 >= cutoff {
-                        tracing::debug!("Skipping session (modified during sweep): {}", path.display());
+                        tracing::debug!(
+                            "Skipping session (modified during sweep): {}",
+                            path.display()
+                        );
                         continue;
                     }
                 }
@@ -79,10 +81,7 @@ impl SessionReaper {
                         pruned += 1;
                     }
                     Err(e) => {
-                        errors.push(format!(
-                            "Failed to remove {}: {}",
-                            path.display(), e
-                        ));
+                        errors.push(format!("Failed to remove {}: {}", path.display(), e));
                     }
                 }
             }
@@ -93,17 +92,12 @@ impl SessionReaper {
 
     pub fn start_background(self, sessions_dir: PathBuf) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let interval = tokio::time::Duration::from_secs(
-                self.sweep_interval_mins * 60,
-            );
+            let interval = tokio::time::Duration::from_secs(self.sweep_interval_mins * 60);
             loop {
                 tokio::time::sleep(interval).await;
                 let result = self.sweep(&sessions_dir).await;
                 if result.pruned > 0 {
-                    tracing::info!(
-                        "Session reaper: pruned {} file(s)",
-                        result.pruned
-                    );
+                    tracing::info!("Session reaper: pruned {} file(s)", result.pruned);
                 }
                 for err in &result.errors {
                     tracing::warn!("Session reaper error: {}", err);

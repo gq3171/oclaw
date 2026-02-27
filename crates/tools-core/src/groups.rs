@@ -10,8 +10,12 @@ pub fn resolve_tool_group(group: &str) -> Vec<&'static str> {
         "group:fs" => vec!["read_file", "write_file", "list_dir"],
         "group:runtime" => vec!["bash"],
         "group:sessions" => vec![
-            "sessions_list", "sessions_history", "sessions_send",
-            "sessions_spawn", "subagents", "session_status",
+            "sessions_list",
+            "sessions_history",
+            "sessions_send",
+            "sessions_spawn",
+            "subagents",
+            "session_status",
         ],
         "group:ui" => vec!["browse"],
         "group:automation" => vec!["cron"],
@@ -48,9 +52,9 @@ pub fn expand_tool_list(items: &[String]) -> Vec<String> {
 /// e.g. "bash" → "exec", "apply-patch" → "apply_patch"
 pub fn resolve_tool_alias(name: &str) -> &str {
     match name {
-        "exec"         => "bash",
-        "apply-patch"  => "apply_patch",
-        _              => name,
+        "exec" => "bash",
+        "apply-patch" => "apply_patch",
+        _ => name,
     }
 }
 
@@ -84,9 +88,18 @@ mod tests {
     #[test]
     fn resolve_memory_group_has_search_and_get() {
         let tools = resolve_tool_group("group:memory");
-        assert!(tools.contains(&"memory_search"), "group:memory must include memory_search");
-        assert!(tools.contains(&"memory_get"), "group:memory must include memory_get");
-        assert!(!tools.contains(&"memory"), "group:memory must NOT contain bare 'memory'");
+        assert!(
+            tools.contains(&"memory_search"),
+            "group:memory must include memory_search"
+        );
+        assert!(
+            tools.contains(&"memory_get"),
+            "group:memory must include memory_get"
+        );
+        assert!(
+            !tools.contains(&"memory"),
+            "group:memory must NOT contain bare 'memory'"
+        );
     }
 
     #[test]

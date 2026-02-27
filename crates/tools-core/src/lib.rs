@@ -1,30 +1,30 @@
-pub mod error;
-pub mod tool;
+#![recursion_limit = "512"]
+
 pub mod approval;
-pub mod groups;
-pub mod profiles;
-pub mod policy;
 pub mod context;
+pub mod error;
+pub mod groups;
+pub mod policy;
+pub mod profiles;
+pub mod tool;
 pub mod truncation;
 
-pub use error::{ToolError, ToolResult};
-pub use tool::{
-    Tool, ToolCall, ToolResponse, ToolRegistry,
-    BashTool, WebFetchTool, MemoryTool, BrowseTool, WebSearchTool,
-    LinkReaderTool, MediaDescribeTool, CronTool, MessageTool,
-    SessionsListTool, SessionsHistoryTool, SessionsSendTool,
-    SessionsSpawnTool, SubagentsTool, SessionStatusTool, TtsTool,
-    WorkspaceTool,
-};
-pub use approval::{ApprovalGate, ApprovalPolicy, ApprovalDecision};
-pub use policy::{
-    ToolPolicy, ToolPolicyDecision, ToolPolicyPipeline,
-    PolicyLayer, PolicyContext, LayeredPolicyPipeline,
-};
-pub use groups::{resolve_tool_group, expand_tool_list, is_group_ref};
-pub use profiles::ToolProfile;
+pub use approval::{ApprovalDecision, ApprovalGate, ApprovalPolicy};
 pub use context::ToolContext;
-pub use truncation::{TruncationConfig, truncate_tool_result, smart_truncate};
+pub use error::{ToolError, ToolResult};
+pub use groups::{expand_tool_list, is_group_ref, resolve_tool_group};
+pub use policy::{
+    LayeredPolicyPipeline, PolicyContext, PolicyLayer, ToolPolicy, ToolPolicyDecision,
+    ToolPolicyPipeline,
+};
+pub use profiles::ToolProfile;
+pub use tool::{
+    BashTool, BrowseTool, CronTool, LinkReaderTool, MediaDescribeTool, MemoryTool, MessageTool,
+    SessionStatusTool, SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsSpawnTool,
+    SubagentsTool, Tool, ToolCall, ToolRegistry, ToolResponse, TtsTool, WebFetchTool,
+    WebSearchTool, WorkspaceTool,
+};
+pub use truncation::{TruncationConfig, smart_truncate, truncate_tool_result};
 
 #[cfg(test)]
 mod tests {

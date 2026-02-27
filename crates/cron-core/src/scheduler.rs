@@ -4,8 +4,8 @@ use crate::run_log::{RunLog, RunLogEntry};
 use crate::runner::{CronExecutor, CronRunResult, DeliveryResult};
 use crate::service::CronService;
 use crate::types::{CronJob, CronPayloadKind};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
@@ -44,6 +44,27 @@ impl CronScheduler {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
+    }
+
+    /// Execute a single cron job immediately (independent of due state).
+    pub async fn run_once(&self, job_id: &str) -> anyhow::Result<()> {
+        let job = self
+            .service
+            .get(job_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Job not found: {}", job_id))?;
+        if !job.enabled {
+            anyhow::bail!("Job is disabled: {}", job_id);
+        }
+        execute_job(
+            &self.service,
+            &*self.executor,
+            &self.run_log,
+            &self.events,
+            &job,
+        )
+        .await;
+        Ok(())
     }
 
     /// Spawn the background scheduling loop. Returns a JoinHandle.
@@ -91,27 +112,32 @@ impl CronScheduler {
     async fn detect_stuck_jobs(&self, jobs: &[CronJob], now_ms: u64) {
         for job in jobs {
             if let Some(since) = job.state.running_since_ms
-                && now_ms.saturating_sub(since) > self.stuck_threshold_ms {
-                    tracing::warn!(
-                        "Cron job '{}' ({}) appears stuck (running since {}ms ago), clearing running state",
-                        job.name, job.id, now_ms - since
-                    );
-                    // Clear the stuck state so it can be rescheduled
-                    let result = CronRunResult {
-                        job_id: job.id.clone(),
-                        output: "Job timed out (stuck detection)".to_string(),
-                        success: false,
-                        duration_ms: now_ms - since,
-                        deliveries: vec![],
-                    };
-                    if let Err(e) = self.service.update_after_run(&job.id, &result).await {
-                        tracing::error!("Failed to clear stuck job {}: {}", job.id, e);
-                    }
-                    self.events.send(CronEvent::JobFailed {
+                && now_ms.saturating_sub(since) > self.stuck_threshold_ms
+            {
+                tracing::warn!(
+                    "Cron job '{}' ({}) appears stuck (running since {}ms ago), clearing running state",
+                    job.name,
+                    job.id,
+                    now_ms - since
+                );
+                // Clear the stuck state so it can be rescheduled
+                let result = CronRunResult {
+                    job_id: job.id.clone(),
+                    output: "Job timed out (stuck detection)".to_string(),
+                    success: false,
+                    duration_ms: now_ms - since,
+                    deliveries: vec![],
+                };
+                if let Err(e) = self.service.update_after_run(&job.id, &result).await {
+                    tracing::error!("Failed to clear stuck job {}: {}", job.id, e);
+                }
+                self.events
+                    .send(CronEvent::JobFailed {
                         job_id: job.id.clone(),
                         error: "stuck detection timeout".to_string(),
                         consecutive: job.state.consecutive_errors + 1,
-                    }).ok();
+                    })
+                    .ok();
             }
         }
     }
@@ -156,10 +182,12 @@ async fn execute_job(
         tracing::error!("Failed to mark job {} as running: {}", job.id, e);
         return;
     }
-    events.send(CronEvent::JobStarted {
-        job_id: job.id.clone(),
-        timestamp_ms: now_ms,
-    }).ok();
+    events
+        .send(CronEvent::JobStarted {
+            job_id: job.id.clone(),
+            timestamp_ms: now_ms,
+        })
+        .ok();
 
     // 2. Execute payload
     let timeout = Duration::from_secs(job.timeout_secs.unwrap_or(300));
@@ -168,13 +196,13 @@ async fn execute_job(
             tracing::info!("Cron system event [{}]: {}", job.id, text);
             Ok(text.clone())
         }
-        CronPayloadKind::AgentTurn { message, model, timeout_secs, .. } => {
-            let fut = executor.run_agent_turn(
-                job,
-                message,
-                model.as_deref(),
-                *timeout_secs,
-            );
+        CronPayloadKind::AgentTurn {
+            message,
+            model,
+            timeout_secs,
+            ..
+        } => {
+            let fut = executor.run_agent_turn(job, message, model.as_deref(), *timeout_secs);
             match tokio::time::timeout(timeout, fut).await {
                 Ok(r) => r,
                 Err(_) => Err("execution timed out".to_string()),
@@ -238,26 +266,33 @@ async fn execute_job(
 
     // 6. Delete if one-shot
     if job.delete_after_run
-        && let Err(e) = service.remove(&job.id).await {
-            tracing::error!("Failed to delete one-shot job {}: {}", job.id, e);
+        && let Err(e) = service.remove(&job.id).await
+    {
+        tracing::error!("Failed to delete one-shot job {}: {}", job.id, e);
     }
 
     // 7. Broadcast event
     if success {
-        events.send(CronEvent::JobCompleted {
-            job_id: job.id.clone(),
-            duration_ms,
-            success: true,
-        }).ok();
+        events
+            .send(CronEvent::JobCompleted {
+                job_id: job.id.clone(),
+                duration_ms,
+                success: true,
+            })
+            .ok();
     } else {
         // Re-read to get updated consecutive_errors
-        let consecutive = service.get(&job.id).await
+        let consecutive = service
+            .get(&job.id)
+            .await
             .map(|j| j.state.consecutive_errors)
             .unwrap_or(0);
-        events.send(CronEvent::JobFailed {
-            job_id: job.id.clone(),
-            error: result.output,
-            consecutive,
-        }).ok();
+        events
+            .send(CronEvent::JobFailed {
+                job_id: job.id.clone(),
+                error: result.output,
+                consecutive,
+            })
+            .ok();
     }
 }

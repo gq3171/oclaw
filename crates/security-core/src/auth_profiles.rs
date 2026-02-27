@@ -8,8 +8,14 @@ use std::path::PathBuf;
 #[serde(rename_all = "camelCase")]
 pub enum ProfileType {
     ApiKey,
-    Token { expires_at: Option<i64> },
-    OAuth { access_token: String, refresh_token: Option<String>, expires_at: Option<i64> },
+    Token {
+        expires_at: Option<i64>,
+    },
+    OAuth {
+        access_token: String,
+        refresh_token: Option<String>,
+        expires_at: Option<i64>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,7 +69,10 @@ pub struct AuthProfileStore {
 
 impl AuthProfileStore {
     pub fn new(path: PathBuf) -> Self {
-        Self { data: AuthProfileStoreData::default(), path }
+        Self {
+            data: AuthProfileStoreData::default(),
+            path,
+        }
     }
 
     pub fn load(path: PathBuf) -> Result<Self, String> {
@@ -79,16 +88,13 @@ impl AuthProfileStore {
 
     pub fn save(&self) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create dir: {}", e))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
         }
         let tmp = self.path.with_extension("tmp");
         let json = serde_json::to_string_pretty(&self.data)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        std::fs::write(&tmp, &json)
-            .map_err(|e| format!("Failed to write: {}", e))?;
-        std::fs::rename(&tmp, &self.path)
-            .map_err(|e| format!("Failed to rename: {}", e))?;
+        std::fs::write(&tmp, &json).map_err(|e| format!("Failed to write: {}", e))?;
+        std::fs::rename(&tmp, &self.path).map_err(|e| format!("Failed to rename: {}", e))?;
         Ok(())
     }
 
@@ -104,7 +110,9 @@ impl AuthProfileStore {
             }
         }
         // Fallback: pick by last_good time
-        self.data.profiles.values()
+        self.data
+            .profiles
+            .values()
             .filter(|p| p.provider == provider && p.is_available())
             .max_by_key(|p| p.last_good.unwrap_or(0))
     }
@@ -114,8 +122,7 @@ impl AuthProfileStore {
             p.error_count += 1;
             let now = chrono::Utc::now().timestamp();
             // Exponential cooldown: 30s * 2^(errors-1), max 1 hour
-            let cooldown = (30 * 2i64.pow(p.error_count.saturating_sub(1).min(6)))
-                .min(3600);
+            let cooldown = (30 * 2i64.pow(p.error_count.saturating_sub(1).min(6))).min(3600);
             p.cooldown_until = Some(now + cooldown);
             let _ = self.save();
         }

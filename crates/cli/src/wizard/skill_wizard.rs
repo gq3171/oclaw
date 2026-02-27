@@ -1,5 +1,5 @@
 use crate::wizard::{get_config_dir, info, prompt, prompt_yes_no, success};
-use oclaws_config::Config;
+use oclaw_config::Config;
 
 pub struct SkillWizard;
 
@@ -30,7 +30,8 @@ impl SkillWizard {
         let enabled: Vec<String> = if selection == "all" || selection.is_empty() {
             skills.iter().map(|(n, _)| n.to_string()).collect()
         } else {
-            selection.split(',')
+            selection
+                .split(',')
                 .filter_map(|s| s.trim().parse::<usize>().ok())
                 .filter(|&i| i >= 1 && i <= skills.len())
                 .map(|i| skills[i - 1].0.to_string())
@@ -61,8 +62,7 @@ impl SkillWizard {
         let path = get_config_dir().join("config.json");
         let content = serde_json::to_string_pretty(config)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        std::fs::write(&path, content)
-            .map_err(|e| format!("Failed to write: {}", e))?;
+        std::fs::write(&path, content).map_err(|e| format!("Failed to write: {}", e))?;
         success(&format!("Skill config saved to {:?}", path));
         Ok(())
     }

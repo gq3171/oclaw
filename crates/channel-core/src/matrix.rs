@@ -72,16 +72,21 @@ impl MatrixChannel {
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> ChannelResult<serde_json::Value> {
-        let homeserver = self.homeserver.as_ref()
+        let homeserver = self
+            .homeserver
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Homeserver not set".to_string()))?;
 
         let url = format!("{}{}", homeserver, path);
 
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".to_string()))?;
 
-        let http_method = reqwest::Method::from_bytes(method.as_bytes())
-            .map_err(|e| ChannelError::ConfigError(format!("Invalid HTTP method '{}': {}", method, e)))?;
+        let http_method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| {
+            ChannelError::ConfigError(format!("Invalid HTTP method '{}': {}", method, e))
+        })?;
         let mut request = client.request(http_method, &url);
 
         if let Some(token) = &self.access_token {
@@ -92,15 +97,21 @@ impl MatrixChannel {
             request = request.json(body);
         }
 
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?;
 
-        let matrix_resp: MatrixResponse = response.json().await
+        let matrix_resp: MatrixResponse = response
+            .json()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
         if matrix_resp.errcode.is_some() || matrix_resp.error.is_some() {
             return Err(ChannelError::MessageError(
-                matrix_resp.error.unwrap_or_else(|| matrix_resp.errcode.unwrap_or_default())
+                matrix_resp
+                    .error
+                    .unwrap_or_else(|| matrix_resp.errcode.unwrap_or_default()),
             ));
         }
 
@@ -133,7 +144,9 @@ impl Channel for MatrixChannel {
         self.status = ChannelStatus::Connecting;
         self.client = Some(Client::new());
 
-        let _: serde_json::Value = self.send_api_request("GET", "/_matrix/client/v3/account/whoami", None).await?;
+        let _: serde_json::Value = self
+            .send_api_request("GET", "/_matrix/client/v3/account/whoami", None)
+            .await?;
 
         tracing::info!("Matrix channel connected");
 
@@ -157,7 +170,9 @@ impl Channel for MatrixChannel {
             return Err(ChannelError::ConnectionError("Not connected".to_string()));
         }
 
-        let room_id = message.metadata.get("room_id")
+        let room_id = message
+            .metadata
+            .get("room_id")
             .or(self.room_id.as_ref())
             .cloned()
             .ok_or_else(|| ChannelError::MessageError("Room ID not specified".to_string()))?;
@@ -173,13 +188,17 @@ impl Channel for MatrixChannel {
             "/_matrix/client/v3/rooms/{}/send/m.room.message/{}?access_token={}",
             room_id,
             txn_id,
-            self.access_token.as_ref()
-                .ok_or_else(|| ChannelError::AuthenticationError("Access token not set".to_string()))?,
+            self.access_token
+                .as_ref()
+                .ok_or_else(|| ChannelError::AuthenticationError(
+                    "Access token not set".to_string()
+                ))?,
         );
 
         let response: serde_json::Value = self.send_api_request("PUT", &path, Some(&body)).await?;
 
-        let event_id = response.get("event_id")
+        let event_id = response
+            .get("event_id")
             .and_then(|e| e.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| ChannelError::MessageError("No event ID returned".to_string()))?;
@@ -205,11 +224,11 @@ impl Channel for MatrixChannel {
 
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Received Matrix event: {:?}", event);
-        
+
         if event.event_type.as_str() == "m.room.message" {
             tracing::info!("Received Matrix message: {:?}", event.payload);
         }
-        
+
         Ok(())
     }
 
@@ -221,9 +240,9 @@ impl Channel for MatrixChannel {
 
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // Matrix: /content/body, /room_id, /sender
-        let text = payload.pointer("/content/body")
-            .and_then(|v| v.as_str())?;
-        let room_id = payload.get("room_id")
+        let text = payload.pointer("/content/body").and_then(|v| v.as_str())?;
+        let room_id = payload
+            .get("room_id")
             .and_then(|v| v.as_str())
             .unwrap_or("default");
         Some(WebhookMessage {
@@ -255,11 +274,16 @@ struct MatrixSender {
 }
 
 impl MessageSender for MatrixSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>>
+    {
         let channel = self.channel.clone();
         let content = content.to_string();
         let metadata = metadata.clone();
-        
+
         Box::pin(async move {
             let message = ChannelMessage {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -269,7 +293,7 @@ impl MessageSender for MatrixSender {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 metadata,
             };
-            
+
             channel.read().await.send_message(&message).await
         })
     }

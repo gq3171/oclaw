@@ -79,8 +79,12 @@ impl RuntimeInfo {
     /// Format as a single-line runtime descriptor.
     pub fn to_line(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
-        if let Some(v) = &self.agent_id { parts.push(format!("agent={}", v)); }
-        if let Some(v) = &self.model { parts.push(format!("model={}", v)); }
+        if let Some(v) = &self.agent_id {
+            parts.push(format!("agent={}", v));
+        }
+        if let Some(v) = &self.model {
+            parts.push(format!("model={}", v));
+        }
         if let Some(v) = &self.default_model
             && self.model.as_deref() != Some(v)
         {
@@ -90,11 +94,21 @@ impl RuntimeInfo {
             let arch_str = self.arch.as_deref().unwrap_or("unknown");
             parts.push(format!("os={} ({})", os, arch_str));
         }
-        if let Some(v) = &self.host { parts.push(format!("host={}", v)); }
-        if let Some(v) = &self.shell { parts.push(format!("shell={}", v)); }
-        if let Some(v) = &self.channel { parts.push(format!("channel={}", v)); }
-        if let Some(v) = &self.workspace_dir { parts.push(format!("workspace={}", v)); }
-        if let Some(v) = &self.version { parts.push(format!("version={}", v)); }
+        if let Some(v) = &self.host {
+            parts.push(format!("host={}", v));
+        }
+        if let Some(v) = &self.shell {
+            parts.push(format!("shell={}", v));
+        }
+        if let Some(v) = &self.channel {
+            parts.push(format!("channel={}", v));
+        }
+        if let Some(v) = &self.workspace_dir {
+            parts.push(format!("workspace={}", v));
+        }
+        if let Some(v) = &self.version {
+            parts.push(format!("version={}", v));
+        }
         parts.join(" | ")
     }
 }
@@ -207,7 +221,11 @@ impl SystemPromptBuilder {
     }
 
     /// Add an extra bootstrap file to inject into the "## Extra Context" section.
-    pub fn with_bootstrap_file(mut self, name: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn with_bootstrap_file(
+        mut self,
+        name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         self.bootstrap_files.push((name.into(), content.into()));
         self
     }
@@ -215,9 +233,9 @@ impl SystemPromptBuilder {
     /// Assemble the final system prompt string.
     pub fn build(&self) -> String {
         match self.mode {
-            PromptMode::None    => self.build_none(),
+            PromptMode::None => self.build_none(),
             PromptMode::Minimal => self.build_minimal(),
-            PromptMode::Full    => self.build_full(),
+            PromptMode::Full => self.build_full(),
         }
     }
 
@@ -318,7 +336,8 @@ impl SystemPromptBuilder {
         if let Some(soul) = &self.soul {
             let s = soul.to_prompt_section();
             if !s.is_empty() {
-                let trimmed = trim_bootstrap_content(&s, "SOUL.md", self.bootstrap_max_chars_per_file);
+                let trimmed =
+                    trim_bootstrap_content(&s, "SOUL.md", self.bootstrap_max_chars_per_file);
                 total_bootstrap_chars += trimmed.len();
                 sections.push(trimmed);
             }
@@ -388,7 +407,8 @@ impl SystemPromptBuilder {
         if let Some(ref agents) = self.agents_context
             && total_bootstrap_chars < self.bootstrap_total_max_chars
         {
-            let budget = self.bootstrap_max_chars_per_file
+            let budget = self
+                .bootstrap_max_chars_per_file
                 .min(self.bootstrap_total_max_chars - total_bootstrap_chars);
             let trimmed = trim_bootstrap_content(agents, "AGENTS.md", budget);
             total_bootstrap_chars += trimmed.len();
@@ -399,7 +419,8 @@ impl SystemPromptBuilder {
         if let Some(ref tools_ctx) = self.tools_context
             && total_bootstrap_chars < self.bootstrap_total_max_chars
         {
-            let budget = self.bootstrap_max_chars_per_file
+            let budget = self
+                .bootstrap_max_chars_per_file
                 .min(self.bootstrap_total_max_chars - total_bootstrap_chars);
             let trimmed = trim_bootstrap_content(tools_ctx, "TOOLS.md", budget);
             total_bootstrap_chars += trimmed.len();
@@ -414,7 +435,8 @@ impl SystemPromptBuilder {
             if total_bootstrap_chars >= self.bootstrap_total_max_chars {
                 break;
             }
-            let budget = self.bootstrap_max_chars_per_file
+            let budget = self
+                .bootstrap_max_chars_per_file
                 .min(self.bootstrap_total_max_chars - total_bootstrap_chars);
             let trimmed = trim_bootstrap_content(content, name, budget);
             total_bootstrap_chars += trimmed.len();

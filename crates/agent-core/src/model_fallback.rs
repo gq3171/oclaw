@@ -1,11 +1,11 @@
+use crate::{Agent, AgentError, AgentResult};
+use oclaw_llm_core::providers::ProviderType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Mutex;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use oclaws_llm_core::providers::ProviderType;
-use crate::{Agent, AgentResult, AgentError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,7 +20,9 @@ pub struct FallbackConfig {
     pub candidates: Vec<ModelCandidate>,
 }
 
-fn default_cooldown() -> u64 { 60 }
+fn default_cooldown() -> u64 {
+    60
+}
 
 impl Default for FallbackConfig {
     fn default() -> Self {
@@ -68,7 +70,10 @@ impl CooldownTracker {
     }
 
     pub fn mark_failed(&self, key: &str) {
-        self.failures.lock().unwrap().insert(key.to_string(), Instant::now());
+        self.failures
+            .lock()
+            .unwrap()
+            .insert(key.to_string(), Instant::now());
     }
 
     pub fn is_cooled_down(&self, key: &str, cooldown_secs: u64) -> bool {
@@ -116,7 +121,9 @@ where
                 let err_str = e.to_string();
                 tracing::warn!(
                     "Fallback candidate {}/{}: failed: {}",
-                    candidate.provider, candidate.model, err_str
+                    candidate.provider,
+                    candidate.model,
+                    err_str
                 );
                 cooldowns.mark_failed(&key);
                 attempts.push(FallbackAttempt {
@@ -126,9 +133,10 @@ where
                 });
 
                 if config.retry_delay_ms > 0 {
-                    tokio::time::sleep(
-                        tokio::time::Duration::from_millis(config.retry_delay_ms as u64)
-                    ).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(
+                        config.retry_delay_ms as u64,
+                    ))
+                    .await;
                 }
             }
         }
@@ -220,14 +228,13 @@ impl ModelFallback {
     }
 
     pub async fn add_model(&self, provider: ProviderType, model: &str, priority: i32) {
-        self.chain.write().await.add_model(provider, model, priority);
+        self.chain
+            .write()
+            .await
+            .add_model(provider, model, priority);
     }
 
-    pub async fn execute_with_agent(
-        &self,
-        agent: &mut Agent,
-        input: &str,
-    ) -> AgentResult<String> {
+    pub async fn execute_with_agent(&self, agent: &mut Agent, input: &str) -> AgentResult<String> {
         if !self.config.enabled {
             return Err(AgentError::ModelError("Fallback not enabled".to_string()));
         }
@@ -242,11 +249,7 @@ impl ModelFallback {
             if let Some(entry) = chain.current() {
                 attempts += 1;
 
-                tracing::info!(
-                    "Trying model {} (attempt {})",
-                    entry.model,
-                    attempts
-                );
+                tracing::info!("Trying model {} (attempt {})", entry.model, attempts);
 
                 match agent.run(input).await {
                     Ok(result) => {
@@ -263,7 +266,8 @@ impl ModelFallback {
                         if self.config.retry_delay_ms > 0 {
                             tokio::time::sleep(tokio::time::Duration::from_millis(
                                 self.config.retry_delay_ms as u64,
-                            )).await;
+                            ))
+                            .await;
                         }
                     }
                 }
@@ -279,12 +283,17 @@ impl ModelFallback {
     pub async fn get_chain_status(&self) -> Vec<(String, String, bool)> {
         let chain = self.chain.read().await;
         let current_idx = chain.current_index;
-        
-        chain.entries()
+
+        chain
+            .entries()
             .iter()
             .enumerate()
             .map(|(i, e)| {
-                (e.model.clone(), format!("{:?}", e.provider_type), i == current_idx)
+                (
+                    e.model.clone(),
+                    format!("{:?}", e.provider_type),
+                    i == current_idx,
+                )
             })
             .collect()
     }

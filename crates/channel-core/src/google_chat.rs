@@ -68,12 +68,16 @@ impl GoogleChatChannel {
     }
 
     async fn send_api_request(&self, body: &serde_json::Value) -> ChannelResult<String> {
-        let space = self.space_name.as_ref()
+        let space = self
+            .space_name
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Space name not configured".to_string()))?;
 
         let url = format!("https://chat.googleapis.com/v1/{}/messages", space);
 
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".to_string()))?;
 
         let response = client
@@ -83,12 +87,16 @@ impl GoogleChatChannel {
             .await
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?;
 
-        let chat_resp: GoogleChatResponse = response.json().await
+        let chat_resp: GoogleChatResponse = response
+            .json()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
         if let Some(error) = chat_resp.error {
             return Err(ChannelError::MessageError(
-                error.message.unwrap_or_else(|| error.status.unwrap_or_default())
+                error
+                    .message
+                    .unwrap_or_else(|| error.status.unwrap_or_default()),
             ));
         }
 
@@ -118,7 +126,10 @@ impl Channel for GoogleChatChannel {
         self.status = ChannelStatus::Connecting;
         self.client = Some(Client::new());
 
-        tracing::info!("Google Chat channel connecting to space: {:?}", self.space_name);
+        tracing::info!(
+            "Google Chat channel connecting to space: {:?}",
+            self.space_name
+        );
 
         self.status = ChannelStatus::Connected;
         Ok(())
@@ -152,7 +163,11 @@ impl Channel for GoogleChatChannel {
             });
         }
 
-        self.send_api_request(&serde_json::to_value(&chat_msg).map_err(|e| ChannelError::MessageError(e.to_string()))?).await
+        self.send_api_request(
+            &serde_json::to_value(&chat_msg)
+                .map_err(|e| ChannelError::MessageError(e.to_string()))?,
+        )
+        .await
     }
 
     async fn list_accounts(&self) -> ChannelResult<Vec<ChannelAccount>> {
@@ -173,11 +188,11 @@ impl Channel for GoogleChatChannel {
 
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Received Google Chat event: {:?}", event);
-        
+
         if event.event_type.as_str() == "MESSAGE" {
             tracing::info!("Received Google Chat message: {:?}", event.payload);
         }
-        
+
         Ok(())
     }
 
@@ -189,13 +204,14 @@ impl Channel for GoogleChatChannel {
 
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // Google Chat: /message/text, /space/name
-        let text = payload.pointer("/message/text")
-            .and_then(|v| v.as_str())?;
-        let space = payload.pointer("/space/name")
+        let text = payload.pointer("/message/text").and_then(|v| v.as_str())?;
+        let space = payload
+            .pointer("/space/name")
             .or_else(|| payload.pointer("/message/space/name"))
             .and_then(|v| v.as_str())
             .unwrap_or("default");
-        let space_type = payload.pointer("/space/type")
+        let space_type = payload
+            .pointer("/space/type")
             .and_then(|v| v.as_str())
             .unwrap_or("DM");
         Some(WebhookMessage {
@@ -224,11 +240,16 @@ struct GoogleChatSender {
 }
 
 impl MessageSender for GoogleChatSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>>
+    {
         let channel = self.channel.clone();
         let content = content.to_string();
         let metadata = metadata.clone();
-        
+
         Box::pin(async move {
             let message = ChannelMessage {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -238,7 +259,7 @@ impl MessageSender for GoogleChatSender {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 metadata,
             };
-            
+
             channel.read().await.send_message(&message).await
         })
     }

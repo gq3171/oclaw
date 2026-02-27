@@ -49,14 +49,20 @@ impl CommandParser {
                 if arg1.is_empty() {
                     return None;
                 }
-                Some(Command::Set { key: arg1, value: arg2 })
+                Some(Command::Set {
+                    key: arg1,
+                    value: arg2,
+                })
             }
             "compact" => Some(Command::Compact),
             "spawn" => {
                 if arg1.is_empty() {
                     return None;
                 }
-                Some(Command::Spawn { name: arg1, prompt: arg2 })
+                Some(Command::Spawn {
+                    name: arg1,
+                    prompt: arg2,
+                })
             }
             "model" => {
                 if arg1.is_empty() {
@@ -76,9 +82,16 @@ impl CommandParser {
             "status" => Some(Command::Status),
             other => {
                 let mut args = Vec::new();
-                if !arg1.is_empty() { args.push(arg1); }
-                if !arg2.is_empty() { args.push(arg2); }
-                Some(Command::Custom { name: other.to_string(), args })
+                if !arg1.is_empty() {
+                    args.push(arg1);
+                }
+                if !arg2.is_empty() {
+                    args.push(arg2);
+                }
+                Some(Command::Custom {
+                    name: other.to_string(),
+                    args,
+                })
             }
         }
     }
@@ -92,7 +105,9 @@ mod tests {
     fn parse_set() {
         let p = CommandParser::default();
         let cmd = p.parse("/set temperature 0.7").unwrap();
-        assert!(matches!(cmd, Command::Set { key, value } if key == "temperature" && value == "0.7"));
+        assert!(
+            matches!(cmd, Command::Set { key, value } if key == "temperature" && value == "0.7")
+        );
     }
 
     #[test]

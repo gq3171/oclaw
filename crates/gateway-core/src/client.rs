@@ -1,9 +1,9 @@
 use crate::error::GatewayError;
-use futures_util::{StreamExt};
-use oclaws_protocol::frames::HelloOk;
+use futures_util::StreamExt;
+use oclaw_protocol::frames::HelloOk;
 use tokio::sync::broadcast;
 use tokio_tungstenite::connect_async;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 pub struct GatewayClient {
     url: String,
@@ -29,20 +29,22 @@ impl GatewayClient {
 
         let (_write, mut read) = ws_stream.split();
 
-        let hello_msg = read.next().await
+        let hello_msg = read
+            .next()
+            .await
             .ok_or_else(|| GatewayError::ConnectionError("Failed to receive hello".to_string()))?;
 
         let msg_result = hello_msg.map_err(|e| GatewayError::WebSocketError(e.to_string()))?;
 
         let hello_ok: HelloOk = match msg_result {
-            tokio_tungstenite::tungstenite::Message::Binary(data) => {
-                serde_json::from_slice(&data).map_err(|e| GatewayError::InvalidFrame(e.to_string()))?
-            }
-            tokio_tungstenite::tungstenite::Message::Text(text) => {
-                serde_json::from_str(&text).map_err(|e| GatewayError::InvalidFrame(e.to_string()))?
-            }
+            tokio_tungstenite::tungstenite::Message::Binary(data) => serde_json::from_slice(&data)
+                .map_err(|e| GatewayError::InvalidFrame(e.to_string()))?,
+            tokio_tungstenite::tungstenite::Message::Text(text) => serde_json::from_str(&text)
+                .map_err(|e| GatewayError::InvalidFrame(e.to_string()))?,
             _ => {
-                return Err(GatewayError::ConnectionError("Unexpected message type".to_string()));
+                return Err(GatewayError::ConnectionError(
+                    "Unexpected message type".to_string(),
+                ));
             }
         };
 

@@ -3,15 +3,14 @@ mod health;
 mod report;
 
 pub use checker::{
-    DiagnosticChecker, CheckResult, CheckStatus, CheckCategory,
-    SystemChecker, NetworkChecker, ConfigChecker, DependencyChecker,
-    StorageChecker, SecurityChecker, PerformanceChecker,
+    CheckCategory, CheckResult, CheckStatus, ConfigChecker, DependencyChecker, DiagnosticChecker,
+    NetworkChecker, PerformanceChecker, SecurityChecker, StorageChecker, SystemChecker,
 };
 pub use health::{
-    HealthChecker, HealthStatus, HealthCheck, HealthComponent, HealthReport,
-    SystemHealthCheck, FlagHealthCheck, CallbackHealthCheck,
+    CallbackHealthCheck, FlagHealthCheck, HealthCheck, HealthChecker, HealthComponent,
+    HealthReport, HealthStatus, SystemHealthCheck,
 };
-pub use report::{DiagnosticReport, ReportEntry, ReportBuilder};
+pub use report::{DiagnosticReport, ReportBuilder, ReportEntry};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -57,7 +56,10 @@ impl DiagnosticIssue {
         if self.details.is_none() {
             self.details = Some(HashMap::new());
         }
-        self.details.as_mut().unwrap().insert(key.to_string(), value.to_string());
+        self.details
+            .as_mut()
+            .unwrap()
+            .insert(key.to_string(), value.to_string());
         self
     }
 }
@@ -69,8 +71,17 @@ pub struct DiagnosticManager {
 
 impl DiagnosticManager {
     pub fn new() -> Self {
+        let default_checkers: Vec<Box<dyn DiagnosticChecker>> = vec![
+            Box::new(SystemChecker::new()),
+            Box::new(NetworkChecker::new()),
+            Box::new(ConfigChecker::new()),
+            Box::new(DependencyChecker::new()),
+            Box::new(StorageChecker::new()),
+            Box::new(SecurityChecker::new()),
+            Box::new(PerformanceChecker::new()),
+        ];
         Self {
-            checkers: Arc::new(RwLock::new(Vec::new())),
+            checkers: Arc::new(RwLock::new(default_checkers)),
             issues: Arc::new(RwLock::new(Vec::new())),
         }
     }
@@ -182,24 +193,42 @@ mod tests {
 
     #[test]
     fn test_diagnostic_issue_new() {
-        let issue = DiagnosticIssue::new("TEST001", "Test issue", Severity::Warning, CheckCategory::System);
+        let issue = DiagnosticIssue::new(
+            "TEST001",
+            "Test issue",
+            Severity::Warning,
+            CheckCategory::System,
+        );
         assert_eq!(issue.code, "TEST001");
         assert_eq!(issue.severity, Severity::Warning);
     }
 
     #[test]
     fn test_diagnostic_issue_with_suggestion() {
-        let issue = DiagnosticIssue::new("TEST001", "Test issue", Severity::Error, CheckCategory::System)
-            .with_suggestion("Fix this issue");
+        let issue = DiagnosticIssue::new(
+            "TEST001",
+            "Test issue",
+            Severity::Error,
+            CheckCategory::System,
+        )
+        .with_suggestion("Fix this issue");
         assert_eq!(issue.suggestion, Some("Fix this issue".to_string()));
     }
 
     #[test]
     fn test_diagnostic_issue_with_detail() {
-        let issue = DiagnosticIssue::new("TEST001", "Test issue", Severity::Warning, CheckCategory::Network)
-            .with_detail("key", "value");
+        let issue = DiagnosticIssue::new(
+            "TEST001",
+            "Test issue",
+            Severity::Warning,
+            CheckCategory::Network,
+        )
+        .with_detail("key", "value");
         assert!(issue.details.is_some());
-        assert_eq!(issue.details.as_ref().unwrap().get("key"), Some(&"value".to_string()));
+        assert_eq!(
+            issue.details.as_ref().unwrap().get("key"),
+            Some(&"value".to_string())
+        );
     }
 
     #[tokio::test]
@@ -213,6 +242,7 @@ mod tests {
     async fn test_diagnostic_manager_run_all_checks() {
         let manager = DiagnosticManager::new();
         let issues = manager.run_all_checks().await;
-        assert!(issues.is_empty());
+        let stored = manager.get_issues().await;
+        assert_eq!(issues.len(), stored.len());
     }
 }

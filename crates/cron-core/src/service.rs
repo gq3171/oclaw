@@ -1,9 +1,10 @@
+use crate::backoff::backoff_delay_ms;
 use crate::runner::CronRunResult;
-use crate::store::CronStore;
 use crate::schedule::compute_next_run;
+use crate::store::CronStore;
 use crate::types::{CronJob, CronScheduleKind};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 // TODO: migrate to incremental updates for high-frequency scenarios.
@@ -53,11 +54,17 @@ impl CronService {
     pub async fn update(&self, id: &str, patch: CronJobPatch) -> anyhow::Result<CronJob> {
         let store = self.store.lock().await;
         let mut jobs = store.load().await;
-        let job = jobs.iter_mut().find(|j| j.id == id)
+        let job = jobs
+            .iter_mut()
+            .find(|j| j.id == id)
             .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
 
-        if let Some(name) = patch.name { job.name = name; }
-        if let Some(enabled) = patch.enabled { job.enabled = enabled; }
+        if let Some(name) = patch.name {
+            job.name = name;
+        }
+        if let Some(enabled) = patch.enabled {
+            job.enabled = enabled;
+        }
         if let Some(schedule) = patch.schedule {
             job.schedule = schedule;
             let now_ms = chrono::Utc::now().timestamp_millis() as u64;
@@ -81,7 +88,9 @@ impl CronService {
     pub async fn mark_running(&self, id: &str, now_ms: u64) -> anyhow::Result<()> {
         let store = self.store.lock().await;
         let mut jobs = store.load().await;
-        let job = jobs.iter_mut().find(|j| j.id == id)
+        let job = jobs
+            .iter_mut()
+            .find(|j| j.id == id)
             .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
         job.state.running_since_ms = Some(now_ms);
         store.save(&jobs).await
@@ -91,7 +100,9 @@ impl CronService {
     pub async fn update_after_run(&self, id: &str, result: &CronRunResult) -> anyhow::Result<()> {
         let store = self.store.lock().await;
         let mut jobs = store.load().await;
-        let job = jobs.iter_mut().find(|j| j.id == id)
+        let job = jobs
+            .iter_mut()
+            .find(|j| j.id == id)
             .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
 
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
@@ -99,18 +110,30 @@ impl CronService {
         job.state.running_since_ms = None;
         job.state.total_runs += 1;
 
+        let scheduled_next = compute_next_run(&job.schedule, now_ms);
         if result.success {
             job.state.last_status = Some("ok".to_string());
             job.state.last_error = None;
             job.state.consecutive_errors = 0;
+            job.state.next_run_at_ms = scheduled_next;
         } else {
             job.state.last_status = Some("error".to_string());
             job.state.last_error = Some(result.output.clone());
             job.state.consecutive_errors += 1;
             job.state.total_errors += 1;
+            let max_retries = job.max_retries.unwrap_or(5);
+            if job.state.consecutive_errors >= max_retries {
+                // Retry budget exhausted; keep disabled until manual trigger/reset.
+                job.state.next_run_at_ms = None;
+            } else {
+                let backoff_due =
+                    now_ms.saturating_add(backoff_delay_ms(job.state.consecutive_errors));
+                job.state.next_run_at_ms = Some(match scheduled_next {
+                    Some(next) => next.max(backoff_due),
+                    None => backoff_due,
+                });
+            }
         }
-
-        job.state.next_run_at_ms = compute_next_run(&job.schedule, now_ms);
         job.updated_at_ms = now_ms;
 
         store.save(&jobs).await
@@ -120,7 +143,9 @@ impl CronService {
     pub async fn trigger(&self, id: &str) -> anyhow::Result<()> {
         let store = self.store.lock().await;
         let mut jobs = store.load().await;
-        let job = jobs.iter_mut().find(|j| j.id == id)
+        let job = jobs
+            .iter_mut()
+            .find(|j| j.id == id)
             .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
         job.state.next_run_at_ms = Some(0); // due immediately
         store.save(&jobs).await

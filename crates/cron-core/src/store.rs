@@ -13,16 +13,14 @@ impl CronStore {
     pub fn default_path() -> PathBuf {
         dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("oclaws")
+            .join("oclaw")
             .join("cron")
             .join("jobs.json")
     }
 
     pub async fn load(&self) -> Vec<CronJob> {
         match tokio::fs::read_to_string(&self.path).await {
-            Ok(content) => {
-                serde_json::from_str(&content).unwrap_or_default()
-            }
+            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
             Err(_) => Vec::new(),
         }
     }

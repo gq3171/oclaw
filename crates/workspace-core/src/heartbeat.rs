@@ -61,15 +61,12 @@ impl HeartbeatFile {
         // headers, comments, empty bullet items, and whitespace.
         let has_tasks = raw.lines().any(|line| {
             let t = line.trim();
-            if t.is_empty()
-                || t.starts_with('#')
-                || t.starts_with("//")
-                || t.starts_with("<!--")
-            {
+            if t.is_empty() || t.starts_with('#') || t.starts_with("//") || t.starts_with("<!--") {
                 return false;
             }
             // Empty list items: "- ", "* ", "+ " with nothing after
-            if let Some(rest) = t.strip_prefix("- ")
+            if let Some(rest) = t
+                .strip_prefix("- ")
                 .or_else(|| t.strip_prefix("* "))
                 .or_else(|| t.strip_prefix("+ "))
             {
@@ -110,10 +107,26 @@ pub fn strip_heartbeat_token(text: &str) -> (String, bool) {
     // Helper: strip markdown wrappers and check if core is the token
     let unwrap_and_check = |s: &str| -> bool {
         let s = s.trim();
-        let s = s.strip_prefix("**").and_then(|s| s.strip_suffix("**")).unwrap_or(s).trim();
-        let s = s.strip_prefix("__").and_then(|s| s.strip_suffix("__")).unwrap_or(s).trim();
-        let s = s.strip_prefix("<b>").and_then(|s| s.strip_suffix("</b>")).unwrap_or(s).trim();
-        let s = s.strip_prefix("_").and_then(|s| s.strip_suffix("_")).unwrap_or(s).trim();
+        let s = s
+            .strip_prefix("**")
+            .and_then(|s| s.strip_suffix("**"))
+            .unwrap_or(s)
+            .trim();
+        let s = s
+            .strip_prefix("__")
+            .and_then(|s| s.strip_suffix("__"))
+            .unwrap_or(s)
+            .trim();
+        let s = s
+            .strip_prefix("<b>")
+            .and_then(|s| s.strip_suffix("</b>"))
+            .unwrap_or(s)
+            .trim();
+        let s = s
+            .strip_prefix("_")
+            .and_then(|s| s.strip_suffix("_"))
+            .unwrap_or(s)
+            .trim();
         s == HEARTBEAT_OK_TOKEN
     };
 

@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::chat::{ChatMessage, ChatRequest, ChatCompletion, StreamChunk, StreamChoice, MessageRole};
+use crate::chat::{
+    ChatCompletion, ChatMessage, ChatRequest, MessageRole, StreamChoice, StreamChunk,
+};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::{LlmError, LlmResult};
 use crate::providers::{LlmProvider, ProviderType};
@@ -44,7 +46,9 @@ impl LlmProvider for CohereProvider {
             message: String,
         }
 
-        let messages: Vec<CohereMessage> = request.messages.iter()
+        let messages: Vec<CohereMessage> = request
+            .messages
+            .iter()
             .filter(|m| m.role != MessageRole::System)
             .map(|m| {
                 let role = match m.role {
@@ -56,14 +60,16 @@ impl LlmProvider for CohereProvider {
                     role: role.to_string(),
                     message: m.content.clone(),
                 }
-            }).collect();
+            })
+            .collect();
 
         let req = CohereRequest {
             model: request.model.clone(),
             messages,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -84,7 +90,8 @@ impl LlmProvider for CohereProvider {
                 content: String,
             }
 
-            let resp: CohereResponse = response.json()
+            let resp: CohereResponse = response
+                .json()
                 .await
                 .map_err(|e| LlmError::ParseError(e.to_string()))?;
 
@@ -112,10 +119,15 @@ impl LlmProvider for CohereProvider {
         }
     }
 
-    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
+    async fn chat_stream(
+        &self,
+        request: ChatRequest,
+    ) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
         let url = "https://api.cohere.ai/v2/chat";
 
-        let messages: Vec<serde_json::Value> = request.messages.iter()
+        let messages: Vec<serde_json::Value> = request
+            .messages
+            .iter()
             .filter(|m| m.role != MessageRole::System)
             .map(|m| {
                 let role = match m.role {
@@ -124,7 +136,8 @@ impl LlmProvider for CohereProvider {
                     _ => "user",
                 };
                 serde_json::json!({ "role": role, "content": m.content })
-            }).collect();
+            })
+            .collect();
 
         let req_body = serde_json::json!({
             "model": request.model,
@@ -132,7 +145,8 @@ impl LlmProvider for CohereProvider {
             "stream": true,
         });
 
-        let response = self.client
+        let response = self
+            .client
             .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -175,7 +189,9 @@ impl LlmProvider for CohereProvider {
                     } else {
                         continue;
                     };
-                    if data_str.is_empty() { continue; }
+                    if data_str.is_empty() {
+                        continue;
+                    }
 
                     let json: serde_json::Value = match serde_json::from_str(data_str) {
                         Ok(v) => v,
@@ -185,10 +201,10 @@ impl LlmProvider for CohereProvider {
                     // Cohere v2 stream events: content-delta, stream-end
                     let event_type = json["type"].as_str().unwrap_or("");
                     let text = match event_type {
-                        "content-delta" => {
-                            json["delta"]["message"]["content"]["text"]
-                                .as_str().unwrap_or("").to_string()
-                        }
+                        "content-delta" => json["delta"]["message"]["content"]["text"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
                         _ => continue,
                     };
 
@@ -210,7 +226,9 @@ impl LlmProvider for CohereProvider {
                         }],
                     };
 
-                    if tx.send(Ok(chunk)).await.is_err() { return; }
+                    if tx.send(Ok(chunk)).await.is_err() {
+                        return;
+                    }
                 }
             }
         });
@@ -237,7 +255,8 @@ impl LlmProvider for CohereProvider {
             texts,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -252,11 +271,14 @@ impl LlmProvider for CohereProvider {
                 embeddings: Vec<Vec<f32>>,
             }
 
-            let resp: EmbedResponse = response.json()
+            let resp: EmbedResponse = response
+                .json()
                 .await
                 .map_err(|e| LlmError::ParseError(e.to_string()))?;
 
-            let data: Vec<crate::embedding::Embedding> = resp.embeddings.into_iter()
+            let data: Vec<crate::embedding::Embedding> = resp
+                .embeddings
+                .into_iter()
                 .enumerate()
                 .map(|(index, embedding)| crate::embedding::Embedding {
                     object: "embedding".to_string(),

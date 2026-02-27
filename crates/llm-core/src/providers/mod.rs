@@ -1,49 +1,52 @@
-use std::str::FromStr;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
-pub mod openai;
 pub mod anthropic;
-pub mod ollama;
-pub mod google;
-pub mod cohere;
-pub mod openrouter;
-pub mod together;
 pub mod bedrock;
-pub mod qwen;
-pub mod volcengine;
-pub mod moonshot;
-pub mod xai;
-pub mod huggingface;
-pub mod vllm;
 pub mod cloudflare;
-pub mod litellm;
+pub mod cohere;
 pub mod copilot;
+pub mod google;
+pub mod huggingface;
+pub mod litellm;
+pub(crate) mod media_markdown;
 pub mod mock;
+pub mod moonshot;
+pub mod ollama;
+pub mod openai;
+pub mod openrouter;
+pub mod qwen;
+pub mod together;
+pub mod vllm;
+pub mod volcengine;
+pub mod voyage;
+pub mod xai;
 
-pub use openai::OpenAiProvider;
 pub use anthropic::AnthropicProvider;
-pub use ollama::OllamaProvider;
-pub use google::GoogleProvider;
-pub use cohere::CohereProvider;
-pub use openrouter::OpenRouterProvider;
-pub use together::TogetherProvider;
 pub use bedrock::BedrockProvider;
-pub use qwen::QwenProvider;
-pub use volcengine::VolcengineProvider;
-pub use moonshot::MoonshotProvider;
-pub use xai::XaiProvider;
-pub use huggingface::HuggingFaceProvider;
-pub use vllm::VllmProvider;
 pub use cloudflare::CloudflareProvider;
-pub use litellm::LitellmProvider;
+pub use cohere::CohereProvider;
 pub use copilot::CopilotProvider;
+pub use google::GoogleProvider;
+pub use huggingface::HuggingFaceProvider;
+pub use litellm::LitellmProvider;
 pub use mock::MockLlmProvider;
+pub use moonshot::MoonshotProvider;
+pub use ollama::OllamaProvider;
+pub use openai::OpenAiProvider;
+pub use openrouter::OpenRouterProvider;
+pub use qwen::QwenProvider;
+pub use together::TogetherProvider;
+pub use vllm::VllmProvider;
+pub use volcengine::VolcengineProvider;
+pub use voyage::VoyageProvider;
+pub use xai::XaiProvider;
 
-use std::collections::HashMap;
-use crate::chat::{ChatRequest, ChatCompletion, StreamChunk};
+use crate::chat::{ChatCompletion, ChatRequest, StreamChunk};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::{LlmError, LlmResult};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 pub struct ProviderDefaults {
@@ -102,13 +105,17 @@ impl FromStr for ProviderType {
     }
 }
 
-
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     fn provider_type(&self) -> ProviderType;
     async fn chat(&self, request: ChatRequest) -> LlmResult<ChatCompletion>;
-    async fn chat_stream(&self, _request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
-        Err(LlmError::UnsupportedModel("Streaming not supported by this provider".to_string()))
+    async fn chat_stream(
+        &self,
+        _request: ChatRequest,
+    ) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
+        Err(LlmError::UnsupportedModel(
+            "Streaming not supported by this provider".to_string(),
+        ))
     }
     async fn embeddings(&self, request: EmbeddingRequest) -> LlmResult<EmbeddingResponse>;
     fn supported_models(&self) -> Vec<String>;
@@ -124,19 +131,29 @@ pub trait LlmProvider: Send + Sync {
 pub struct LlmFactory;
 
 impl LlmFactory {
-    pub fn create(provider_type: ProviderType, api_key: &str, base_url: Option<&str>, defaults: ProviderDefaults) -> LlmResult<Box<dyn LlmProvider>> {
+    pub fn create(
+        provider_type: ProviderType,
+        api_key: &str,
+        base_url: Option<&str>,
+        defaults: ProviderDefaults,
+    ) -> LlmResult<Box<dyn LlmProvider>> {
         match provider_type {
             ProviderType::OpenAi => Ok(Box::new(OpenAiProvider::new(api_key, base_url, defaults)?)),
-            ProviderType::Anthropic => Ok(Box::new(AnthropicProvider::new(api_key, base_url, defaults)?)),
-            ProviderType::Ollama => Ok(Box::new(OllamaProvider::new(base_url.unwrap_or("http://localhost:11434"))?)),
+            ProviderType::Anthropic => Ok(Box::new(AnthropicProvider::new(
+                api_key, base_url, defaults,
+            )?)),
+            ProviderType::Ollama => Ok(Box::new(OllamaProvider::new(
+                base_url.unwrap_or("http://localhost:11434"),
+            )?)),
             ProviderType::Google => Ok(Box::new(GoogleProvider::new(api_key)?)),
             ProviderType::Cohere => Ok(Box::new(CohereProvider::new(api_key)?)),
-            ProviderType::Voyage => Err(LlmError::UnsupportedModel("Voyage not implemented".to_string())),
+            ProviderType::Voyage => Ok(Box::new(VoyageProvider::new(api_key, base_url, defaults)?)),
             ProviderType::OpenRouter => Ok(Box::new(OpenRouterProvider::new(api_key)?)),
             ProviderType::Together => Ok(Box::new(TogetherProvider::new(api_key)?)),
             ProviderType::Bedrock => {
-                let (access, secret) = api_key.split_once(':')
-                    .ok_or_else(|| LlmError::InvalidRequest("Bedrock api_key must be ACCESS_KEY:SECRET_KEY".into()))?;
+                let (access, secret) = api_key.split_once(':').ok_or_else(|| {
+                    LlmError::InvalidRequest("Bedrock api_key must be ACCESS_KEY:SECRET_KEY".into())
+                })?;
                 Ok(Box::new(BedrockProvider::new(access, secret, base_url)?))
             }
             ProviderType::Qwen => Ok(Box::new(QwenProvider::new(api_key)?)),

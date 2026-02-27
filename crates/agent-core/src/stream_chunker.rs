@@ -40,7 +40,10 @@ pub struct StreamChunker {
 
 impl StreamChunker {
     pub fn new(config: ChunkingConfig) -> Self {
-        Self { config, buffer: String::new() }
+        Self {
+            config,
+            buffer: String::new(),
+        }
     }
 
     pub fn push(&mut self, text: &str) {
@@ -52,7 +55,9 @@ impl StreamChunker {
         let mut chunks = Vec::new();
         loop {
             if self.buffer.trim().is_empty() {
-                if force { self.buffer.clear(); }
+                if force {
+                    self.buffer.clear();
+                }
                 break;
             }
             if !force && self.buffer.len() < self.config.min_chars {
@@ -61,15 +66,21 @@ impl StreamChunker {
             if force && self.buffer.len() <= self.config.max_chars {
                 let chunk = self.buffer.trim().to_string();
                 self.buffer.clear();
-                if !chunk.is_empty() { chunks.push(chunk); }
+                if !chunk.is_empty() {
+                    chunks.push(chunk);
+                }
                 break;
             }
             if let Some(idx) = self.pick_break_index() {
                 let (chunk, fence_close, fence_reopen) = self.split_at(idx);
                 let mut out = chunk;
-                if let Some(close) = fence_close { out.push_str(&close); }
+                if let Some(close) = fence_close {
+                    out.push_str(&close);
+                }
                 let trimmed = out.trim().to_string();
-                if !trimmed.is_empty() { chunks.push(trimmed); }
+                if !trimmed.is_empty() {
+                    chunks.push(trimmed);
+                }
                 if let Some(reopen) = fence_reopen {
                     self.buffer = format!("{}{}", reopen, self.buffer.trim_start_matches('\n'));
                 }
@@ -87,18 +98,14 @@ impl StreamChunker {
 
         // Try preferred break type first, then fallback chain
         match self.config.break_preference {
-            BreakPreference::Paragraph => {
-                self.find_paragraph_break(buf, &spans)
-                    .or_else(|| self.find_newline_break(buf, &spans))
-                    .or_else(|| self.find_sentence_break(buf, &spans))
-            }
-            BreakPreference::Newline => {
-                self.find_newline_break(buf, &spans)
-                    .or_else(|| self.find_sentence_break(buf, &spans))
-            }
-            BreakPreference::Sentence => {
-                self.find_sentence_break(buf, &spans)
-            }
+            BreakPreference::Paragraph => self
+                .find_paragraph_break(buf, &spans)
+                .or_else(|| self.find_newline_break(buf, &spans))
+                .or_else(|| self.find_sentence_break(buf, &spans)),
+            BreakPreference::Newline => self
+                .find_newline_break(buf, &spans)
+                .or_else(|| self.find_sentence_break(buf, &spans)),
+            BreakPreference::Sentence => self.find_sentence_break(buf, &spans),
         }
         .or(Some(window)) // hard break at max_chars
     }
@@ -144,7 +151,9 @@ impl StreamChunker {
     fn find_sentence_break(&self, buf: &str, spans: &[FenceSpan]) -> Option<usize> {
         let mut last = None;
         for (i, c) in buf.char_indices() {
-            if i < self.config.min_chars { continue; }
+            if i < self.config.min_chars {
+                continue;
+            }
             if matches!(c, '.' | '!' | '?') {
                 let next = i + c.len_utf8();
                 let at_end = next >= buf.len();
@@ -192,7 +201,9 @@ fn parse_fence_spans(text: &str) -> Vec<FenceSpan> {
                 let marker_len = trimmed.chars().take_while(|&c| c == marker_char).count();
                 if marker_len >= 3 {
                     let indent = &line[..indent_len];
-                    if let Some((start, open_marker, open_len, ref open_indent, ref open_line)) = open {
+                    if let Some((start, open_marker, open_len, ref open_indent, ref open_line)) =
+                        open
+                    {
                         if marker_char == open_marker && marker_len >= open_len {
                             spans.push(FenceSpan {
                                 start,
@@ -204,7 +215,13 @@ fn parse_fence_spans(text: &str) -> Vec<FenceSpan> {
                             open = None;
                         }
                     } else {
-                        open = Some((pos, marker_char, marker_len, indent.to_string(), line.to_string()));
+                        open = Some((
+                            pos,
+                            marker_char,
+                            marker_len,
+                            indent.to_string(),
+                            line.to_string(),
+                        ));
                     }
                 }
             }

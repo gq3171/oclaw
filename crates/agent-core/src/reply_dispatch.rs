@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{Semaphore, mpsc};
 
 #[derive(Debug, Clone)]
 pub enum ReplyKind {
@@ -29,19 +29,25 @@ impl ReplyDispatcher {
         (Self { tx, pending }, rx)
     }
 
-    pub async fn send(&self, payload: ReplyPayload) -> Result<(), mpsc::error::SendError<ReplyPayload>> {
-        self.pending.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    pub async fn send(
+        &self,
+        payload: ReplyPayload,
+    ) -> Result<(), mpsc::error::SendError<ReplyPayload>> {
+        self.pending
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let result = self.tx.send(payload).await;
         if result.is_err() {
             // Only decrement on failure; successful sends are decremented by the consumer
-            self.pending.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            self.pending
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         }
         result
     }
 
     /// Signal no more replies incoming — clears the reservation.
     pub fn mark_complete(&self) {
-        self.pending.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        self.pending
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn pending_count(&self) -> usize {

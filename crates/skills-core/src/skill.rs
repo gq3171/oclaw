@@ -94,17 +94,17 @@ pub struct RateLimit {
 #[async_trait]
 pub trait Skill: Send + Sync {
     fn definition(&self) -> &SkillDefinition;
-    
+
     async fn execute(&self, input: SkillInput) -> SkillResult<SkillOutput>;
-    
+
     async fn validate(&self, _input: &SkillInput) -> Result<(), String> {
         Ok(())
     }
-    
+
     async fn on_enabled(&self) -> Result<(), String> {
         Ok(())
     }
-    
+
     async fn on_disabled(&self) -> Result<(), String> {
         Ok(())
     }
@@ -116,9 +116,7 @@ pub struct SkillRunner {
 
 impl SkillRunner {
     pub fn new() -> Self {
-        Self {
-            timeout_ms: 30000,
-        }
+        Self { timeout_ms: 30000 }
     }
 
     pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
@@ -128,28 +126,28 @@ impl SkillRunner {
 
     pub async fn run(&self, skill: &dyn Skill, input: SkillInput) -> SkillResult<SkillOutput> {
         let start = std::time::Instant::now();
-        
-        skill.validate(&input).await
+
+        skill
+            .validate(&input)
+            .await
             .map_err(SkillError::ValidationError)?;
-        
+
         let result = skill.execute(input).await;
-        
+
         let execution_time = start.elapsed().as_millis() as i64;
-        
+
         match result {
             Ok(mut output) => {
                 output.execution_time_ms = execution_time;
                 Ok(output)
             }
-            Err(e) => {
-                Ok(SkillOutput {
-                    success: false,
-                    result: None,
-                    error: Some(e.to_string()),
-                    metadata: HashMap::new(),
-                    execution_time_ms: execution_time,
-                })
-            }
+            Err(e) => Ok(SkillOutput {
+                success: false,
+                result: None,
+                error: Some(e.to_string()),
+                metadata: HashMap::new(),
+                execution_time_ms: execution_time,
+            }),
         }
     }
 }

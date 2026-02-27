@@ -41,7 +41,7 @@ impl Channel for WebchatChannel {
 
     async fn connect(&mut self) -> ChannelResult<()> {
         self.status = ChannelStatus::Connecting;
-        
+
         if let (Some(_), Some(_)) = (&self.username, &self.password) {
             self.status = ChannelStatus::Connected;
             Ok(())
@@ -66,7 +66,7 @@ impl Channel for WebchatChannel {
         if self.status != ChannelStatus::Connected {
             return Err(ChannelError::ConnectionError("Not connected".to_string()));
         }
-        
+
         Ok(message.id.clone())
     }
 
@@ -97,9 +97,11 @@ struct WebchatSender {
 }
 
 impl MessageSender for WebchatSender {
-    fn send<'a>(&'a self, _content: &'a str, _metadata: HashMap<String, String>) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
-        Box::pin(async move {
-            Ok(format!("message-{}", uuid::Uuid::new_v4()))
-        })
+    fn send<'a>(
+        &'a self,
+        _content: &'a str,
+        _metadata: HashMap<String, String>,
+    ) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+        Box::pin(async move { Ok(format!("message-{}", uuid::Uuid::new_v4())) })
     }
 }

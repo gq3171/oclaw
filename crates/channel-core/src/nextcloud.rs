@@ -42,7 +42,9 @@ impl NextcloudChannel {
 }
 
 impl Default for NextcloudChannel {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Clone for NextcloudChannel {
@@ -59,11 +61,15 @@ impl Clone for NextcloudChannel {
 
 #[async_trait]
 impl Channel for NextcloudChannel {
-    fn channel_type(&self) -> &str { "nextcloud" }
+    fn channel_type(&self) -> &str {
+        "nextcloud"
+    }
 
     async fn connect(&mut self) -> ChannelResult<()> {
         self.status = ChannelStatus::Connecting;
-        let _url = self.server_url.as_ref()
+        let _url = self
+            .server_url
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Server URL not set".into()))?;
         self.client = Some(reqwest::Client::new());
         tracing::info!("Nextcloud Talk channel connected to {}", _url);
@@ -78,40 +84,56 @@ impl Channel for NextcloudChannel {
         Ok(())
     }
 
-    fn status(&self) -> ChannelStatus { self.status }
+    fn status(&self) -> ChannelStatus {
+        self.status
+    }
 
     async fn send_message(&self, message: &ChannelMessage) -> ChannelResult<String> {
         if self.status != ChannelStatus::Connected {
             return Err(ChannelError::ConnectionError("Not connected".into()));
         }
-        let base_url = self.server_url.as_ref()
+        let base_url = self
+            .server_url
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Server URL not set".into()))?;
-        let token = self.token.as_ref()
+        let token = self
+            .token
+            .as_ref()
             .ok_or_else(|| ChannelError::AuthenticationError("Token not set".into()))?;
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".into()))?;
 
-        let room_token = message.metadata.get("room_token")
+        let room_token = message
+            .metadata
+            .get("room_token")
             .ok_or_else(|| ChannelError::MessageError("room_token required in metadata".into()))?;
 
         // Nextcloud Talk OCS API
         let url = format!(
             "{}/ocs/v2.php/apps/spreed/api/v1/chat/{}",
-            base_url.trim_end_matches('/'), room_token
+            base_url.trim_end_matches('/'),
+            room_token
         );
 
-        let resp = client.post(&url)
+        let resp = client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", token))
             .header("OCS-APIRequest", "true")
             .header("Accept", "application/json")
             .form(&[("message", &message.content)])
-            .send().await
+            .send()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
-        let json: serde_json::Value = resp.json().await
+        let json: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
-        Ok(json["ocs"]["data"]["id"].as_i64()
+        Ok(json["ocs"]["data"]["id"]
+            .as_i64()
             .map(|id| id.to_string())
             .unwrap_or_else(|| "sent".into()))
     }
@@ -126,14 +148,18 @@ impl Channel for NextcloudChannel {
     }
 
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
-        Ok(Box::new(NextcloudSender { channel: Arc::new(RwLock::new(self.clone())) }))
+        Ok(Box::new(NextcloudSender {
+            channel: Arc::new(RwLock::new(self.clone())),
+        }))
     }
 
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // Nextcloud Talk: /object/message, /object/conversation/token
-        let text = payload.pointer("/object/message")
+        let text = payload
+            .pointer("/object/message")
             .and_then(|v| v.as_str())?;
-        let chat_id = payload.pointer("/object/conversation/token")
+        let chat_id = payload
+            .pointer("/object/conversation/token")
             .and_then(|v| v.as_str())
             .unwrap_or("default");
         Some(WebhookMessage {
@@ -151,7 +177,11 @@ struct NextcloudSender {
 }
 
 impl MessageSender for NextcloudSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
         let channel = self.channel.clone();
         let content = content.to_string();
         Box::pin(async move {

@@ -3,8 +3,8 @@
 //! Skill directory precedence: ./skills (workspace) > ~/.oclaw/skills (user) > bundled.
 //! Each skill directory contains subdirectories with a SKILL.md manifest.
 
-use crate::discovery::{discover_skills, DiscoveredSkill};
-use crate::gates::{check_gates, GateResult};
+use crate::discovery::{DiscoveredSkill, discover_skills};
+use crate::gates::{GateResult, check_gates};
 use std::path::Path;
 
 /// A skill that passed gate checks and is ready to use.

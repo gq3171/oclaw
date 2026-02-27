@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::chat::{ChatMessage, ChatRequest, ChatCompletion, StreamChunk, StreamChoice, MessageRole};
+use crate::chat::{
+    ChatCompletion, ChatMessage, ChatRequest, MessageRole, StreamChoice, StreamChunk,
+};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::{LlmError, LlmResult};
 use crate::providers::{LlmProvider, ProviderType};
@@ -45,18 +47,22 @@ impl LlmProvider for OllamaProvider {
             content: String,
         }
 
-        let messages: Vec<OllamaMessage> = request.messages.iter().map(|m| {
-            let role = match m.role {
-                MessageRole::System => "system",
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::Tool => "tool",
-            };
-            OllamaMessage {
-                role: role.to_string(),
-                content: m.content.clone(),
-            }
-        }).collect();
+        let messages: Vec<OllamaMessage> = request
+            .messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    MessageRole::System => "system",
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    MessageRole::Tool => "tool",
+                };
+                OllamaMessage {
+                    role: role.to_string(),
+                    content: m.content.clone(),
+                }
+            })
+            .collect();
 
         let req = OllamaRequest {
             model: request.model.clone(),
@@ -64,7 +70,8 @@ impl LlmProvider for OllamaProvider {
             stream: false,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .json(&req)
             .send()
@@ -83,7 +90,8 @@ impl LlmProvider for OllamaProvider {
                 content: String,
             }
 
-            let resp: OllamaResponse = response.json()
+            let resp: OllamaResponse = response
+                .json()
                 .await
                 .map_err(|e| LlmError::ParseError(e.to_string()))?;
 
@@ -101,7 +109,11 @@ impl LlmProvider for OllamaProvider {
                         tool_calls: None,
                         tool_call_id: None,
                     },
-                    finish_reason: if resp.done { Some("stop".to_string()) } else { None },
+                    finish_reason: if resp.done {
+                        Some("stop".to_string())
+                    } else {
+                        None
+                    },
                 }],
                 usage: None,
                 system_fingerprint: None,
@@ -111,7 +123,10 @@ impl LlmProvider for OllamaProvider {
         }
     }
 
-    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
+    async fn chat_stream(
+        &self,
+        request: ChatRequest,
+    ) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
         let url = format!("{}/api/chat", self.base_url);
 
         #[derive(Serialize)]
@@ -126,15 +141,22 @@ impl LlmProvider for OllamaProvider {
             content: String,
         }
 
-        let messages: Vec<OllamaMsg> = request.messages.iter().map(|m| {
-            let role = match m.role {
-                MessageRole::System => "system",
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::Tool => "tool",
-            };
-            OllamaMsg { role: role.to_string(), content: m.content.clone() }
-        }).collect();
+        let messages: Vec<OllamaMsg> = request
+            .messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    MessageRole::System => "system",
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    MessageRole::Tool => "tool",
+                };
+                OllamaMsg {
+                    role: role.to_string(),
+                    content: m.content.clone(),
+                }
+            })
+            .collect();
 
         let req = OllamaStreamRequest {
             model: request.model.clone(),
@@ -142,7 +164,8 @@ impl LlmProvider for OllamaProvider {
             stream: true,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .json(&req)
             .send()
@@ -178,7 +201,9 @@ impl LlmProvider for OllamaProvider {
                     let line = buffer[..line_end].trim().to_string();
                     buffer = buffer[line_end + 1..].to_string();
 
-                    if line.is_empty() { continue; }
+                    if line.is_empty() {
+                        continue;
+                    }
 
                     #[derive(Deserialize)]
                     struct OllamaStreamChunk {
@@ -196,7 +221,11 @@ impl LlmProvider for OllamaProvider {
                     };
 
                     let content = parsed.message.map(|m| m.content).unwrap_or_default();
-                    let finish = if parsed.done { Some("stop".to_string()) } else { None };
+                    let finish = if parsed.done {
+                        Some("stop".to_string())
+                    } else {
+                        None
+                    };
 
                     let chunk = StreamChunk {
                         id: "ollama-stream".to_string(),
@@ -220,7 +249,9 @@ impl LlmProvider for OllamaProvider {
                         return;
                     }
 
-                    if parsed.done { return; }
+                    if parsed.done {
+                        return;
+                    }
                 }
             }
         });
@@ -229,11 +260,17 @@ impl LlmProvider for OllamaProvider {
     }
 
     async fn embeddings(&self, _request: EmbeddingRequest) -> LlmResult<EmbeddingResponse> {
-        Err(LlmError::UnsupportedModel("Use /api/embeddings endpoint directly".to_string()))
+        Err(LlmError::UnsupportedModel(
+            "Use /api/embeddings endpoint directly".to_string(),
+        ))
     }
 
     fn supported_models(&self) -> Vec<String> {
-        vec!["llama3.2".to_string(), "llama3.1".to_string(), "mistral".to_string()]
+        vec![
+            "llama3.2".to_string(),
+            "llama3.1".to_string(),
+            "mistral".to_string(),
+        ]
     }
 
     fn default_model(&self) -> &str {

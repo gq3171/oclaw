@@ -61,11 +61,11 @@ pub fn prompt_yes_no(prompt: &str, default: bool) -> bool {
         let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap();
         let input = input.trim().to_lowercase();
-        
+
         if input.is_empty() {
             return default;
         }
-        
+
         match input.as_str() {
             "y" | "yes" => return true,
             "n" | "no" => return false,
@@ -86,22 +86,24 @@ pub fn select_option<T: AsRef<str>>(prompt: &str, options: &[T], default: usize)
         }
     }
     println!();
-    
+
     loop {
         print!("Select option: ");
         io::stdout().flush().unwrap();
         let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap();
         let input = input.trim();
-        
+
         if input.is_empty() {
             return default;
         }
-        
+
         if let Ok(selection) = input.parse::<usize>()
-            && selection >= 1 && selection <= options.len() {
-                return selection - 1;
-            }
+            && selection >= 1
+            && selection <= options.len()
+        {
+            return selection - 1;
+        }
         println!("Invalid selection. Please try again.");
     }
 }
@@ -109,12 +111,12 @@ pub fn select_option<T: AsRef<str>>(prompt: &str, options: &[T], default: usize)
 pub fn get_config_dir() -> PathBuf {
     let config_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("oclaws");
-    
+        .join("oclaw");
+
     if !config_dir.exists() {
         std::fs::create_dir_all(&config_dir).ok();
     }
-    
+
     config_dir
 }
 
@@ -122,12 +124,12 @@ pub fn get_config_dir() -> PathBuf {
 pub fn get_data_dir() -> PathBuf {
     let data_dir = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("oclaws");
-    
+        .join("oclaw");
+
     if !data_dir.exists() {
         std::fs::create_dir_all(&data_dir).ok();
     }
-    
+
     data_dir
 }
 

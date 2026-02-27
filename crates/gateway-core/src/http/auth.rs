@@ -1,5 +1,5 @@
 use hmac::{Hmac, Mac};
-use oclaws_config::settings::{GatewayAuth, RateLimit};
+use oclaw_config::settings::{GatewayAuth, RateLimit};
 use rand::Rng;
 use sha2::Sha256;
 use std::collections::HashMap;
@@ -55,14 +55,19 @@ impl AuthState {
         if let Some(ref a) = auth
             && let Some(ref t) = a.token
         {
-            tokens.insert(t.clone(), TokenInfo {
-                created_at: Instant::now(),
-                ttl: Duration::from_secs(365 * 24 * 3600),
-                scopes: vec!["*".to_string()],
-            });
+            tokens.insert(
+                t.clone(),
+                TokenInfo {
+                    created_at: Instant::now(),
+                    ttl: Duration::from_secs(365 * 24 * 3600),
+                    scopes: vec!["*".to_string()],
+                },
+            );
         }
         Self {
-            rate_limiter: Arc::new(RwLock::new(RateLimiter::new(auth.as_ref().and_then(|a| a.rate_limit.clone())))),
+            rate_limiter: Arc::new(RwLock::new(RateLimiter::new(
+                auth.as_ref().and_then(|a| a.rate_limit.clone()),
+            ))),
             config: auth,
             tokens: Arc::new(RwLock::new(tokens)),
             device_sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -81,25 +86,38 @@ impl AuthState {
     pub async fn authenticate_token(&self, token: &str) -> Option<Vec<String>> {
         let tokens = self.tokens.read().await;
         tokens.get(token).and_then(|t| {
-            if t.is_expired() { None } else { Some(t.scopes.clone()) }
+            if t.is_expired() {
+                None
+            } else {
+                Some(t.scopes.clone())
+            }
         })
     }
 
     pub async fn validate_password(&self, password: &str) -> bool {
         if let Some(auth) = &self.config
-            && let Some(expected) = &auth.password {
-                return constant_time_eq(password.as_bytes(), expected.as_bytes());
-            }
+            && let Some(expected) = &auth.password
+        {
+            return constant_time_eq(password.as_bytes(), expected.as_bytes());
+        }
         false
     }
 
     pub async fn register_token(&self, token: String, scopes: Vec<String>) {
-        self.register_token_with_ttl(token, scopes, Duration::from_secs(86400)).await;
+        self.register_token_with_ttl(token, scopes, Duration::from_secs(86400))
+            .await;
     }
 
     pub async fn register_token_with_ttl(&self, token: String, scopes: Vec<String>, ttl: Duration) {
         let mut tokens = self.tokens.write().await;
-        tokens.insert(token, TokenInfo { created_at: Instant::now(), ttl, scopes });
+        tokens.insert(
+            token,
+            TokenInfo {
+                created_at: Instant::now(),
+                ttl,
+                scopes,
+            },
+        );
     }
 
     pub async fn cleanup_expired_tokens(&self) {
@@ -156,9 +174,10 @@ impl RateLimiter {
         };
 
         if let Some(locked_until) = state.locked_until
-            && Instant::now() < locked_until {
-                return false;
-            }
+            && Instant::now() < locked_until
+        {
+            return false;
+        }
 
         let window = Duration::from_millis(window_ms as u64);
         if state.first_attempt + window < Instant::now() {
@@ -210,7 +229,11 @@ impl Authenticator {
         Self { auth_state }
     }
 
-    pub async fn authenticate(&self, token: Option<&str>, password: Option<&str>) -> Result<AuthResult, String> {
+    pub async fn authenticate(
+        &self,
+        token: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<AuthResult, String> {
         if let Some(t) = token {
             let state = self.auth_state.read().await;
             if let Some(scopes) = state.authenticate_token(t).await {
@@ -250,10 +273,14 @@ fn generate_token() -> String {
 }
 
 pub fn compute_hmac(secret: &str, message: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(message.as_bytes());
     let result = mac.finalize();
-    base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, result.into_bytes())
+    base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        result.into_bytes(),
+    )
 }
 
 pub fn verify_hmac(secret: &str, message: &str, signature: &str) -> bool {

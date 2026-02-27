@@ -4,14 +4,14 @@ use std::net::IpAddr;
 
 /// Extract URLs from text, filtering out markdown image links.
 pub fn extract_urls(text: &str) -> Vec<String> {
-    let re = regex::Regex::new(
-        r#"https?://[^\s\)<>\]\}"'`]+"#
-    ).unwrap();
+    let re = regex::Regex::new(r#"https?://[^\s\)<>\]\}"'`]+"#).unwrap();
 
     re.find_iter(text)
-        .map(|m| m.as_str().trim_end_matches(|c: char| {
-            matches!(c, '.' | ',' | ';' | ':' | '!' | '?')
-        }).to_string())
+        .map(|m| {
+            m.as_str()
+                .trim_end_matches(['.', ',', ';', ':', '!', '?'])
+                .to_string()
+        })
         .filter(|u| url::Url::parse(u).is_ok())
         .collect()
 }
@@ -61,9 +61,7 @@ fn is_private_ip(ip: &IpAddr) -> bool {
                 || v4.is_unspecified()
                 || v4.octets()[0] == 169 && v4.octets()[1] == 254
         }
-        IpAddr::V6(v6) => {
-            v6.is_loopback() || v6.is_unspecified()
-        }
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
     }
 }
 

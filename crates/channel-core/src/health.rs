@@ -88,6 +88,9 @@ async fn check_all(
             ChannelStatus::Connected => {
                 health.consecutive_failures = 0;
             }
+            ChannelStatus::Connecting | ChannelStatus::Reconnecting { .. } => {
+                // Connection lifecycle in progress; don't count as failure.
+            }
             ChannelStatus::Error | ChannelStatus::Disconnected => {
                 health.consecutive_failures += 1;
                 warn!("Channel '{}' unhealthy (failures: {})", name, health.consecutive_failures);
@@ -108,7 +111,6 @@ async fn check_all(
                     continue;
                 }
             }
-            _ => {}
         }
     }
 }

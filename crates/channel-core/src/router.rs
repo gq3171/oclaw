@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -210,13 +210,17 @@ impl Message {
     }
 
     pub fn to_user(mut self, user_id: &str) -> Self {
-        self.to = Some(MessageRecipient::User { id: user_id.to_string() });
+        self.to = Some(MessageRecipient::User {
+            id: user_id.to_string(),
+        });
         self
     }
 
     pub fn to_group(mut self, group_id: &str) -> Self {
         self.group_id = Some(group_id.to_string());
-        self.to = Some(MessageRecipient::Group { id: group_id.to_string() });
+        self.to = Some(MessageRecipient::Group {
+            id: group_id.to_string(),
+        });
         self
     }
 
@@ -370,21 +374,22 @@ impl Default for MessageRouter {
 
 pub fn normalize_message(raw: serde_json::Value, channel_id: &str) -> Message {
     let from = MessageSender {
-        id: raw.get("from")
+        id: raw
+            .get("from")
             .or_else(|| raw.get("user_id"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
-        name: raw.get("name")
+        name: raw
+            .get("name")
             .or_else(|| raw.get("sender_name"))
             .and_then(|v| v.as_str())
             .map(String::from),
-        avatar_url: raw.get("avatar_url")
+        avatar_url: raw
+            .get("avatar_url")
             .and_then(|v| v.as_str())
             .map(String::from),
-        is_bot: raw.get("is_bot")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
+        is_bot: raw.get("is_bot").and_then(|v| v.as_bool()).unwrap_or(false),
     };
 
     let content = if let Some(text) = raw.get("text").and_then(|v| v.as_str()) {
@@ -413,8 +418,8 @@ mod tests {
             is_bot: false,
         };
 
-        let message = Message::new("telegram", sender, MessageContent::text("Hello"))
-            .to_user("user_456");
+        let message =
+            Message::new("telegram", sender, MessageContent::text("Hello")).to_user("user_456");
 
         assert_eq!(message.channel_id, "telegram");
         assert!(message.to.is_some());
@@ -430,13 +435,17 @@ mod tests {
     #[tokio::test]
     async fn test_message_router_pattern() {
         let router = MessageRouter::new();
-        
-        let message = Message::new("test", MessageSender {
-            id: "user".to_string(),
-            name: None,
-            avatar_url: None,
-            is_bot: false,
-        }, MessageContent::text("hello world"));
+
+        let message = Message::new(
+            "test",
+            MessageSender {
+                id: "user".to_string(),
+                name: None,
+                avatar_url: None,
+                is_bot: false,
+            },
+            MessageContent::text("hello world"),
+        );
 
         let routes = router.route(&message).await;
         assert!(routes.is_empty());
@@ -445,13 +454,17 @@ mod tests {
     #[tokio::test]
     async fn test_message_queue() {
         let queue = MessageQueue::new(2);
-        
-        let msg = Message::new("test", MessageSender {
-            id: "user".to_string(),
-            name: None,
-            avatar_url: None,
-            is_bot: false,
-        }, MessageContent::text("test"));
+
+        let msg = Message::new(
+            "test",
+            MessageSender {
+                id: "user".to_string(),
+                name: None,
+                avatar_url: None,
+                is_bot: false,
+            },
+            MessageContent::text("test"),
+        );
 
         assert!(queue.enqueue(msg.clone()).await.is_ok());
         assert!(queue.enqueue(msg.clone()).await.is_ok());

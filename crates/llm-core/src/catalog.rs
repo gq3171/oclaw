@@ -1,8 +1,8 @@
 //! Model catalog — static registry of known model metadata.
 
+use crate::providers::ProviderType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::providers::ProviderType;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -24,7 +24,9 @@ pub struct ModelCatalog {
 
 impl ModelCatalog {
     pub fn new() -> Self {
-        Self { models: HashMap::new() }
+        Self {
+            models: HashMap::new(),
+        }
     }
 
     /// Pre-populated catalog with well-known models.
@@ -43,25 +45,29 @@ impl ModelCatalog {
     }
 
     pub fn context_window(&self, model_id: &str) -> usize {
-        self.models.get(model_id)
+        self.models
+            .get(model_id)
             .map(|m| m.context_window)
             .unwrap_or(4096)
     }
 
     pub fn supports_tools(&self, model_id: &str) -> bool {
-        self.models.get(model_id)
+        self.models
+            .get(model_id)
             .map(|m| m.supports_tools)
             .unwrap_or(false)
     }
 
     pub fn supports_vision(&self, model_id: &str) -> bool {
-        self.models.get(model_id)
+        self.models
+            .get(model_id)
             .map(|m| m.supports_vision)
             .unwrap_or(false)
     }
 
     pub fn list_by_provider(&self, provider: ProviderType) -> Vec<&ModelInfo> {
-        self.models.values()
+        self.models
+            .values()
             .filter(|m| m.provider == provider)
             .collect()
     }

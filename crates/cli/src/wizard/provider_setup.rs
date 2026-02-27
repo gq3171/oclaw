@@ -1,5 +1,5 @@
 use crate::wizard::{error, get_config_dir, info};
-use oclaws_config::ConfigManager;
+use oclaw_config::ConfigManager;
 
 pub struct ProviderSetup;
 
@@ -55,9 +55,10 @@ impl ProviderSetup {
             );
 
             if let Some(auth) = &gateway.auth
-                && auth.token.is_some() {
-                    println!("  Token: ***configured***");
-                }
+                && auth.token.is_some()
+            {
+                println!("  Token: ***configured***");
+            }
         } else {
             println!("  Not configured");
         }

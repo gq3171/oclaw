@@ -1,7 +1,7 @@
+use crate::groups;
+use crate::profiles::ToolProfile;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::profiles::ToolProfile;
-use crate::groups;
 
 /// Per-tool allow/deny policy.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -56,7 +56,11 @@ impl ToolPolicy {
                 require_approval.push(r.clone());
             }
         }
-        ToolPolicy { allow, deny, require_approval }
+        ToolPolicy {
+            allow,
+            deny,
+            require_approval,
+        }
     }
 }
 
@@ -163,9 +167,7 @@ impl LayeredPolicyPipeline {
     pub fn evaluate(&self, tool_name: &str, ctx: &PolicyContext) -> ToolPolicyDecision {
         // Deny in fallback always wins
         if self.fallback.deny.iter().any(|d| d == tool_name) {
-            return ToolPolicyDecision::Denied(
-                format!("Tool '{}' is denied by policy", tool_name),
-            );
+            return ToolPolicyDecision::Denied(format!("Tool '{}' is denied by policy", tool_name));
         }
 
         // Walk layers; later applicable layers override earlier ones
@@ -191,9 +193,10 @@ impl LayeredPolicyPipeline {
                 if profile.allows_tool(tool_name) {
                     Some(ToolPolicyDecision::Allowed)
                 } else {
-                    Some(ToolPolicyDecision::Denied(
-                        format!("Tool '{}' not in profile {:?}", tool_name, profile),
-                    ))
+                    Some(ToolPolicyDecision::Denied(format!(
+                        "Tool '{}' not in profile {:?}",
+                        tool_name, profile
+                    )))
                 }
             }
             PolicyLayer::ProviderProfile(provider, profile) => {
@@ -203,9 +206,10 @@ impl LayeredPolicyPipeline {
                 if profile.allows_tool(tool_name) {
                     Some(ToolPolicyDecision::Allowed)
                 } else {
-                    Some(ToolPolicyDecision::Denied(
-                        format!("Tool '{}' not in provider profile", tool_name),
-                    ))
+                    Some(ToolPolicyDecision::Denied(format!(
+                        "Tool '{}' not in provider profile",
+                        tool_name
+                    )))
                 }
             }
             PolicyLayer::GlobalAllow(list) => {
@@ -287,7 +291,10 @@ mod tests {
             deny: vec!["bash".into()],
             require_approval: vec![],
         };
-        assert!(matches!(p.is_allowed("bash"), ToolPolicyDecision::Denied(_)));
+        assert!(matches!(
+            p.is_allowed("bash"),
+            ToolPolicyDecision::Denied(_)
+        ));
     }
 
     #[test]
@@ -298,7 +305,10 @@ mod tests {
             require_approval: vec![],
         };
         assert_eq!(p.is_allowed("read_file"), ToolPolicyDecision::Allowed);
-        assert!(matches!(p.is_allowed("bash"), ToolPolicyDecision::Denied(_)));
+        assert!(matches!(
+            p.is_allowed("bash"),
+            ToolPolicyDecision::Denied(_)
+        ));
     }
 
     #[test]
@@ -325,7 +335,11 @@ mod tests {
         let mut pipeline = ToolPolicyPipeline::new(global);
         pipeline.channel_policies.insert(
             "telegram".into(),
-            ToolPolicy { allow: None, deny: vec!["bash".into()], require_approval: vec![] },
+            ToolPolicy {
+                allow: None,
+                deny: vec!["bash".into()],
+                require_approval: vec![],
+            },
         );
         assert!(matches!(
             pipeline.check("bash", Some("telegram"), None),
@@ -343,8 +357,14 @@ mod tests {
             .with_layer(PolicyLayer::Profile(ToolProfile::Coding));
         let ctx = PolicyContext::default();
         assert_eq!(pipeline.evaluate("bash", &ctx), ToolPolicyDecision::Allowed);
-        assert_eq!(pipeline.evaluate("read_file", &ctx), ToolPolicyDecision::Allowed);
-        assert!(matches!(pipeline.evaluate("message", &ctx), ToolPolicyDecision::Denied(_)));
+        assert_eq!(
+            pipeline.evaluate("read_file", &ctx),
+            ToolPolicyDecision::Allowed
+        );
+        assert!(matches!(
+            pipeline.evaluate("message", &ctx),
+            ToolPolicyDecision::Denied(_)
+        ));
     }
 
     #[test]
@@ -352,8 +372,14 @@ mod tests {
         let pipeline = LayeredPolicyPipeline::new(ToolPolicy::default())
             .with_layer(PolicyLayer::Profile(ToolProfile::Minimal));
         let ctx = PolicyContext::default();
-        assert_eq!(pipeline.evaluate("session_status", &ctx), ToolPolicyDecision::Allowed);
-        assert!(matches!(pipeline.evaluate("bash", &ctx), ToolPolicyDecision::Denied(_)));
+        assert_eq!(
+            pipeline.evaluate("session_status", &ctx),
+            ToolPolicyDecision::Allowed
+        );
+        assert!(matches!(
+            pipeline.evaluate("bash", &ctx),
+            ToolPolicyDecision::Denied(_)
+        ));
     }
 
     #[test]
@@ -366,7 +392,10 @@ mod tests {
         let pipeline = LayeredPolicyPipeline::new(fallback)
             .with_layer(PolicyLayer::Profile(ToolProfile::Full));
         let ctx = PolicyContext::default();
-        assert!(matches!(pipeline.evaluate("bash", &ctx), ToolPolicyDecision::Denied(_)));
+        assert!(matches!(
+            pipeline.evaluate("bash", &ctx),
+            ToolPolicyDecision::Denied(_)
+        ));
     }
 
     #[test]
@@ -385,7 +414,13 @@ mod tests {
             channel: Some("discord".into()),
             ..Default::default()
         };
-        assert_eq!(pipeline.evaluate("bash", &ctx_tg), ToolPolicyDecision::Allowed);
-        assert!(matches!(pipeline.evaluate("bash", &ctx_dc), ToolPolicyDecision::Denied(_)));
+        assert_eq!(
+            pipeline.evaluate("bash", &ctx_tg),
+            ToolPolicyDecision::Allowed
+        );
+        assert!(matches!(
+            pipeline.evaluate("bash", &ctx_dc),
+            ToolPolicyDecision::Denied(_)
+        ));
     }
 }

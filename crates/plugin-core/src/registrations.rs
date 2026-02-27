@@ -14,7 +14,10 @@ pub struct PluginToolReg {
 
 impl std::fmt::Debug for PluginToolReg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PluginToolReg").field("plugin_id", &self.plugin_id).field("name", &self.name).finish()
+        f.debug_struct("PluginToolReg")
+            .field("plugin_id", &self.plugin_id)
+            .field("name", &self.name)
+            .finish()
     }
 }
 
@@ -81,16 +84,31 @@ impl PluginRegistrations {
     }
 
     pub async fn tools_for_plugin(&self, plugin_id: &str) -> Vec<String> {
-        self.tools.read().await.iter()
+        self.tools
+            .read()
+            .await
+            .iter()
             .filter(|t| t.plugin_id == plugin_id)
             .map(|t| t.name.clone())
             .collect()
     }
 
     pub async fn remove_plugin(&self, plugin_id: &str) {
-        self.tools.write().await.retain(|t| t.plugin_id != plugin_id);
-        self.commands.write().await.retain(|c| c.plugin_id != plugin_id);
-        self.services.write().await.retain(|s| s.plugin_id != plugin_id);
-        self.http_routes.write().await.retain(|r| r.plugin_id != plugin_id);
+        self.tools
+            .write()
+            .await
+            .retain(|t| t.plugin_id != plugin_id);
+        self.commands
+            .write()
+            .await
+            .retain(|c| c.plugin_id != plugin_id);
+        self.services
+            .write()
+            .await
+            .retain(|s| s.plugin_id != plugin_id);
+        self.http_routes
+            .write()
+            .await
+            .retain(|r| r.plugin_id != plugin_id);
     }
 }

@@ -30,6 +30,9 @@ pub struct VideoRequest {
 pub trait MediaProvider: Send + Sync {
     fn id(&self) -> &str;
     fn capabilities(&self) -> Vec<MediaCapability>;
+    fn model_for(&self, _capability: MediaCapability) -> Option<String> {
+        None
+    }
     async fn describe_image(&self, req: &ImageRequest) -> Result<String, MediaProviderError>;
     async fn transcribe_audio(&self, req: &AudioRequest) -> Result<String, MediaProviderError>;
     async fn describe_video(&self, req: &VideoRequest) -> Result<String, MediaProviderError>;

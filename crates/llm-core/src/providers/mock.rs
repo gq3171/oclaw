@@ -1,11 +1,11 @@
 //! Mock LLM provider for testing
 
-use async_trait::async_trait;
-use std::sync::{Arc, Mutex};
+use super::{LlmProvider, ProviderType};
 use crate::chat::*;
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::{LlmError, LlmResult};
-use super::{LlmProvider, ProviderType};
+use async_trait::async_trait;
+use std::sync::{Arc, Mutex};
 
 /// Mock provider that returns configurable responses.
 pub struct MockLlmProvider {
@@ -14,7 +14,9 @@ pub struct MockLlmProvider {
 }
 
 impl Default for MockLlmProvider {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockLlmProvider {
@@ -79,7 +81,11 @@ impl MockLlmProvider {
                 },
                 finish_reason: Some("stop".into()),
             }],
-            usage: Some(Usage { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }),
+            usage: Some(Usage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            }),
             system_fingerprint: None,
         }
     }
@@ -87,17 +93,26 @@ impl MockLlmProvider {
 
 #[async_trait]
 impl LlmProvider for MockLlmProvider {
-    fn provider_type(&self) -> ProviderType { ProviderType::OpenAi }
+    fn provider_type(&self) -> ProviderType {
+        ProviderType::OpenAi
+    }
 
     async fn chat(&self, request: ChatRequest) -> LlmResult<ChatCompletion> {
         self.calls.lock().unwrap().push(request);
         Ok(self.pop_or_default())
     }
 
-    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
+    async fn chat_stream(
+        &self,
+        request: ChatRequest,
+    ) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
         self.calls.lock().unwrap().push(request);
         let completion = self.pop_or_default();
-        let text = completion.choices.first().map(|c| c.message.content.clone()).unwrap_or_default();
+        let text = completion
+            .choices
+            .first()
+            .map(|c| c.message.content.clone())
+            .unwrap_or_default();
         let (tx, rx) = tokio::sync::mpsc::channel(32);
         tokio::spawn(async move {
             // Send content as word-level chunks
@@ -112,12 +127,16 @@ impl LlmProvider for MockLlmProvider {
                         delta: Some(ChatMessage {
                             role: MessageRole::Assistant,
                             content: word.into(),
-                            name: None, tool_calls: None, tool_call_id: None,
+                            name: None,
+                            tool_calls: None,
+                            tool_call_id: None,
                         }),
                         finish_reason: None,
                     }],
                 };
-                if tx.send(Ok(chunk)).await.is_err() { return; }
+                if tx.send(Ok(chunk)).await.is_err() {
+                    return;
+                }
             }
             // Final chunk with finish_reason
             let done = StreamChunk {
@@ -126,7 +145,9 @@ impl LlmProvider for MockLlmProvider {
                 created: 0,
                 model: "mock-model".into(),
                 choices: vec![StreamChoice {
-                    index: 0, delta: None, finish_reason: Some("stop".into()),
+                    index: 0,
+                    delta: None,
+                    finish_reason: Some("stop".into()),
                 }],
             };
             let _ = tx.send(Ok(done)).await;
@@ -135,9 +156,15 @@ impl LlmProvider for MockLlmProvider {
     }
 
     async fn embeddings(&self, _request: EmbeddingRequest) -> LlmResult<EmbeddingResponse> {
-        Err(LlmError::UnsupportedModel("Mock does not support embeddings".into()))
+        Err(LlmError::UnsupportedModel(
+            "Mock does not support embeddings".into(),
+        ))
     }
 
-    fn supported_models(&self) -> Vec<String> { vec!["mock-model".into()] }
-    fn default_model(&self) -> &str { "mock-model" }
+    fn supported_models(&self) -> Vec<String> {
+        vec!["mock-model".into()]
+    }
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
 }

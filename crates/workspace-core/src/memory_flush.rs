@@ -105,7 +105,13 @@ mod tests {
     #[test]
     fn does_not_trigger_when_under_threshold() {
         let cfg = MemoryFlushConfig::default();
-        assert!(!should_run_memory_flush(100_000, 128_000, &cfg, u64::MAX, 0));
+        assert!(!should_run_memory_flush(
+            100_000,
+            128_000,
+            &cfg,
+            u64::MAX,
+            0
+        ));
     }
 
     #[test]
@@ -124,8 +130,17 @@ mod tests {
 
     #[test]
     fn disabled_never_triggers() {
-        let cfg = MemoryFlushConfig { enabled: false, ..Default::default() };
-        assert!(!should_run_memory_flush(200_000, 128_000, &cfg, u64::MAX, 0));
+        let cfg = MemoryFlushConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        assert!(!should_run_memory_flush(
+            200_000,
+            128_000,
+            &cfg,
+            u64::MAX,
+            0
+        ));
     }
 
     #[test]

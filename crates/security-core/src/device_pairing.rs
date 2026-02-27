@@ -52,7 +52,9 @@ impl DevicePairingManager {
 
     /// Load paired devices from disk.
     pub async fn load(&self) -> Result<(), String> {
-        let Some(path) = &self.persist_path else { return Ok(()) };
+        let Some(path) = &self.persist_path else {
+            return Ok(());
+        };
         if !path.exists() {
             return Ok(());
         }
@@ -73,20 +75,21 @@ impl DevicePairingManager {
 
     /// Persist paired devices to disk.
     async fn save(&self) -> Result<(), String> {
-        let Some(path) = &self.persist_path else { return Ok(()) };
+        let Some(path) = &self.persist_path else {
+            return Ok(());
+        };
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create dir: {}", e))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
         }
         let devices = self.devices.read().await;
-        let data = PersistedDevices { devices: devices.clone() };
+        let data = PersistedDevices {
+            devices: devices.clone(),
+        };
         let json = serde_json::to_string_pretty(&data)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
         let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, &json)
-            .map_err(|e| format!("Failed to write: {}", e))?;
-        std::fs::rename(&tmp, path)
-            .map_err(|e| format!("Failed to rename: {}", e))?;
+        std::fs::write(&tmp, &json).map_err(|e| format!("Failed to write: {}", e))?;
+        std::fs::rename(&tmp, path).map_err(|e| format!("Failed to rename: {}", e))?;
         Ok(())
     }
 
@@ -117,7 +120,9 @@ impl DevicePairingManager {
 
         let device = PairedDevice {
             device_id: uuid::Uuid::new_v4().to_string(),
-            device_name: pending.device_name.unwrap_or_else(|| "Unknown Device".into()),
+            device_name: pending
+                .device_name
+                .unwrap_or_else(|| "Unknown Device".into()),
             token: Self::generate_token(),
             paired_at: now,
             last_seen: Some(now),
@@ -165,7 +170,9 @@ impl DevicePairingManager {
     /// Revoke a paired device by device_id.
     pub async fn revoke_device(&self, device_id: &str) -> Result<(), DevicePairingError> {
         let mut devices = self.devices.write().await;
-        let pos = devices.iter().position(|d| d.device_id == device_id)
+        let pos = devices
+            .iter()
+            .position(|d| d.device_id == device_id)
             .ok_or(DevicePairingError::DeviceNotFound)?;
         let removed = devices.remove(pos);
 
@@ -201,9 +208,10 @@ impl DevicePairingManager {
         use rand::Rng;
         let mut rng = rand::rng();
         let bytes: Vec<u8> = (0..32).map(|_| rng.random()).collect();
-        format!("dev_{}", base64::Engine::encode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD, &bytes
-        ))
+        format!(
+            "dev_{}",
+            base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &bytes)
+        )
     }
 }
 

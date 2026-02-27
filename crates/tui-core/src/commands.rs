@@ -12,6 +12,7 @@ pub enum SlashCommand {
     Verbose,
     Usage,
     Abort,
+    Copy,
 }
 
 #[derive(Debug)]
@@ -42,6 +43,7 @@ pub fn parse_command(input: &str) -> Option<CommandResult> {
         "verbose" | "v" => SlashCommand::Verbose,
         "usage" | "u" => SlashCommand::Usage,
         "abort" => SlashCommand::Abort,
+        "copy" | "cp" => SlashCommand::Copy,
         _ => {
             return Some(CommandResult {
                 command: SlashCommand::Help,
@@ -50,5 +52,8 @@ pub fn parse_command(input: &str) -> Option<CommandResult> {
         }
     };
 
-    Some(CommandResult { command, message: None })
+    Some(CommandResult {
+        command,
+        message: None,
+    })
 }

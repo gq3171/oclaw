@@ -11,7 +11,11 @@ pub struct MmrConfig {
 
 impl Default for MmrConfig {
     fn default() -> Self {
-        Self { lambda: 0.7, top_k: 20, final_k: 5 }
+        Self {
+            lambda: 0.7,
+            top_k: 20,
+            final_k: 5,
+        }
     }
 }
 
@@ -39,10 +43,15 @@ pub fn mmr_rerank(
         for (ri, &ci) in remaining.iter().enumerate() {
             let relevance = candidates[ci].0;
 
-            let max_sim = selected.iter()
+            let max_sim = selected
+                .iter()
                 .map(|&si| cosine_similarity(&candidates[ci].1, &candidates[si].1) as f64)
                 .fold(f64::NEG_INFINITY, f64::max);
-            let max_sim = if max_sim == f64::NEG_INFINITY { 0.0 } else { max_sim };
+            let max_sim = if max_sim == f64::NEG_INFINITY {
+                0.0
+            } else {
+                max_sim
+            };
 
             let mmr = config.lambda * relevance - (1.0 - config.lambda) * max_sim;
             if mmr > best_score {
@@ -86,7 +95,11 @@ mod tests {
             (0.85, vec![0.99, 0.1]),
             (0.5, vec![0.0, 1.0]),
         ];
-        let config = MmrConfig { lambda: 0.5, top_k: 10, final_k: 2 };
+        let config = MmrConfig {
+            lambda: 0.5,
+            top_k: 10,
+            final_k: 2,
+        };
         let selected = mmr_rerank(&query, &candidates, &config);
         assert_eq!(selected.len(), 2);
         // First pick should be highest relevance

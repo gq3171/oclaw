@@ -307,9 +307,8 @@ impl BootstrapRunner {
         // Require name + at least one extra field (emoji/creature/vibe).
         if let Ok(Some(identity)) = AgentIdentity::load(&self.workspace).await {
             let has_name = identity.name.is_some();
-            let has_extras = identity.emoji.is_some()
-                || identity.creature.is_some()
-                || identity.vibe.is_some();
+            let has_extras =
+                identity.emoji.is_some() || identity.creature.is_some() || identity.vibe.is_some();
             if !has_name || !has_extras {
                 info!("Identity not yet fully personalized — hatching still needed");
                 return Ok(BootstrapStatus::NeedsHatching);
@@ -324,16 +323,19 @@ impl BootstrapRunner {
         let ws = &self.workspace;
 
         if !ws.has_soul().await {
-            ws.write_file(&ws.soul_path(), DEFAULT_SOUL_TEMPLATE).await?;
+            ws.write_file(&ws.soul_path(), DEFAULT_SOUL_TEMPLATE)
+                .await?;
             info!("Seeded SOUL.md");
         }
         if !ws.has_identity().await {
             let default_id = AgentIdentity::default();
-            ws.write_file(&ws.identity_path(), &default_id.to_markdown()).await?;
+            ws.write_file(&ws.identity_path(), &default_id.to_markdown())
+                .await?;
             info!("Seeded IDENTITY.md");
         }
         if !ws.has_heartbeat().await {
-            ws.write_file(&ws.heartbeat_path(), DEFAULT_HEARTBEAT_TEMPLATE).await?;
+            ws.write_file(&ws.heartbeat_path(), DEFAULT_HEARTBEAT_TEMPLATE)
+                .await?;
             info!("Seeded HEARTBEAT.md");
         }
 
@@ -344,22 +346,26 @@ impl BootstrapRunner {
         }
 
         if !ws.has_user().await {
-            ws.write_file(&ws.user_path(), DEFAULT_USER_TEMPLATE).await?;
+            ws.write_file(&ws.user_path(), DEFAULT_USER_TEMPLATE)
+                .await?;
             info!("Seeded USER.md");
         }
 
         if !ws.has_bootstrap().await {
-            ws.write_file(&ws.bootstrap_path(), DEFAULT_BOOTSTRAP_TEMPLATE).await?;
+            ws.write_file(&ws.bootstrap_path(), DEFAULT_BOOTSTRAP_TEMPLATE)
+                .await?;
             info!("Seeded BOOTSTRAP.md");
         }
 
         if !ws.has_agents().await {
-            ws.write_file(&ws.agents_path(), DEFAULT_AGENTS_TEMPLATE).await?;
+            ws.write_file(&ws.agents_path(), DEFAULT_AGENTS_TEMPLATE)
+                .await?;
             info!("Seeded AGENTS.md");
         }
 
         if !ws.has_tools().await {
-            ws.write_file(&ws.tools_path(), DEFAULT_TOOLS_TEMPLATE).await?;
+            ws.write_file(&ws.tools_path(), DEFAULT_TOOLS_TEMPLATE)
+                .await?;
             info!("Seeded TOOLS.md");
         }
 

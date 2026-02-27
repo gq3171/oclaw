@@ -1,7 +1,7 @@
 //! Block reply pipeline — deduplication, buffering, and flush control.
 
-use std::collections::HashSet;
 use crate::types::ReplyPayload;
+use std::collections::HashSet;
 
 /// Generates a dedup key for a reply payload.
 fn payload_key(p: &ReplyPayload) -> String {

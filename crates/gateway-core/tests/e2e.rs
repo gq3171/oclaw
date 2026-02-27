@@ -1,7 +1,7 @@
+use oclaw_config::settings::Gateway;
+use oclaw_gateway_core::{GatewayServer, HttpServer};
+use oclaw_llm_core::providers::MockLlmProvider;
 use std::sync::Arc;
-use oclaws_gateway_core::{GatewayServer, HttpServer};
-use oclaws_config::settings::Gateway;
-use oclaws_llm_core::providers::MockLlmProvider;
 
 async fn start_server(mock: MockLlmProvider) -> String {
     let gateway = Gateway::default();
@@ -9,8 +9,7 @@ async fn start_server(mock: MockLlmProvider) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let server = HttpServer::new(addr, Arc::new(gateway), gs)
-        .with_llm_provider(Arc::new(mock));
+    let server = HttpServer::new(addr, Arc::new(gateway), gs).with_llm_provider(Arc::new(mock));
 
     tokio::spawn(async move {
         axum::serve(listener, server.into_router()).await.unwrap();
@@ -64,7 +63,10 @@ async fn test_e2e_no_provider_returns_503() {
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("http://127.0.0.1:{}/v1/chat/completions", addr.port()))
+        .post(format!(
+            "http://127.0.0.1:{}/v1/chat/completions",
+            addr.port()
+        ))
         .json(&serde_json::json!({
             "model": "test",
             "messages": [{"role": "user", "content": "hi"}]

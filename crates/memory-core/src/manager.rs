@@ -1,5 +1,5 @@
 use crate::embeddings::EmbeddingProvider;
-use crate::search::{hybrid_search, HybridSearchConfig};
+use crate::search::{HybridSearchConfig, hybrid_search};
 use crate::store::MemoryStore;
 use crate::types::{MemoryChunk, MemorySearchResult};
 use anyhow::Result;
@@ -314,10 +314,32 @@ fn is_indexable(path: &Path) -> bool {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     matches!(
         ext,
-        "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "go" | "java"
-            | "c" | "cpp" | "h" | "hpp" | "md" | "txt" | "toml"
-            | "yaml" | "yml" | "json" | "html" | "css" | "sql"
-            | "sh" | "rb" | "php" | "swift" | "kt" | "scala"
+        "rs" | "py"
+            | "js"
+            | "ts"
+            | "tsx"
+            | "jsx"
+            | "go"
+            | "java"
+            | "c"
+            | "cpp"
+            | "h"
+            | "hpp"
+            | "md"
+            | "txt"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "json"
+            | "html"
+            | "css"
+            | "sql"
+            | "sh"
+            | "rb"
+            | "php"
+            | "swift"
+            | "kt"
+            | "scala"
     )
 }
 

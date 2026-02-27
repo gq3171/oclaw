@@ -1,7 +1,7 @@
 //! ACP tool permissions — controls which tools a session can invoke.
 
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AcpPermissions {

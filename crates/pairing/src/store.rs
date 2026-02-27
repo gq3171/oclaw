@@ -1,7 +1,7 @@
 //! Pairing request storage.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::setup_code::generate_setup_code;
 
@@ -69,13 +69,16 @@ impl PairingStore {
 
     pub fn verify_code(&self, code: &str) -> Option<&PairingRequest> {
         let now = Self::now_ms();
-        self.requests.iter().find(|r| {
-            r.code == code && !r.approved && (now - r.created_at) < self.ttl_ms
-        })
+        self.requests
+            .iter()
+            .find(|r| r.code == code && !r.approved && (now - r.created_at) < self.ttl_ms)
     }
 
     pub fn approve(&mut self, id: &str) -> Result<(), PairingError> {
-        let req = self.requests.iter_mut().find(|r| r.id == id)
+        let req = self
+            .requests
+            .iter_mut()
+            .find(|r| r.id == id)
             .ok_or_else(|| PairingError::NotFound(id.to_string()))?;
         req.approved = true;
         req.last_seen_at = Self::now_ms();
@@ -83,7 +86,10 @@ impl PairingStore {
     }
 
     pub fn reject(&mut self, id: &str) -> Result<(), PairingError> {
-        let idx = self.requests.iter().position(|r| r.id == id)
+        let idx = self
+            .requests
+            .iter()
+            .position(|r| r.id == id)
             .ok_or_else(|| PairingError::NotFound(id.to_string()))?;
         self.requests.remove(idx);
         Ok(())
@@ -91,7 +97,8 @@ impl PairingStore {
 
     pub fn cleanup_expired(&mut self) {
         let now = Self::now_ms();
-        self.requests.retain(|r| r.approved || (now - r.created_at) < self.ttl_ms);
+        self.requests
+            .retain(|r| r.approved || (now - r.created_at) < self.ttl_ms);
     }
 
     pub fn list_pending(&self) -> Vec<&PairingRequest> {

@@ -46,10 +46,13 @@ impl EmbeddingCache {
         }
         self.access_counter += 1;
         let key = hash_text(text);
-        self.cache.insert(key, CacheEntry {
-            embedding,
-            last_access: self.access_counter,
-        });
+        self.cache.insert(
+            key,
+            CacheEntry {
+                embedding,
+                last_access: self.access_counter,
+            },
+        );
     }
 
     pub fn hit_rate(&self) -> f64 {
@@ -68,9 +71,7 @@ impl EmbeddingCache {
     }
 
     fn evict_lru(&mut self) {
-        if let Some((&oldest_key, _)) = self.cache.iter()
-            .min_by_key(|(_, e)| e.last_access)
-        {
+        if let Some((&oldest_key, _)) = self.cache.iter().min_by_key(|(_, e)| e.last_access) {
             self.cache.remove(&oldest_key);
         }
     }

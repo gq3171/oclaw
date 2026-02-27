@@ -1,13 +1,13 @@
 use clap::{Parser, Subcommand};
-use oclaws_gateway_core::GatewayServer;
-use oclaws_config::{Config, ConfigManager};
-use oclaws_config::settings::Gateway;
+use oclaw_config::settings::Gateway;
+use oclaw_config::{Config, ConfigManager};
+use oclaw_gateway_core::GatewayServer;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error, debug, Level};
+use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{FmtSubscriber, fmt};
 #[cfg(feature = "otel")]
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod wizard;
 
@@ -43,13 +43,13 @@ struct FsHeader {
 }
 
 #[derive(Parser)]
-#[command(name = "oclaws")]
+#[command(name = "oclaw")]
 #[command(version = "0.1.0")]
 #[command(about = "OCLAWS - Open CLAW System", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
-    
+
     #[arg(short, long, default_value = "info", env = "OCLAWS_LOG_LEVEL")]
     log_level: String,
 
@@ -59,7 +59,11 @@ struct Cli {
     #[arg(short, long)]
     config: Option<String>,
 
-    #[arg(long, default_value = "http://127.0.0.1:8081", env = "OCLAWS_GATEWAY_URL")]
+    #[arg(
+        long,
+        default_value = "http://127.0.0.1:8081",
+        env = "OCLAWS_GATEWAY_URL"
+    )]
     gateway_url: String,
 }
 
@@ -69,7 +73,7 @@ enum Commands {
         #[arg(short, long)]
         port: Option<u16>,
 
-        #[arg(short, long)]
+        #[arg(short = 'H', long)]
         host: Option<String>,
 
         #[arg(long, default_value = "false")]
@@ -81,14 +85,14 @@ enum Commands {
     Config {
         #[arg(short, long)]
         path: Option<String>,
-        
+
         #[command(subcommand)]
         action: ConfigAction,
     },
     Wizard {
         #[arg(short, long)]
         path: Option<String>,
-        
+
         #[arg(long)]
         skip_existing: bool,
     },
@@ -126,6 +130,10 @@ enum Commands {
         #[arg(short, long)]
         session: Option<String>,
         text: String,
+    },
+    System {
+        #[command(subcommand)]
+        action: SystemAction,
     },
     Status,
     Version,
@@ -211,11 +219,47 @@ enum ModelAction {
     List,
 }
 
+#[derive(Subcommand)]
+enum SystemAction {
+    Event {
+        #[arg(long)]
+        text: String,
+        #[arg(long, default_value = "next-heartbeat")]
+        mode: String,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Heartbeat {
+        #[command(subcommand)]
+        action: SystemHeartbeatAction,
+    },
+    Presence {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SystemHeartbeatAction {
+    Last {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Enable {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Disable {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
-    
+
     let log_level = match cli.log_level.as_str() {
         "trace" => Level::TRACE,
         "debug" => Level::DEBUG,
@@ -224,28 +268,33 @@ async fn main() -> anyhow::Result<()> {
         "error" => Level::ERROR,
         _ => Level::INFO,
     };
-    
+
     let is_tui = matches!(cli.command, Some(Commands::Tui));
 
     // Load config early to check OTEL settings
     #[cfg(feature = "otel")]
     let otel_config = {
-        let cfg_path = cli.config.as_ref()
+        let cfg_path = cli
+            .config
+            .as_ref()
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
         let mut mgr = ConfigManager::new(cfg_path);
         mgr.load().ok();
-        mgr.config().diagnostics.as_ref().and_then(|d| d.otel.clone())
+        mgr.config()
+            .diagnostics
+            .as_ref()
+            .and_then(|d| d.otel.clone())
     };
 
     // TUI mode: redirect logs to file so they don't corrupt the terminal
     let _tui_log_guard = if is_tui {
         let log_dir = dirs::data_local_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("oclaws");
+            .join("oclaw");
         std::fs::create_dir_all(&log_dir).ok();
-        let file = std::fs::File::create(log_dir.join("tui.log"))
-            .expect("Failed to create TUI log file");
+        let file =
+            std::fs::File::create(log_dir.join("tui.log")).expect("Failed to create TUI log file");
         FmtSubscriber::builder()
             .with_max_level(log_level)
             .with_target(false)
@@ -256,10 +305,16 @@ async fn main() -> anyhow::Result<()> {
     } else {
         #[cfg(feature = "otel")]
         let _otel_guard = {
-            let otel_enabled = otel_config.as_ref()
-                .and_then(|o| o.enabled).unwrap_or(false);
+            let otel_enabled = otel_config
+                .as_ref()
+                .and_then(|o| o.enabled)
+                .unwrap_or(false);
             if otel_enabled {
-                Some(init_otel_tracing(log_level, &cli.log_format, &otel_config.unwrap()))
+                Some(init_otel_tracing(
+                    log_level,
+                    &cli.log_format,
+                    &otel_config.unwrap(),
+                ))
             } else {
                 init_plain_tracing(log_level, &cli.log_format);
                 None
@@ -270,7 +325,7 @@ async fn main() -> anyhow::Result<()> {
         init_plain_tracing(log_level, &cli.log_format);
         false
     };
-    
+
     let Some(command) = cli.command else {
         // No subcommand — print help and exit
         use clap::CommandFactory;
@@ -280,9 +335,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     match command {
-        Commands::Start { port, host, http_only, ws_only } => {
+        Commands::Start {
+            port,
+            host,
+            http_only,
+            ws_only,
+        } => {
             // 1. Load config
-            let config_path = cli.config
+            let config_path = cli
+                .config
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
             let mut manager = ConfigManager::new(config_path.clone());
@@ -309,14 +370,48 @@ async fn main() -> anyhow::Result<()> {
             let llm_provider = create_llm_provider(&config);
 
             // 3b. Initialize memory manager for cross-channel recall (before tool registry)
-            let memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>> = {
-                let store = oclaws_memory_core::MemoryStore::new(
-                    oclaws_memory_core::MemoryStore::default_path(),
-                );
+            let memory_manager: Option<Arc<oclaw_memory_core::MemoryManager>> = {
+                let memory_path = config
+                    .memory
+                    .as_ref()
+                    .and_then(|m| m.db_path.as_ref())
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(oclaw_memory_core::MemoryStore::default_path);
+                let store = oclaw_memory_core::MemoryStore::new(memory_path);
+
+                let embedding_provider = config.memory.as_ref().and_then(|m| {
+                    let enabled = m.enabled.unwrap_or(false);
+                    if !enabled {
+                        return None;
+                    }
+                    let provider_name = m.provider.as_deref().unwrap_or("openai");
+                    let Some(api_key) = m.api_key.as_deref() else {
+                        warn!(
+                            "memory.enabled=true but memory.apiKey is missing; embeddings disabled"
+                        );
+                        return None;
+                    };
+                    Some(oclaw_memory_core::create_embedding_provider(
+                        provider_name,
+                        api_key,
+                        m.model.as_deref(),
+                    ))
+                });
+
                 match store.init() {
                     Ok(()) => {
-                        info!("Memory store initialized");
-                        Some(Arc::new(oclaws_memory_core::MemoryManager::new(store, None)))
+                        info!(
+                            "Memory store initialized (embedding={})",
+                            if embedding_provider.is_some() {
+                                "on"
+                            } else {
+                                "off"
+                            }
+                        );
+                        Some(Arc::new(oclaw_memory_core::MemoryManager::new(
+                            store,
+                            embedding_provider,
+                        )))
                     }
                     Err(e) => {
                         warn!("Failed to initialize memory store: {}", e);
@@ -326,7 +421,7 @@ async fn main() -> anyhow::Result<()> {
             };
 
             // 3c. Create tool registry with browser config
-            let mut tool_registry = oclaws_tools_core::tool::ToolRegistry::new();
+            let mut tool_registry = oclaw_tools_core::tool::ToolRegistry::new();
             if let Some(ref browser) = config.browser {
                 tool_registry.configure_browser(
                     browser.cdp_url.as_deref(),
@@ -335,7 +430,7 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
             // Configure workspace tool if workspace path is resolvable
-            if let Ok(ws) = oclaws_workspace_core::files::Workspace::default_location() {
+            if let Ok(ws) = oclaw_workspace_core::files::Workspace::default_location() {
                 tool_registry.configure_workspace(&ws.root().to_string_lossy());
             }
             // Inject MemoryManager into memory_search + memory_get tools
@@ -343,13 +438,22 @@ async fn main() -> anyhow::Result<()> {
                 tool_registry.with_memory_manager(mm.clone());
             }
             let tool_registry = Arc::new(tool_registry);
-            info!("Tool registry initialized with {} tools", tool_registry.list().len());
+            info!(
+                "Tool registry initialized with {} tools",
+                tool_registry.list().len()
+            );
 
-            // 3c. Load plugins and create registrations
+            // 3d. Build in-process skill registry (slash command fast-path).
+            let skill_registry = build_skill_registry().await;
+
+            // 3e. Build tool approval gate from config (if enabled)
+            let approval_gate = build_approval_gate(&config);
+
+            // 3f. Load plugins and create registrations
             let plugin_registrations = {
-                let loader = oclaws_plugin_core::PluginLoader::new();
+                let loader = oclaw_plugin_core::PluginLoader::new();
                 let plugins = loader.discover_plugins();
-                let regs = Arc::new(oclaws_plugin_core::PluginRegistrations::new());
+                let regs = Arc::new(oclaw_plugin_core::PluginRegistrations::new());
                 if !plugins.is_empty() {
                     info!("Discovered {} plugin(s)", plugins.len());
                     for p in &plugins {
@@ -359,14 +463,21 @@ async fn main() -> anyhow::Result<()> {
                 Some(regs)
             };
 
-            // 3d. Start cron service if enabled
-            let cron_service = if config.cron.as_ref().and_then(|c| c.enabled).unwrap_or(false) {
-                let store_path = config.cron.as_ref()
+            // 3g. Start cron service if enabled
+            let cron_service = if config
+                .cron
+                .as_ref()
+                .and_then(|c| c.enabled)
+                .unwrap_or(false)
+            {
+                let store_path = config
+                    .cron
+                    .as_ref()
                     .and_then(|c| c.store.as_ref())
                     .map(std::path::PathBuf::from)
-                    .unwrap_or_else(oclaws_cron_core::CronStore::default_path);
-                let store = oclaws_cron_core::CronStore::new(store_path);
-                let svc = Arc::new(oclaws_cron_core::CronService::new(store));
+                    .unwrap_or_else(oclaw_cron_core::CronStore::default_path);
+                let store = oclaw_cron_core::CronStore::new(store_path);
+                let svc = Arc::new(oclaw_cron_core::CronService::new(store));
                 info!("Cron service initialized");
                 Some(svc)
             } else {
@@ -375,27 +486,34 @@ async fn main() -> anyhow::Result<()> {
 
             // 4. Create channel manager from config
             let channel_manager = if let Some(ref channels) = config.channels {
-                let cm = oclaws_channel_core::ChannelManager::from_config(channels).await;
+                let cm = oclaw_channel_core::ChannelManager::from_config(channels).await;
                 cm.connect_all().await.ok();
                 info!("Channel manager initialized");
                 Some(Arc::new(RwLock::new(cm)))
             } else {
                 None
             };
+            if let Some(ref cm) = channel_manager {
+                oclaw_channel_core::ChannelManager::spawn_reconnect_watcher(cm.clone());
+                info!("Channel reconnect watcher started");
+            }
 
             // Initialize workspace (bootstrap on first run)
             let needs_hatching = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let workspace: Option<Arc<oclaws_workspace_core::files::Workspace>> = {
-                match oclaws_workspace_core::files::Workspace::default_location() {
+            let workspace: Option<Arc<oclaw_workspace_core::files::Workspace>> = {
+                match oclaw_workspace_core::files::Workspace::default_location() {
                     Ok(ws) => {
-                        let runner = oclaws_workspace_core::bootstrap::BootstrapRunner::new(ws.clone());
+                        let runner =
+                            oclaw_workspace_core::bootstrap::BootstrapRunner::new(ws.clone());
                         match runner.ensure_bootstrapped().await {
-                            Ok(oclaws_workspace_core::bootstrap::BootstrapStatus::NeedsHatching) => {
+                            Ok(oclaw_workspace_core::bootstrap::BootstrapStatus::NeedsHatching) => {
                                 needs_hatching.store(true, std::sync::atomic::Ordering::Relaxed);
                                 info!("Workspace bootstrapped — first-run hatching enabled");
-                                println!("Wake up, my friend! Send your first message to begin the hatching ritual.");
+                                println!(
+                                    "Wake up, my friend! Send your first message to begin the hatching ritual."
+                                );
                             }
-                            Ok(oclaws_workspace_core::bootstrap::BootstrapStatus::AlreadyDone) => {
+                            Ok(oclaw_workspace_core::bootstrap::BootstrapStatus::AlreadyDone) => {
                                 info!("Workspace loaded at {}", ws.root().display());
                             }
                             Err(e) => warn!("Workspace bootstrap failed: {}", e),
@@ -424,8 +542,18 @@ async fn main() -> anyhow::Result<()> {
                     let mut backoff_secs = 1u64;
                     loop {
                         info!("Starting Telegram polling loop");
-                        telegram_poll_loop(token.clone(), provider.clone(), cm.clone(), tr.clone(), mm.clone()).await;
-                        error!("Telegram polling loop exited, reconnecting in {}s", backoff_secs);
+                        telegram_poll_loop(
+                            token.clone(),
+                            provider.clone(),
+                            cm.clone(),
+                            tr.clone(),
+                            mm.clone(),
+                        )
+                        .await;
+                        error!(
+                            "Telegram polling loop exited, reconnecting in {}s",
+                            backoff_secs
+                        );
                         tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
                         backoff_secs = (backoff_secs * 2).min(60);
                     }
@@ -448,8 +576,19 @@ async fn main() -> anyhow::Result<()> {
                     let mut backoff_secs = 1u64;
                     loop {
                         info!("Starting Feishu WebSocket connection");
-                        feishu_ws_loop(aid.clone(), asec.clone(), provider.clone(), cm.clone(), tr.clone(), mm.clone()).await;
-                        error!("Feishu WebSocket disconnected, reconnecting in {}s", backoff_secs);
+                        feishu_ws_loop(
+                            aid.clone(),
+                            asec.clone(),
+                            provider.clone(),
+                            cm.clone(),
+                            tr.clone(),
+                            mm.clone(),
+                        )
+                        .await;
+                        error!(
+                            "Feishu WebSocket disconnected, reconnecting in {}s",
+                            backoff_secs
+                        );
                         tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
                         backoff_secs = (backoff_secs * 2).min(60);
                     }
@@ -457,16 +596,18 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // 5. Start config watcher (with actual reload)
-            let watcher = oclaws_config::ConfigWatcher::new(config_path.clone());
+            let watcher = oclaw_config::ConfigWatcher::new(config_path.clone());
             let mut watch_rx = watcher.watch();
             let watch_config_path = config_path.clone();
             tokio::spawn(async move {
                 while watch_rx.changed().await.is_ok() {
                     info!("Config file changed, attempting reload");
-                    let mut mgr = oclaws_config::ConfigManager::new(watch_config_path.clone());
+                    let mut mgr = oclaw_config::ConfigManager::new(watch_config_path.clone());
                     match mgr.load() {
                         Ok(()) => {
-                            info!("Config reloaded successfully (note: some changes require restart)");
+                            info!(
+                                "Config reloaded successfully (note: some changes require restart)"
+                            );
                         }
                         Err(e) => warn!("Failed to reload config: {}", e),
                     }
@@ -474,21 +615,30 @@ async fn main() -> anyhow::Result<()> {
             });
 
             // 6. Parse dm_scope and identity_links from config
-            let dm_scope: oclaws_gateway_core::session_key::DmScope = config.session
+            let dm_scope: oclaw_gateway_core::session_key::DmScope = config
+                .session
                 .as_ref()
                 .and_then(|s| s.dm_scope.as_deref())
                 .map(|s| match s {
-                    "main" => oclaws_gateway_core::session_key::DmScope::Main,
-                    "per-peer" => oclaws_gateway_core::session_key::DmScope::PerPeer,
-                    "per-channel-peer" => oclaws_gateway_core::session_key::DmScope::PerChannelPeer,
-                    "per-account-channel-peer" => oclaws_gateway_core::session_key::DmScope::PerAccountChannelPeer,
-                    _ => oclaws_gateway_core::session_key::DmScope::default(),
+                    "main" => oclaw_gateway_core::session_key::DmScope::Main,
+                    "per-peer" => oclaw_gateway_core::session_key::DmScope::PerPeer,
+                    "per-channel-peer" => oclaw_gateway_core::session_key::DmScope::PerChannelPeer,
+                    "per-account-channel-peer" => {
+                        oclaw_gateway_core::session_key::DmScope::PerAccountChannelPeer
+                    }
+                    _ => oclaw_gateway_core::session_key::DmScope::default(),
                 })
                 .unwrap_or_default();
-            let identity_links: Option<Arc<oclaws_gateway_core::session_key::IdentityLinks>> = config.session
-                .as_ref()
-                .and_then(|s| s.identity_links.as_ref())
-                .map(|links| Arc::new(oclaws_gateway_core::session_key::IdentityLinks { links: links.clone() }));
+            let identity_links: Option<Arc<oclaw_gateway_core::session_key::IdentityLinks>> =
+                config
+                    .session
+                    .as_ref()
+                    .and_then(|s| s.identity_links.as_ref())
+                    .map(|links| {
+                        Arc::new(oclaw_gateway_core::session_key::IdentityLinks {
+                            links: links.clone(),
+                        })
+                    });
             info!("DM scope: {:?}", dm_scope);
 
             // 7. Start servers
@@ -497,13 +647,25 @@ async fn main() -> anyhow::Result<()> {
             if http_only {
                 info!("Starting OCLAWS HTTP server on port {}", port);
                 let server = build_http_server(HttpServerParams {
-                    port, gateway: gateway_config, gateway_server, llm_provider, channel_manager,
-                    tool_registry: tool_registry.clone(), plugin_registrations: plugin_registrations.clone(),
-                    cron_service: cron_service.clone(), memory_manager, workspace: workspace.clone(),
-                    full_config: config.clone(), config_path: config_path.clone(),
+                    port,
+                    gateway: gateway_config,
+                    gateway_server,
+                    llm_provider,
+                    channel_manager,
+                    approval_gate: approval_gate.clone(),
+                    tool_registry: tool_registry.clone(),
+                    skill_registry: skill_registry.clone(),
+                    plugin_registrations: plugin_registrations.clone(),
+                    cron_service: cron_service.clone(),
+                    memory_manager,
+                    workspace: workspace.clone(),
+                    full_config: config.clone(),
+                    config_path: config_path.clone(),
                     needs_hatching: needs_hatching.clone(),
-                    dm_scope, identity_links,
-                }).await?;
+                    dm_scope,
+                    identity_links,
+                })
+                .await?;
                 if let Err(e) = server.start().await {
                     error!("HTTP server error: {}", e);
                     return Err(anyhow::anyhow!(e));
@@ -515,7 +677,11 @@ async fn main() -> anyhow::Result<()> {
                     return Err(anyhow::anyhow!(e));
                 }
             } else {
-                info!("Starting OCLAWS gateway on port {} (WS) + {} (HTTP)", port, port + 1);
+                info!(
+                    "Starting OCLAWS gateway on port {} (WS) + {} (HTTP)",
+                    port,
+                    port + 1
+                );
                 let ws_server = gateway_server.clone();
                 tokio::spawn(async move {
                     if let Err(e) = ws_server.start().await {
@@ -524,13 +690,25 @@ async fn main() -> anyhow::Result<()> {
                 });
 
                 let server = build_http_server(HttpServerParams {
-                    port: port + 1, gateway: gateway_config, gateway_server, llm_provider, channel_manager,
-                    tool_registry: tool_registry.clone(), plugin_registrations: plugin_registrations.clone(),
-                    cron_service: cron_service.clone(), memory_manager, workspace: workspace.clone(),
-                    full_config: config.clone(), config_path: config_path.clone(),
+                    port: port + 1,
+                    gateway: gateway_config,
+                    gateway_server,
+                    llm_provider,
+                    channel_manager,
+                    approval_gate: approval_gate.clone(),
+                    tool_registry: tool_registry.clone(),
+                    skill_registry: skill_registry.clone(),
+                    plugin_registrations: plugin_registrations.clone(),
+                    cron_service: cron_service.clone(),
+                    memory_manager,
+                    workspace: workspace.clone(),
+                    full_config: config.clone(),
+                    config_path: config_path.clone(),
                     needs_hatching: needs_hatching.clone(),
-                    dm_scope, identity_links,
-                }).await?;
+                    dm_scope,
+                    identity_links,
+                })
+                .await?;
                 tokio::spawn(async move {
                     if let Err(e) = server.start().await {
                         error!("HTTP server error: {}", e);
@@ -541,20 +719,20 @@ async fn main() -> anyhow::Result<()> {
                 info!("Shutting down...");
             }
         }
-        
+
         Commands::Config { path, action } => {
             let config_path = path
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
-            
+
             match action {
                 ConfigAction::Init => {
                     info!("Initializing config at {:?}", config_path);
-                    
+
                     let config = Config::default();
                     let content = serde_json::to_string_pretty(&config)?;
                     std::fs::write(&config_path, content)?;
-                    
+
                     info!("Config initialized at {:?}", config_path);
                 }
                 ConfigAction::Show => {
@@ -563,7 +741,7 @@ async fn main() -> anyhow::Result<()> {
                         error!("Failed to load config: {}", e);
                         return Err(anyhow::anyhow!(e));
                     }
-                    
+
                     let content = serde_json::to_string_pretty(manager.config())?;
                     println!("{}", content);
                 }
@@ -573,32 +751,36 @@ async fn main() -> anyhow::Result<()> {
                         error!("Config validation failed: {}", e);
                         return Err(anyhow::anyhow!(e));
                     }
-                    
+
                     info!("Config is valid");
                 }
             }
         }
-        
-        Commands::Wizard { path, skip_existing } => {
+
+        Commands::Wizard {
+            path,
+            skip_existing,
+        } => {
             use wizard::ConfigWizard;
-            use wizard::{success, error};
-            
+            use wizard::{error, success};
+
             let config_path = path
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
-            
+
             if !skip_existing {
                 let mut manager = ConfigManager::new(config_path);
                 if manager.load().is_ok()
-                    && !wizard::prompt_yes_no("Configuration already exists. Overwrite?", false) {
-                        info!("Aborted.");
-                        return Ok(());
-                    }
+                    && !wizard::prompt_yes_no("Configuration already exists. Overwrite?", false)
+                {
+                    info!("Aborted.");
+                    return Ok(());
+                }
             }
-            
+
             match ConfigWizard::run() {
                 Ok(_) => {
-                    success("Setup complete! Run 'oclaws start' to start the server.");
+                    success("Setup complete! Run 'oclaw start' to start the server.");
                 }
                 Err(e) => {
                     error(&format!("Setup failed: {}", e));
@@ -606,10 +788,10 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        
+
         Commands::Channel { action } => {
             use wizard::ChannelWizard;
-            
+
             match action {
                 ChannelAction::Setup => {
                     if let Err(e) = ChannelWizard::run() {
@@ -619,13 +801,13 @@ async fn main() -> anyhow::Result<()> {
                 }
                 ChannelAction::List => {
                     tracing::info!("Channel configuration:");
-                    tracing::info!("Use 'oclaws channel setup' to configure channels.");
+                    tracing::info!("Use 'oclaw channel setup' to configure channels.");
                 }
             }
         }
-        
+
         Commands::Skill { action } => {
-            use oclaws_skills_core::{discovery, gates, installer};
+            use oclaw_skills_core::{discovery, gates, installer};
 
             let workspace = std::env::current_dir().ok();
             match action {
@@ -645,10 +827,17 @@ async fn main() -> anyhow::Result<()> {
                     for s in &skills {
                         let gate = if eligible {
                             let r = gates::check_gates(&s.manifest, &|_| false);
-                            if !r.passed { continue; }
+                            if !r.passed {
+                                continue;
+                            }
                             " [eligible]"
-                        } else { "" };
-                        println!("  {:?}  {}  {}{}", s.tier, s.manifest.name, s.manifest.description, gate);
+                        } else {
+                            ""
+                        };
+                        println!(
+                            "  {:?}  {}  {}{}",
+                            s.tier, s.manifest.name, s.manifest.description, gate
+                        );
                     }
                 }
                 SkillAction::Info { name } => {
@@ -663,8 +852,12 @@ async fn main() -> anyhow::Result<()> {
                                 && let Some(oc) = &meta.openclaw
                             {
                                 if let Some(req) = &oc.requires {
-                                    if !req.bins.is_empty() { println!("Requires bins: {}", req.bins.join(", ")); }
-                                    if !req.env.is_empty() { println!("Requires env: {}", req.env.join(", ")); }
+                                    if !req.bins.is_empty() {
+                                        println!("Requires bins: {}", req.bins.join(", "));
+                                    }
+                                    if !req.env.is_empty() {
+                                        println!("Requires env: {}", req.env.join(", "));
+                                    }
                                 }
                                 if !oc.install.is_empty() {
                                     println!("Install specs: {}", oc.install.len());
@@ -685,9 +878,15 @@ async fn main() -> anyhow::Result<()> {
                         let r = gates::check_gates(&s.manifest, &|_| false);
                         let status = if r.passed { "PASS" } else { "FAIL" };
                         print!("  [{}] {}", status, s.manifest.name);
-                        if !r.missing_bins.is_empty() { print!("  missing bins: {}", r.missing_bins.join(", ")); }
-                        if !r.missing_env.is_empty() { print!("  missing env: {}", r.missing_env.join(", ")); }
-                        if r.os_mismatch { print!("  OS mismatch"); }
+                        if !r.missing_bins.is_empty() {
+                            print!("  missing bins: {}", r.missing_bins.join(", "));
+                        }
+                        if !r.missing_env.is_empty() {
+                            print!("  missing env: {}", r.missing_env.join(", "));
+                        }
+                        if r.os_mismatch {
+                            print!("  OS mismatch");
+                        }
                         println!();
                     }
                 }
@@ -697,7 +896,10 @@ async fn main() -> anyhow::Result<()> {
                         println!("Skill '{}' not found", name);
                         return Ok(());
                     };
-                    let specs = skill.manifest.metadata.as_ref()
+                    let specs = skill
+                        .manifest
+                        .metadata
+                        .as_ref()
                         .and_then(|m| m.openclaw.as_ref())
                         .map(|oc| &oc.install[..])
                         .unwrap_or(&[]);
@@ -706,27 +908,37 @@ async fn main() -> anyhow::Result<()> {
                         return Ok(());
                     }
                     for spec in specs {
-                        println!("Installing {} ({})...", spec.kind, spec.formula.as_deref()
-                            .or(spec.package.as_deref())
-                            .or(spec.module.as_deref())
-                            .or(spec.url.as_deref())
-                            .unwrap_or("?"));
+                        println!(
+                            "Installing {} ({})...",
+                            spec.kind,
+                            spec.formula
+                                .as_deref()
+                                .or(spec.package.as_deref())
+                                .or(spec.module.as_deref())
+                                .or(spec.url.as_deref())
+                                .unwrap_or("?")
+                        );
                         let r = installer::run_install(spec, timeout).await;
                         if r.ok {
                             println!("  OK");
                         } else {
                             println!("  FAILED: {}", r.message);
-                            if !r.stderr.is_empty() { println!("  stderr: {}", r.stderr.lines().take(5).collect::<Vec<_>>().join("\n  ")); }
+                            if !r.stderr.is_empty() {
+                                println!(
+                                    "  stderr: {}",
+                                    r.stderr.lines().take(5).collect::<Vec<_>>().join("\n  ")
+                                );
+                            }
                         }
                     }
                 }
             }
         }
-        
+
         Commands::Doctor { category } => {
+            use oclaw_doctor_core::CheckCategory;
             use wizard::DoctorWizard;
-            use oclaws_doctor_core::CheckCategory;
-            
+
             if let Some(cat) = category {
                 let cat = match cat.as_str() {
                     "system" => CheckCategory::System,
@@ -737,20 +949,22 @@ async fn main() -> anyhow::Result<()> {
                     "security" => CheckCategory::Security,
                     "performance" => CheckCategory::Performance,
                     _ => {
-                        tracing::error!("Invalid category. Use: system, network, config, dependencies, storage, security, or performance");
+                        tracing::error!(
+                            "Invalid category. Use: system, network, config, dependencies, storage, security, or performance"
+                        );
                         return Ok(());
                     }
                 };
-                
+
                 DoctorWizard::check_category(cat);
             } else {
                 DoctorWizard::run();
             }
         }
-        
+
         Commands::Provider { action } => {
             use wizard::ProviderSetup;
-            
+
             match action {
                 ProviderAction::Setup => {
                     if let Err(e) = ProviderSetup::run() {
@@ -766,10 +980,10 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        
+
         Commands::Agent { message, model } => {
             let Some(msg) = message else {
-                println!("Usage: oclaws agent --message \"your prompt\" [--model gpt-4]");
+                println!("Usage: oclaw agent --message \"your prompt\" [--model gpt-4]");
                 return Ok(());
             };
             let client = reqwest::Client::new();
@@ -778,15 +992,21 @@ async fn main() -> anyhow::Result<()> {
                 "messages": [{"role": "user", "content": msg}],
                 "stream": false
             });
-            match client.post(format!("{}/v1/chat/completions", cli.gateway_url))
-                .json(&body).send().await
+            match client
+                .post(format!("{}/v1/chat/completions", cli.gateway_url))
+                .json(&body)
+                .send()
+                .await
             {
                 Ok(resp) if resp.status().is_success() => {
                     let json: serde_json::Value = resp.json().await.unwrap_or_default();
                     if let Some(text) = json["choices"][0]["message"]["content"].as_str() {
                         println!("{}", text);
                     } else {
-                        println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json).unwrap_or_default()
+                        );
                     }
                 }
                 Ok(resp) => {
@@ -817,7 +1037,10 @@ async fn main() -> anyhow::Result<()> {
                                 arr.iter().find(|s| s["key"].as_str() == Some(&key))
                             });
                             match found {
-                                Some(s) => println!("{}", serde_json::to_string_pretty(s).unwrap_or_default()),
+                                Some(s) => println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(s).unwrap_or_default()
+                                ),
                                 None => println!("Session '{}' not found", key),
                             }
                         }
@@ -825,7 +1048,11 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 SessionAction::Delete { key } => {
-                    match client.delete(format!("{}/sessions/{}", base, key)).send().await {
+                    match client
+                        .delete(format!("{}/sessions/{}", base, key))
+                        .send()
+                        .await
+                    {
                         Ok(resp) => println!("{}", resp.text().await.unwrap_or_default()),
                         Err(e) => error!("Failed to delete session: {}", e),
                     }
@@ -833,17 +1060,19 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Models { action } => {
-            match action {
-                ModelAction::List => {
-                    let client = reqwest::Client::new();
-                    match client.get(format!("{}/models", cli.gateway_url)).send().await {
-                        Ok(resp) => println!("{}", resp.text().await.unwrap_or_default()),
-                        Err(e) => error!("Failed to list models: {}", e),
-                    }
+        Commands::Models { action } => match action {
+            ModelAction::List => {
+                let client = reqwest::Client::new();
+                match client
+                    .get(format!("{}/models", cli.gateway_url))
+                    .send()
+                    .await
+                {
+                    Ok(resp) => println!("{}", resp.text().await.unwrap_or_default()),
+                    Err(e) => error!("Failed to list models: {}", e),
                 }
             }
-        }
+        },
 
         Commands::Message { session, text } => {
             let sid = session.unwrap_or_else(|| "default".into());
@@ -853,16 +1082,22 @@ async fn main() -> anyhow::Result<()> {
                 "messages": [{"role": "user", "content": text}],
                 "stream": false
             });
-            match client.post(format!("{}/v1/chat/completions", cli.gateway_url))
+            match client
+                .post(format!("{}/v1/chat/completions", cli.gateway_url))
                 .header("X-Session-Id", &sid)
-                .json(&body).send().await
+                .json(&body)
+                .send()
+                .await
             {
                 Ok(resp) if resp.status().is_success() => {
                     let json: serde_json::Value = resp.json().await.unwrap_or_default();
                     if let Some(content) = json["choices"][0]["message"]["content"].as_str() {
                         println!("{}", content);
                     } else {
-                        println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json).unwrap_or_default()
+                        );
                     }
                 }
                 Ok(resp) => {
@@ -874,44 +1109,126 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        Commands::System { action } => match action {
+            SystemAction::Event { text, mode, json } => {
+                let text = text.trim().to_string();
+                if text.is_empty() {
+                    error!("--text is required");
+                    return Ok(());
+                }
+                let mode = normalize_wake_mode(&mode)?;
+                let result = call_gateway_rpc(
+                    &cli.gateway_url,
+                    "wake",
+                    Some(serde_json::json!({ "mode": mode, "text": text })),
+                )
+                .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("ok");
+                }
+            }
+            SystemAction::Heartbeat { action } => match action {
+                SystemHeartbeatAction::Last { json } => {
+                    let result = call_gateway_rpc(&cli.gateway_url, "last-heartbeat", None).await?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    }
+                }
+                SystemHeartbeatAction::Enable { json } => {
+                    let result = call_gateway_rpc(
+                        &cli.gateway_url,
+                        "set-heartbeats",
+                        Some(serde_json::json!({ "enabled": true })),
+                    )
+                    .await?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    } else {
+                        println!("ok");
+                    }
+                }
+                SystemHeartbeatAction::Disable { json } => {
+                    let result = call_gateway_rpc(
+                        &cli.gateway_url,
+                        "set-heartbeats",
+                        Some(serde_json::json!({ "enabled": false })),
+                    )
+                    .await?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    } else {
+                        println!("ok");
+                    }
+                }
+            },
+            SystemAction::Presence { json } => {
+                let result = call_gateway_rpc(&cli.gateway_url, "system-presence", None).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        },
+
         Commands::Status => {
             let client = reqwest::Client::new();
-            match client.get(format!("{}/health", cli.gateway_url)).send().await {
+            match client
+                .get(format!("{}/health", cli.gateway_url))
+                .send()
+                .await
+            {
                 Ok(resp) => println!("{}", resp.text().await.unwrap_or_default()),
                 Err(_) => println!("Gateway is not running."),
             }
         }
 
         Commands::Version => {
-            println!("oclaws {}", env!("CARGO_PKG_VERSION"));
+            println!("oclaw {}", env!("CARGO_PKG_VERSION"));
             println!("Edition: 2024");
         }
 
         Commands::Tui => {
-            let config_path = cli.config.as_ref().map(std::path::PathBuf::from)
+            let config_path = cli
+                .config
+                .as_ref()
+                .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
             let mut manager = ConfigManager::new(config_path);
             let gateway_url = if manager.load().is_ok() {
                 manager.config_mut().apply_env_overrides();
                 let gw = manager.config().gateway.as_ref();
                 let port = gw.and_then(|g| g.port).unwrap_or(8080) as u16;
-                let bind = gw.and_then(|g| g.bind.clone()).unwrap_or_else(|| "127.0.0.1".to_string());
+                let bind = gw
+                    .and_then(|g| g.bind.clone())
+                    .unwrap_or_else(|| "127.0.0.1".to_string());
                 // 0.0.0.0 is a listen address, not connectable — use loopback instead
-                let connect_host = if bind == "0.0.0.0" || bind == "::" { "127.0.0.1" } else { &bind };
+                let connect_host = if bind == "0.0.0.0" || bind == "::" {
+                    "127.0.0.1"
+                } else {
+                    &bind
+                };
                 format!("http://{}:{}", connect_host, port + 1)
             } else {
                 cli.gateway_url.clone()
             };
             // Read auth token from config for TUI authentication
-            let token = manager.config().gateway.as_ref()
+            let token = manager
+                .config()
+                .gateway
+                .as_ref()
                 .and_then(|g| g.auth.as_ref())
                 .and_then(|a| a.token.clone());
-            let tui_config = oclaws_tui_core::TuiConfig {
+            let tui_config = oclaw_tui_core::TuiConfig {
                 gateway_url,
                 token,
                 ..Default::default()
             };
-            let mut app = oclaws_tui_core::TuiApp::new(tui_config);
+            let mut app = oclaw_tui_core::TuiApp::new(tui_config);
             if let Err(e) = app.run().await {
                 error!("TUI error: {}", e);
                 return Err(anyhow::anyhow!(e));
@@ -919,31 +1236,38 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Daemon { action } => {
-            let manager = oclaws_daemon_core::ServiceManager::new();
+            let manager = oclaw_daemon_core::ServiceManager::new();
             match action {
                 DaemonAction::Start { port } => {
                     let exe = std::env::current_exe().unwrap_or_default();
-                    let config = oclaws_daemon_core::ServiceConfig::new("oclaws-gateway", exe);
-                    let service = oclaws_daemon_core::DaemonService::new(config);
-                    manager.register(service).await.map_err(|e| anyhow::anyhow!("{}", e))?;
-                    manager.start("oclaws-gateway").await.map_err(|e| anyhow::anyhow!("{}", e))?;
+                    let config = oclaw_daemon_core::ServiceConfig::new("oclaw-gateway", exe);
+                    let service = oclaw_daemon_core::DaemonService::new(config);
+                    manager
+                        .register(service)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                    manager
+                        .start("oclaw-gateway")
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
                     info!("Daemon started on port {}", port);
                 }
                 DaemonAction::Stop => {
-                    manager.stop("oclaws-gateway").await.map_err(|e| anyhow::anyhow!("{}", e))?;
+                    manager
+                        .stop("oclaw-gateway")
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
                     info!("Daemon stopped");
                 }
-                DaemonAction::Status => {
-                    match manager.status("oclaws-gateway").await {
-                        Ok((state, pid)) => println!("State: {:?}, PID: {:?}", state, pid),
-                        Err(e) => println!("Not running: {}", e),
-                    }
-                }
+                DaemonAction::Status => match manager.status("oclaw-gateway").await {
+                    Ok((state, pid)) => println!("State: {:?}, PID: {:?}", state, pid),
+                    Err(e) => println!("Not running: {}", e),
+                },
             }
         }
 
         Commands::Plugin { action } => {
-            let loader = oclaws_plugin_core::PluginLoader::new();
+            let loader = oclaw_plugin_core::PluginLoader::new();
             match action {
                 PluginAction::List => {
                     let plugins = loader.discover_plugins();
@@ -951,8 +1275,12 @@ async fn main() -> anyhow::Result<()> {
                         println!("No plugins found.");
                     } else {
                         for p in &plugins {
-                            println!("  {}  v{}  {}", p.manifest.id, p.manifest.version,
-                                p.manifest.description.as_deref().unwrap_or(""));
+                            println!(
+                                "  {}  v{}  {}",
+                                p.manifest.id,
+                                p.manifest.version,
+                                p.manifest.description.as_deref().unwrap_or("")
+                            );
                         }
                     }
                 }
@@ -964,18 +1292,30 @@ async fn main() -> anyhow::Result<()> {
                             println!("ID: {}", m.id);
                             println!("Name: {}", m.name);
                             println!("Version: {}", m.version);
-                            if let Some(d) = &m.description { println!("Description: {}", d); }
-                            if let Some(k) = &m.kind { println!("Kind: {}", k); }
-                            if let Some(path) = &p.file_path { println!("Path: {}", path); }
-                            if !m.capabilities.is_empty() { println!("Capabilities: {}", m.capabilities.join(", ")); }
-                            if !m.tags.is_empty() { println!("Tags: {}", m.tags.join(", ")); }
+                            if let Some(d) = &m.description {
+                                println!("Description: {}", d);
+                            }
+                            if let Some(k) = &m.kind {
+                                println!("Kind: {}", k);
+                            }
+                            if let Some(path) = &p.file_path {
+                                println!("Path: {}", path);
+                            }
+                            if !m.capabilities.is_empty() {
+                                println!("Capabilities: {}", m.capabilities.join(", "));
+                            }
+                            if !m.tags.is_empty() {
+                                println!("Tags: {}", m.tags.join(", "));
+                            }
                         }
                         None => println!("Plugin '{}' not found", id),
                     }
                 }
                 PluginAction::Enable { id } => {
-                    let config_path = cli.config.map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
+                    let config_path =
+                        cli.config.map(std::path::PathBuf::from).unwrap_or_else(|| {
+                            ConfigManager::default_config_path().unwrap_or_default()
+                        });
                     let mut manager = ConfigManager::new(config_path);
                     if manager.load().is_ok() {
                         let cfg = manager.config_mut();
@@ -990,8 +1330,10 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 PluginAction::Disable { id } => {
-                    let config_path = cli.config.map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
+                    let config_path =
+                        cli.config.map(std::path::PathBuf::from).unwrap_or_else(|| {
+                            ConfigManager::default_config_path().unwrap_or_default()
+                        });
                     let mut manager = ConfigManager::new(config_path);
                     if manager.load().is_ok() {
                         let cfg = manager.config_mut();
@@ -1011,7 +1353,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Onboard => {
             use wizard::ConfigWizard;
 
-            let config_path = cli.config
+            let config_path = cli
+                .config
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| ConfigManager::default_config_path().unwrap_or_default());
 
@@ -1021,8 +1364,11 @@ async fn main() -> anyhow::Result<()> {
 
             if has_config {
                 println!("Existing configuration found at {:?}", config_path);
-                if !wizard::prompt_yes_no("Re-run setup? (existing values will be kept as defaults)", false) {
-                    println!("Aborted. Use 'oclaws start' to launch the gateway.");
+                if !wizard::prompt_yes_no(
+                    "Re-run setup? (existing values will be kept as defaults)",
+                    false,
+                ) {
+                    println!("Aborted. Use 'oclaw start' to launch the gateway.");
                     return Ok(());
                 }
             } else {
@@ -1034,7 +1380,7 @@ async fn main() -> anyhow::Result<()> {
                 Ok(_) => {
                     println!();
                     println!("Setup complete!");
-                    println!("Run 'oclaws start' to launch the gateway.");
+                    println!("Run 'oclaw start' to launch the gateway.");
                 }
                 Err(e) => {
                     error!("Onboarding failed: {}", e);
@@ -1045,6 +1391,112 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn normalize_wake_mode(raw: &str) -> anyhow::Result<&'static str> {
+    let mode = raw.trim();
+    if mode.is_empty() || mode.eq_ignore_ascii_case("next-heartbeat") {
+        return Ok("next-heartbeat");
+    }
+    if mode.eq_ignore_ascii_case("now") {
+        return Ok("now");
+    }
+    Err(anyhow::anyhow!("--mode must be now or next-heartbeat"))
+}
+
+fn gateway_ws_url(gateway_url: &str) -> anyhow::Result<String> {
+    let mut url = reqwest::Url::parse(gateway_url)
+        .map_err(|e| anyhow::anyhow!("invalid gateway url: {}", e))?;
+    let next_scheme = match url.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        "ws" => "ws",
+        "wss" => "wss",
+        other => return Err(anyhow::anyhow!("unsupported gateway url scheme: {}", other)),
+    };
+    url.set_scheme(next_scheme)
+        .map_err(|_| anyhow::anyhow!("failed to convert gateway url scheme"))?;
+    url.set_path("/ws");
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
+}
+
+async fn call_gateway_rpc(
+    gateway_url: &str,
+    method: &str,
+    params: Option<serde_json::Value>,
+) -> anyhow::Result<serde_json::Value> {
+    use futures::{SinkExt, StreamExt};
+    use oclaw_protocol::frames::{GatewayFrame, RequestFrame, RequestFrameType};
+    use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+    let ws_url = gateway_ws_url(gateway_url)?;
+    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to connect gateway websocket {}: {}", ws_url, e))?;
+
+    let Some(hello_msg) = ws.next().await else {
+        return Err(anyhow::anyhow!("gateway websocket closed before hello"));
+    };
+    let hello_msg = hello_msg.map_err(|e| anyhow::anyhow!("websocket read failed: {}", e))?;
+    let hello_bytes = match hello_msg {
+        WsMessage::Binary(data) => data.to_vec(),
+        WsMessage::Text(text) => text.as_bytes().to_vec(),
+        other => {
+            return Err(anyhow::anyhow!(
+                "unexpected websocket hello frame: {:?}",
+                other
+            ));
+        }
+    };
+    let hello_frame: GatewayFrame = serde_json::from_slice(&hello_bytes)
+        .map_err(|e| anyhow::anyhow!("invalid websocket hello frame: {}", e))?;
+    if !matches!(hello_frame, GatewayFrame::HelloOk(_)) {
+        return Err(anyhow::anyhow!("gateway websocket handshake failed"));
+    }
+
+    let req_id = uuid::Uuid::new_v4().to_string();
+    let frame = GatewayFrame::Request(RequestFrame {
+        frame_type: RequestFrameType::Req,
+        id: req_id.clone(),
+        method: method.to_string(),
+        params,
+    });
+    let payload = serde_json::to_vec(&frame)?;
+    ws.send(WsMessage::Binary(payload.into()))
+        .await
+        .map_err(|e| anyhow::anyhow!("websocket send failed: {}", e))?;
+
+    while let Some(msg) = ws.next().await {
+        let msg = msg.map_err(|e| anyhow::anyhow!("websocket read failed: {}", e))?;
+        let data = match msg {
+            WsMessage::Binary(data) => data.to_vec(),
+            WsMessage::Text(text) => text.as_bytes().to_vec(),
+            WsMessage::Ping(_) | WsMessage::Pong(_) => continue,
+            WsMessage::Close(_) => break,
+            _ => continue,
+        };
+        let frame: GatewayFrame = serde_json::from_slice(&data)
+            .map_err(|e| anyhow::anyhow!("invalid websocket frame: {}", e))?;
+        if let GatewayFrame::Response(resp) = frame {
+            if resp.id != req_id {
+                continue;
+            }
+            if resp.ok {
+                return Ok(resp.payload.unwrap_or(serde_json::Value::Null));
+            }
+            let msg = resp
+                .error
+                .map(|e| format!("{}: {}", e.code, e.message))
+                .unwrap_or_else(|| "unknown rpc error".to_string());
+            return Err(anyhow::anyhow!(msg));
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "gateway websocket closed before rpc response"
+    ))
 }
 
 fn init_plain_tracing(level: Level, format: &str) {
@@ -1071,16 +1523,14 @@ fn init_plain_tracing(level: Level, format: &str) {
 fn init_otel_tracing(
     level: Level,
     format: &str,
-    otel: &oclaws_config::settings::Otel,
+    otel: &oclaw_config::settings::Otel,
 ) -> opentelemetry_sdk::trace::TracerProvider {
-    use opentelemetry::trace::TracerProvider as _;
     use opentelemetry::KeyValue;
+    use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_otlp::WithExportConfig;
 
-    let endpoint = otel.endpoint.as_deref()
-        .unwrap_or("http://localhost:4317");
-    let service_name = otel.service_name.as_deref()
-        .unwrap_or("oclaws");
+    let endpoint = otel.endpoint.as_deref().unwrap_or("http://localhost:4317");
+    let service_name = otel.service_name.as_deref().unwrap_or("oclaw");
 
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
@@ -1088,16 +1538,17 @@ fn init_otel_tracing(
         .build()
         .expect("Failed to create OTLP exporter");
 
-    let resource = opentelemetry_sdk::Resource::new(vec![
-        KeyValue::new("service.name", service_name.to_string()),
-    ]);
+    let resource = opentelemetry_sdk::Resource::new(vec![KeyValue::new(
+        "service.name",
+        service_name.to_string(),
+    )]);
 
     let provider = opentelemetry_sdk::trace::TracerProvider::builder()
         .with_simple_exporter(exporter)
         .with_resource(resource)
         .build();
 
-    let tracer = provider.tracer("oclaws");
+    let tracer = provider.tracer("oclaw");
     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
     let fmt_layer = if format == "json" {
@@ -1126,18 +1577,21 @@ fn init_otel_tracing(
     provider
 }
 
-fn create_llm_provider(config: &Config) -> Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>> {
+fn create_llm_provider(config: &Config) -> Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>> {
     let models = config.models.as_ref()?;
     let providers = models.providers.as_ref()?;
     let (name, p) = providers.iter().next()?;
-    let provider_type = p.provider.parse::<oclaws_llm_core::providers::ProviderType>().ok()?;
-    let defaults = oclaws_llm_core::providers::ProviderDefaults {
+    let provider_type = p
+        .provider
+        .parse::<oclaw_llm_core::providers::ProviderType>()
+        .ok()?;
+    let defaults = oclaw_llm_core::providers::ProviderDefaults {
         model: p.model.clone(),
         max_tokens: p.max_tokens,
         temperature: p.temperature,
         headers: p.headers.clone(),
     };
-    match oclaws_llm_core::providers::LlmFactory::create(
+    match oclaw_llm_core::providers::LlmFactory::create(
         provider_type,
         p.api_key.as_deref().unwrap_or(""),
         p.base_url.as_deref(),
@@ -1154,36 +1608,139 @@ fn create_llm_provider(config: &Config) -> Option<Arc<dyn oclaws_llm_core::provi
     }
 }
 
+fn json_string_set(
+    obj: &serde_json::Value,
+    key: &str,
+) -> Option<std::collections::HashSet<String>> {
+    obj.get(key).and_then(|v| v.as_array()).map(|arr| {
+        arr.iter()
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_string())
+            .collect()
+    })
+}
+
+fn build_approval_gate(config: &Config) -> Option<Arc<oclaw_tools_core::ApprovalGate>> {
+    let raw = config.approvals.as_ref()?;
+    if raw.get("enabled").and_then(|v| v.as_bool()) == Some(false) {
+        return None;
+    }
+
+    let mut policy = oclaw_tools_core::ApprovalPolicy::default();
+    if let Some(set) = json_string_set(raw, "requireApproval") {
+        policy.require_approval = set;
+    }
+    if let Some(set) = json_string_set(raw, "autoApprove") {
+        policy.auto_approve = set;
+    }
+    if let Some(set) = json_string_set(raw, "deny") {
+        policy.deny = set;
+    }
+
+    let auto_approve_all = raw
+        .get("autoApproveAll")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let gate = if auto_approve_all {
+        oclaw_tools_core::ApprovalGate::new(policy).auto_approve()
+    } else {
+        oclaw_tools_core::ApprovalGate::new(policy)
+    };
+
+    info!(
+        "Approval gate enabled (auto_approve_all={})",
+        auto_approve_all
+    );
+    Some(Arc::new(gate))
+}
+
+async fn build_skill_registry() -> Arc<oclaw_skills_core::SkillRegistry> {
+    use oclaw_skills_core::builtin::*;
+    let registry = Arc::new(oclaw_skills_core::SkillRegistry::new());
+    registry.register(Arc::new(CalculatorSkill::new())).await;
+    registry.register(Arc::new(TextTransformSkill::new())).await;
+    registry.register(Arc::new(JsonFormatterSkill::new())).await;
+    registry.register(Arc::new(DateTimeSkill::new())).await;
+    registry.register(Arc::new(UrlParserSkill::new())).await;
+    registry.register(Arc::new(HashSkill::new())).await;
+    registry.register(Arc::new(Base64Skill::new())).await;
+    registry.register(Arc::new(RandomSkill::new())).await;
+    registry.register(Arc::new(RegexSkill::new())).await;
+    registry.register(Arc::new(FilePathSkill::new())).await;
+    registry
+        .register(Arc::new(UserAgentParserSkill::new()))
+        .await;
+    registry
+        .register(Arc::new(ColorConverterSkill::new()))
+        .await;
+    registry.register(Arc::new(SlugifySkill::new())).await;
+    registry
+        .register(Arc::new(CreditCardValidatorSkill::new()))
+        .await;
+    registry
+        .register(Arc::new(EmailValidatorSkill::new()))
+        .await;
+    registry
+        .register(Arc::new(TimezoneConverterSkill::new()))
+        .await;
+    info!(
+        "Skill registry initialized with {} skills",
+        registry.count().await
+    );
+    registry
+}
+
 struct HttpServerParams {
     port: u16,
     gateway: Gateway,
     gateway_server: Arc<GatewayServer>,
-    llm_provider: Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>,
-    channel_manager: Option<Arc<RwLock<oclaws_channel_core::ChannelManager>>>,
-    tool_registry: Arc<oclaws_tools_core::tool::ToolRegistry>,
-    plugin_registrations: Option<Arc<oclaws_plugin_core::PluginRegistrations>>,
-    cron_service: Option<Arc<oclaws_cron_core::CronService>>,
-    memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>>,
-    workspace: Option<Arc<oclaws_workspace_core::files::Workspace>>,
-    full_config: oclaws_config::Config,
+    llm_provider: Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>>,
+    channel_manager: Option<Arc<RwLock<oclaw_channel_core::ChannelManager>>>,
+    approval_gate: Option<Arc<oclaw_tools_core::ApprovalGate>>,
+    tool_registry: Arc<oclaw_tools_core::tool::ToolRegistry>,
+    skill_registry: Arc<oclaw_skills_core::SkillRegistry>,
+    plugin_registrations: Option<Arc<oclaw_plugin_core::PluginRegistrations>>,
+    cron_service: Option<Arc<oclaw_cron_core::CronService>>,
+    memory_manager: Option<Arc<oclaw_memory_core::MemoryManager>>,
+    workspace: Option<Arc<oclaw_workspace_core::files::Workspace>>,
+    full_config: oclaw_config::Config,
     config_path: std::path::PathBuf,
     needs_hatching: Arc<std::sync::atomic::AtomicBool>,
-    dm_scope: oclaws_gateway_core::session_key::DmScope,
-    identity_links: Option<Arc<oclaws_gateway_core::session_key::IdentityLinks>>,
+    dm_scope: oclaw_gateway_core::session_key::DmScope,
+    identity_links: Option<Arc<oclaw_gateway_core::session_key::IdentityLinks>>,
 }
 
-async fn build_http_server(p: HttpServerParams) -> anyhow::Result<oclaws_gateway_core::HttpServer> {
+async fn build_http_server(p: HttpServerParams) -> anyhow::Result<oclaw_gateway_core::HttpServer> {
     let HttpServerParams {
-        port, gateway, gateway_server, llm_provider, channel_manager,
-        tool_registry, plugin_registrations, cron_service, memory_manager,
-        workspace, full_config, config_path, needs_hatching,
-        dm_scope, identity_links,
+        port,
+        gateway,
+        gateway_server,
+        llm_provider,
+        channel_manager,
+        approval_gate,
+        tool_registry,
+        skill_registry,
+        plugin_registrations,
+        cron_service,
+        memory_manager,
+        workspace,
+        full_config,
+        config_path,
+        needs_hatching,
+        dm_scope,
+        identity_links,
     } = p;
-    use oclaws_gateway_core::create_http_server;
-    let mut server = create_http_server(port, gateway, gateway_server).await
+    use oclaw_gateway_core::create_http_server;
+    let mut server = create_http_server(port, gateway, gateway_server)
+        .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     server = server.with_full_config(full_config, config_path);
     server = server.with_tool_registry(tool_registry);
+    server = server.with_skill_registry(skill_registry);
+    if let Some(gate) = approval_gate {
+        server = server.with_approval_gate(gate);
+    }
     if let Some(regs) = plugin_registrations {
         server = server.with_plugin_registrations(regs);
     }
@@ -1212,10 +1769,10 @@ async fn build_http_server(p: HttpServerParams) -> anyhow::Result<oclaws_gateway
 
 async fn telegram_poll_loop(
     bot_token: String,
-    llm_provider: Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>,
-    channel_manager: Option<Arc<RwLock<oclaws_channel_core::ChannelManager>>>,
-    tool_registry: Arc<oclaws_tools_core::tool::ToolRegistry>,
-    memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>>,
+    llm_provider: Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>>,
+    channel_manager: Option<Arc<RwLock<oclaw_channel_core::ChannelManager>>>,
+    tool_registry: Arc<oclaw_tools_core::tool::ToolRegistry>,
+    memory_manager: Option<Arc<oclaw_memory_core::MemoryManager>>,
 ) {
     let client = reqwest::Client::new();
     let base = format!("https://api.telegram.org/bot{}", bot_token);
@@ -1251,10 +1808,14 @@ async fn telegram_poll_loop(
                 offset = uid + 1;
             }
 
-            let msg = update.get("message").or_else(|| update.get("edited_message"));
+            let msg = update
+                .get("message")
+                .or_else(|| update.get("edited_message"));
             let Some(msg) = msg else { continue };
 
-            let Some(chat_id) = msg.pointer("/chat/id").and_then(|v| v.as_i64()) else { continue };
+            let Some(chat_id) = msg.pointer("/chat/id").and_then(|v| v.as_i64()) else {
+                continue;
+            };
             let msg_id = msg.get("message_id").and_then(|v| v.as_i64());
 
             // Extract user input from various message types
@@ -1270,22 +1831,32 @@ async fn telegram_poll_loop(
             } else if msg.get("video").is_some() {
                 "[用户发送了一个视频]".to_string()
             } else if msg.get("sticker").is_some() {
-                let emoji = msg.pointer("/sticker/emoji").and_then(|v| v.as_str()).unwrap_or("🙂");
+                let emoji = msg
+                    .pointer("/sticker/emoji")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("🙂");
                 format!("[用户发送了贴纸: {}]", emoji)
             } else if msg.get("document").is_some() {
-                let name = msg.pointer("/document/file_name").and_then(|v| v.as_str()).unwrap_or("file");
+                let name = msg
+                    .pointer("/document/file_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("file");
                 format!("[用户发送了文件: {}]", name)
             } else {
                 continue;
             };
 
             // Send typing indicator
-            let _ = client.post(format!("{}/sendChatAction", base))
+            let _ = client
+                .post(format!("{}/sendChatAction", base))
                 .json(&serde_json::json!({"chat_id": chat_id, "action": "typing"}))
-                .send().await;
+                .send()
+                .await;
 
             // Call Agent with tools (session = telegram_{chat_id})
-            let Some(ref provider) = llm_provider else { continue };
+            let Some(ref provider) = llm_provider else {
+                continue;
+            };
             let session_key = format!("telegram_{}", chat_id);
             let reply = match run_agent(provider, &tool_registry, &text, Some(&session_key)).await {
                 Ok(r) => r,
@@ -1314,25 +1885,35 @@ async fn telegram_poll_loop(
                     if let Some(mid) = msg_id {
                         meta.insert("reply_to_message_id".to_string(), mid.to_string());
                     }
-                    let m = oclaws_channel_core::traits::ChannelMessage {
+                    let m = oclaw_channel_core::traits::ChannelMessage {
                         id: uuid::Uuid::new_v4().to_string(),
                         channel: "telegram".to_string(),
                         sender: "bot".to_string(),
                         content: reply.clone(),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default().as_millis() as i64,
+                            .unwrap_or_default()
+                            .as_millis() as i64,
                         metadata: meta,
                     };
                     ch.read().await.send_message(&m).await.is_ok()
-                } else { false }
-            } else { false };
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
 
             if !sent {
                 let mut body = serde_json::json!({"chat_id": chat_id, "text": reply});
-                if let Some(mid) = msg_id { body["reply_to_message_id"] = mid.into(); }
-                let _ = client.post(format!("{}/sendMessage", base))
-                    .json(&body).send().await;
+                if let Some(mid) = msg_id {
+                    body["reply_to_message_id"] = mid.into();
+                }
+                let _ = client
+                    .post(format!("{}/sendMessage", base))
+                    .json(&body)
+                    .send()
+                    .await;
             }
 
             info!("Replied to Telegram chat {}", chat_id);
@@ -1341,14 +1922,13 @@ async fn telegram_poll_loop(
 }
 
 /// Bridge: wraps ToolRegistry as agent-core's ToolExecutor, then runs Agent.
-struct ToolRegistryExecutor(Arc<oclaws_tools_core::tool::ToolRegistry>);
+struct ToolRegistryExecutor(Arc<oclaw_tools_core::tool::ToolRegistry>);
 
 #[async_trait::async_trait]
-impl oclaws_agent_core::agent::ToolExecutor for ToolRegistryExecutor {
+impl oclaw_agent_core::agent::ToolExecutor for ToolRegistryExecutor {
     async fn execute(&self, name: &str, arguments: &str) -> Result<String, String> {
-        let args: serde_json::Value = serde_json::from_str(arguments)
-            .unwrap_or_default();
-        let call = oclaws_tools_core::tool::ToolCall {
+        let args: serde_json::Value = serde_json::from_str(arguments).unwrap_or_default();
+        let call = oclaw_tools_core::tool::ToolCall {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
             arguments: args,
@@ -1360,22 +1940,28 @@ impl oclaws_agent_core::agent::ToolExecutor for ToolRegistryExecutor {
         }
     }
 
-    fn available_tools(&self) -> Vec<oclaws_llm_core::chat::Tool> {
-        self.0.list_for_llm().into_iter().filter_map(|v| {
-            Some(oclaws_llm_core::chat::Tool {
-                type_: "function".into(),
-                function: oclaws_llm_core::chat::ToolFunction {
-                    name: v["name"].as_str()?.to_string(),
-                    description: v["description"].as_str()?.to_string(),
-                    parameters: v["parameters"].clone(),
-                },
+    fn available_tools(&self) -> Vec<oclaw_llm_core::chat::Tool> {
+        self.0
+            .list_for_llm()
+            .into_iter()
+            .filter_map(|v| {
+                Some(oclaw_llm_core::chat::Tool {
+                    type_: "function".into(),
+                    function: oclaw_llm_core::chat::ToolFunction {
+                        name: v["name"].as_str()?.to_string(),
+                        description: v["description"].as_str()?.to_string(),
+                        parameters: v["parameters"].clone(),
+                    },
+                })
             })
-        }).collect()
+            .collect()
     }
 }
 
-fn build_system_prompt(registry: &oclaws_tools_core::tool::ToolRegistry) -> String {
-    let tool_lines: Vec<String> = registry.list_for_llm().iter()
+fn build_system_prompt(registry: &oclaw_tools_core::tool::ToolRegistry) -> String {
+    let tool_lines: Vec<String> = registry
+        .list_for_llm()
+        .iter()
         .filter_map(|v| {
             let name = v["name"].as_str()?;
             let desc = v["description"].as_str().unwrap_or("");
@@ -1395,40 +1981,46 @@ fn build_system_prompt(registry: &oclaws_tools_core::tool::ToolRegistry) -> Stri
          ## Runtime\n\
          Current time: {}\nOS: {} ({})\nWorking directory: {}\n\n\
          Respond in the user's language.",
-        tool_lines.join("\n"), now, os, arch, cwd
+        tool_lines.join("\n"),
+        now,
+        os,
+        arch,
+        cwd
     )
 }
 
 async fn run_agent(
-    provider: &Arc<dyn oclaws_llm_core::providers::LlmProvider>,
-    registry: &Arc<oclaws_tools_core::tool::ToolRegistry>,
+    provider: &Arc<dyn oclaw_llm_core::providers::LlmProvider>,
+    registry: &Arc<oclaw_tools_core::tool::ToolRegistry>,
     input: &str,
     session_id: Option<&str>,
 ) -> Result<String, String> {
-    use oclaws_agent_core::agent::{Agent, AgentConfig};
+    use oclaw_agent_core::agent::{Agent, AgentConfig};
     let model = provider.default_model().to_string();
     let prompt = build_system_prompt(registry);
-    let config = AgentConfig::new("channel-agent", &model, "default")
-        .with_system_prompt(&prompt);
+    let config = AgentConfig::new("channel-agent", &model, "default").with_system_prompt(&prompt);
     let mut agent = Agent::new(config, provider.clone());
     if let Some(sid) = session_id {
         agent = agent.with_transcript(sid);
     }
     agent.initialize().await.map_err(|e| e.to_string())?;
     let executor = ToolRegistryExecutor(registry.clone());
-    agent.run_with_tools(input, &executor).await.map_err(|e| e.to_string())
+    agent
+        .run_with_tools(input, &executor)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 async fn feishu_ws_loop(
     app_id: String,
     app_secret: String,
-    llm_provider: Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>,
-    channel_manager: Option<Arc<RwLock<oclaws_channel_core::ChannelManager>>>,
-    tool_registry: Arc<oclaws_tools_core::tool::ToolRegistry>,
-    memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>>,
+    llm_provider: Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>>,
+    channel_manager: Option<Arc<RwLock<oclaw_channel_core::ChannelManager>>>,
+    tool_registry: Arc<oclaw_tools_core::tool::ToolRegistry>,
+    memory_manager: Option<Arc<oclaw_memory_core::MemoryManager>>,
 ) {
-    use futures::stream::StreamExt;
     use futures::SinkExt;
+    use futures::stream::StreamExt;
     use prost::Message;
     use tokio_tungstenite::tungstenite::Message as WsMsg;
 
@@ -1466,7 +2058,9 @@ async fn feishu_ws_loop(
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(90)).await;
                 let frame = fs_ping_frame();
-                if ping_sender.send(frame.encode_to_vec()).await.is_err() { break; }
+                if ping_sender.send(frame.encode_to_vec()).await.is_err() {
+                    break;
+                }
                 debug!("Feishu ping queued");
             }
         });
@@ -1488,14 +2082,18 @@ async fn feishu_ws_loop(
             }
         });
 
-        let combine_cache: std::collections::HashMap<String, Vec<Option<Vec<u8>>>> = std::collections::HashMap::new();
+        let combine_cache: std::collections::HashMap<String, Vec<Option<Vec<u8>>>> =
+            std::collections::HashMap::new();
         let combine_cache = Arc::new(tokio::sync::Mutex::new(combine_cache));
 
         debug!("Feishu WS receive loop started");
         while let Some(msg) = ws_rx.next().await {
             let msg = match msg {
                 Ok(m) => m,
-                Err(e) => { error!("Feishu WS read error: {}", e); break; }
+                Err(e) => {
+                    error!("Feishu WS read error: {}", e);
+                    break;
+                }
             };
             debug!("Feishu WS recv: {:?}", msg);
 
@@ -1507,13 +2105,19 @@ async fn feishu_ws_loop(
                     continue;
                 }
                 WsMsg::Pong(_) => continue,
-                WsMsg::Close(c) => { info!("Feishu WS closed: {:?}", c); break; }
+                WsMsg::Close(c) => {
+                    info!("Feishu WS closed: {:?}", c);
+                    break;
+                }
                 _ => continue,
             };
 
             let frame = match FsFrame::decode(&data[..]) {
                 Ok(f) => f,
-                Err(e) => { error!("Feishu frame decode error: {}", e); continue; }
+                Err(e) => {
+                    error!("Feishu frame decode error: {}", e);
+                    continue;
+                }
             };
 
             match frame.method {
@@ -1529,13 +2133,22 @@ async fn feishu_ws_loop(
 
                     let payload = if sum > 1 {
                         let mut cache = combine_cache.lock().await;
-                        let entry = cache.entry(msg_id.clone()).or_insert_with(|| vec![None; sum]);
-                        if seq < entry.len() { entry[seq] = Some(frame.payload.clone()); }
+                        let entry = cache
+                            .entry(msg_id.clone())
+                            .or_insert_with(|| vec![None; sum]);
+                        if seq < entry.len() {
+                            entry[seq] = Some(frame.payload.clone());
+                        }
                         if entry.iter().all(|p| p.is_some()) {
-                            let combined: Vec<u8> = entry.iter().flat_map(|p| p.as_ref().unwrap().clone()).collect();
+                            let combined: Vec<u8> = entry
+                                .iter()
+                                .flat_map(|p| p.as_ref().unwrap().clone())
+                                .collect();
                             cache.remove(&msg_id);
                             combined
-                        } else { continue; }
+                        } else {
+                            continue;
+                        }
                     } else {
                         frame.payload.clone()
                     };
@@ -1549,7 +2162,9 @@ async fn feishu_ws_loop(
                         let tr = tool_registry.clone();
                         let mm = memory_manager.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = feishu_handle_event(provider, cm, tr, mm, &payload).await {
+                            if let Err(e) =
+                                feishu_handle_event(provider, cm, tr, mm, &payload).await
+                            {
                                 error!("Feishu event error: {}", e);
                             }
                         });
@@ -1566,31 +2181,46 @@ async fn feishu_ws_loop(
     }
 }
 
-async fn feishu_get_ws_endpoint(client: &reqwest::Client, app_id: &str, app_secret: &str) -> Result<String, String> {
+async fn feishu_get_ws_endpoint(
+    client: &reqwest::Client,
+    app_id: &str,
+    app_secret: &str,
+) -> Result<String, String> {
     let body = serde_json::json!({"AppID": app_id, "AppSecret": app_secret});
-    let resp = client.post("https://open.feishu.cn/callback/ws/endpoint")
+    let resp = client
+        .post("https://open.feishu.cn/callback/ws/endpoint")
         .header("locale", "zh")
         .json(&body)
-        .send().await.map_err(|e| e.to_string())?;
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     let status = resp.status();
     let body = resp.text().await.map_err(|e| e.to_string())?;
     info!("Feishu WS endpoint response ({}): {}", status, body);
     let json: serde_json::Value = serde_json::from_str(&body)
         .map_err(|e| format!("JSON parse error: {} body: {}", e, body))?;
-    json["data"]["URL"].as_str()
+    json["data"]["URL"]
+        .as_str()
         .or_else(|| json["data"]["url"].as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| format!("No WS URL in response: {}", json))
 }
 
 fn fs_header(headers: &[FsHeader], key: &str) -> String {
-    headers.iter().find(|h| h.key == key).map(|h| h.value.clone()).unwrap_or_default()
+    headers
+        .iter()
+        .find(|h| h.key == key)
+        .map(|h| h.value.clone())
+        .unwrap_or_default()
 }
 
 fn fs_ping_frame() -> FsFrame {
     FsFrame {
         method: 0, // control
-        headers: vec![FsHeader { key: "type".into(), value: "ping".into() }],
+        headers: vec![FsHeader {
+            key: "type".into(),
+            value: "ping".into(),
+        }],
         ..Default::default()
     }
 }
@@ -1599,7 +2229,10 @@ fn fs_response_frame(req: &FsFrame, code: i32) -> FsFrame {
     let resp = serde_json::json!({"code": code, "headers": {}, "data": ""});
     let mut headers = req.headers.clone();
     // Add biz_rt header
-    headers.push(FsHeader { key: "biz_rt".into(), value: "0".into() });
+    headers.push(FsHeader {
+        key: "biz_rt".into(),
+        value: "0".into(),
+    });
     FsFrame {
         seq_id: req.seq_id,
         log_id: req.log_id,
@@ -1613,17 +2246,19 @@ fn fs_response_frame(req: &FsFrame, code: i32) -> FsFrame {
 }
 
 async fn feishu_handle_event(
-    llm_provider: Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>,
-    channel_manager: Option<Arc<RwLock<oclaws_channel_core::ChannelManager>>>,
-    tool_registry: Arc<oclaws_tools_core::tool::ToolRegistry>,
-    memory_manager: Option<Arc<oclaws_memory_core::MemoryManager>>,
+    llm_provider: Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>>,
+    channel_manager: Option<Arc<RwLock<oclaw_channel_core::ChannelManager>>>,
+    tool_registry: Arc<oclaw_tools_core::tool::ToolRegistry>,
+    memory_manager: Option<Arc<oclaw_memory_core::MemoryManager>>,
     payload: &[u8],
 ) -> Result<(), String> {
-    let event: serde_json::Value = serde_json::from_slice(payload)
-        .map_err(|e| format!("Event JSON parse error: {}", e))?;
+    let event: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|e| format!("Event JSON parse error: {}", e))?;
 
-    let event_type = event.pointer("/header/event_type")
-        .and_then(|v| v.as_str()).unwrap_or("");
+    let event_type = event
+        .pointer("/header/event_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     debug!("Feishu event payload: {}", event);
     info!("Feishu event: {}", event_type);
@@ -1631,44 +2266,81 @@ async fn feishu_handle_event(
     match event_type {
         // ── IM: 消息 ──
         "im.message.receive_v1" => {
-            feishu_on_message_receive(&event, &llm_provider, &channel_manager, &tool_registry, &memory_manager).await?;
+            feishu_on_message_receive(
+                &event,
+                &llm_provider,
+                &channel_manager,
+                &tool_registry,
+                &memory_manager,
+            )
+            .await?;
         }
         "im.message.message_read_v1" => {
-            let reader = event.pointer("/event/reader/reader_id/open_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let reader = event
+                .pointer("/event/reader/reader_id/open_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu message read by {}", reader);
         }
         "im.message.recalled_v1" => {
-            let mid = event.pointer("/event/message_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let mid = event
+                .pointer("/event/message_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu message recalled: {}", mid);
         }
         "im.message.reaction.created_v1" => {
-            let emoji = event.pointer("/event/reaction_type/emoji_type").and_then(|v| v.as_str()).unwrap_or("?");
-            let mid = event.pointer("/event/message_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let emoji = event
+                .pointer("/event/reaction_type/emoji_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let mid = event
+                .pointer("/event/message_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu reaction added: {} on {}", emoji, mid);
         }
         "im.message.reaction.deleted_v1" => {
-            let emoji = event.pointer("/event/reaction_type/emoji_type").and_then(|v| v.as_str()).unwrap_or("?");
-            let mid = event.pointer("/event/message_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let emoji = event
+                .pointer("/event/reaction_type/emoji_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let mid = event
+                .pointer("/event/message_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu reaction removed: {} on {}", emoji, mid);
         }
 
         // ── IM: 群组 ──
         "im.chat.created_v1" => {
-            let name = event.pointer("/event/name").and_then(|v| v.as_str()).unwrap_or("?");
+            let name = event
+                .pointer("/event/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu chat created: {}", name);
         }
         "im.chat.disbanded_v1" => {
-            let cid = event.pointer("/event/chat_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let cid = event
+                .pointer("/event/chat_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu chat disbanded: {}", cid);
         }
         "im.chat.updated_v1" => {
-            let cid = event.pointer("/event/chat_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let cid = event
+                .pointer("/event/chat_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu chat updated: {}", cid);
         }
 
         // ── IM: 群成员 ──
         "im.chat.member.bot.added_v1" => {
-            let cid = event.pointer("/event/chat_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let cid = event
+                .pointer("/event/chat_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Bot added to Feishu chat: {}", cid);
             // 可选：入群自动打招呼
             if let Some(ref cm) = channel_manager {
@@ -1676,11 +2348,16 @@ async fn feishu_handle_event(
                 if let Some(ch) = mgr.get("feishu").await {
                     let mut meta = std::collections::HashMap::new();
                     meta.insert("chat_id".to_string(), cid.to_string());
-                    let msg = oclaws_channel_core::traits::ChannelMessage {
+                    let msg = oclaw_channel_core::traits::ChannelMessage {
                         id: uuid::Uuid::new_v4().to_string(),
-                        channel: "feishu".into(), sender: "bot".into(),
-                        content: "Hello! I'm your AI assistant. Send me a message to get started.".into(),
-                        timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64,
+                        channel: "feishu".into(),
+                        sender: "bot".into(),
+                        content: "Hello! I'm your AI assistant. Send me a message to get started."
+                            .into(),
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as i64,
                         metadata: meta,
                     };
                     let _ = ch.read().await.send_message(&msg).await;
@@ -1688,19 +2365,31 @@ async fn feishu_handle_event(
             }
         }
         "im.chat.member.bot.deleted_v1" => {
-            let cid = event.pointer("/event/chat_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let cid = event
+                .pointer("/event/chat_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Bot removed from Feishu chat: {}", cid);
         }
         "im.chat.member.user.added_v1" => {
-            let cid = event.pointer("/event/chat_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let cid = event
+                .pointer("/event/chat_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("User added to Feishu chat: {}", cid);
         }
         "im.chat.member.user.deleted_v1" => {
-            let cid = event.pointer("/event/chat_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let cid = event
+                .pointer("/event/chat_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("User removed from Feishu chat: {}", cid);
         }
         "im.chat.member.user.withdrawn_v1" => {
-            let cid = event.pointer("/event/chat_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let cid = event
+                .pointer("/event/chat_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("User join withdrawn in Feishu chat: {}", cid);
         }
 
@@ -1711,19 +2400,31 @@ async fn feishu_handle_event(
 
         // ── 通讯录 ──
         "contact.user.created_v3" => {
-            let name = event.pointer("/event/object/name").and_then(|v| v.as_str()).unwrap_or("?");
+            let name = event
+                .pointer("/event/object/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu contact user created: {}", name);
         }
         "contact.user.deleted_v3" => {
-            let uid = event.pointer("/event/object/open_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let uid = event
+                .pointer("/event/object/open_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu contact user deleted: {}", uid);
         }
         "contact.user.updated_v3" => {
-            let uid = event.pointer("/event/object/open_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let uid = event
+                .pointer("/event/object/open_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu contact user updated: {}", uid);
         }
         "contact.department.created_v3" => {
-            let name = event.pointer("/event/object/name").and_then(|v| v.as_str()).unwrap_or("?");
+            let name = event
+                .pointer("/event/object/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu department created: {}", name);
         }
         "contact.department.deleted_v3" => {
@@ -1743,7 +2444,10 @@ async fn feishu_handle_event(
 
         // ── 应用 ──
         "application.bot.menu_v6" => {
-            let key = event.pointer("/event/event_key").and_then(|v| v.as_str()).unwrap_or("?");
+            let key = event
+                .pointer("/event/event_key")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu bot menu clicked: {}", key);
         }
         "application.feedback.created_v6" | "application.feedback.updated_v6" => {
@@ -1761,15 +2465,23 @@ async fn feishu_handle_event(
             info!("Feishu approval definition updated");
         }
         "approval.instance.status_changed_v4" => {
-            let status = event.pointer("/event/status").and_then(|v| v.as_str()).unwrap_or("?");
+            let status = event
+                .pointer("/event/status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu approval instance status: {}", status);
         }
         "approval.task.updated_v4" => {
-            let status = event.pointer("/event/status").and_then(|v| v.as_str()).unwrap_or("?");
+            let status = event
+                .pointer("/event/status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu approval task: {}", status);
         }
-        "approval.leave.approval_v4" | "approval.trip.approval_v4"
-        | "approval.remedy.approval_v4" | "approval.shift.approval_v4"
+        "approval.leave.approval_v4"
+        | "approval.trip.approval_v4"
+        | "approval.remedy.approval_v4"
+        | "approval.shift.approval_v4"
         | "approval.overtime.approval_v4" => {
             info!("Feishu attendance approval: {}", event_type);
         }
@@ -1807,13 +2519,17 @@ async fn feishu_handle_event(
 
         // ── 视频会议 ──
         "vc.meeting.meeting_started_v1" | "vc.meeting.meeting_ended_v1" => {
-            let topic = event.pointer("/event/meeting/topic").and_then(|v| v.as_str()).unwrap_or("?");
+            let topic = event
+                .pointer("/event/meeting/topic")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             info!("Feishu meeting {}: {}", event_type, topic);
         }
         "vc.meeting.join_meeting_v1" | "vc.meeting.leave_meeting_v1" => {
             info!("Feishu meeting participant: {}", event_type);
         }
-        "vc.meeting.recording_started_v1" | "vc.meeting.recording_ended_v1"
+        "vc.meeting.recording_started_v1"
+        | "vc.meeting.recording_ended_v1"
         | "vc.meeting.recording_ready_v1" => {
             info!("Feishu meeting recording: {}", event_type);
         }
@@ -1849,18 +2565,25 @@ async fn feishu_handle_event(
         }
 
         // ── 招聘 ──
-        "hire.application.stage_changed_v1" | "hire.ehr_import_task.for_internship_offer_imported_v1" => {
+        "hire.application.stage_changed_v1"
+        | "hire.ehr_import_task.for_internship_offer_imported_v1" => {
             info!("Feishu hire: {}", event_type);
         }
 
         // ── 飞书人事 ──
-        "corehr.employment.created_v1" | "corehr.employment.updated_v1"
-        | "corehr.employment.deleted_v1" | "corehr.employment.converted_v1" => {
+        "corehr.employment.created_v1"
+        | "corehr.employment.updated_v1"
+        | "corehr.employment.deleted_v1"
+        | "corehr.employment.converted_v1" => {
             info!("Feishu corehr employment: {}", event_type);
         }
 
         _ => {
-            info!("Unhandled Feishu event: {} payload_size={}", event_type, payload.len());
+            info!(
+                "Unhandled Feishu event: {} payload_size={}",
+                event_type,
+                payload.len()
+            );
         }
     }
 
@@ -1869,24 +2592,37 @@ async fn feishu_handle_event(
 
 async fn feishu_on_message_receive(
     event: &serde_json::Value,
-    llm_provider: &Option<Arc<dyn oclaws_llm_core::providers::LlmProvider>>,
-    channel_manager: &Option<Arc<RwLock<oclaws_channel_core::ChannelManager>>>,
-    tool_registry: &Arc<oclaws_tools_core::tool::ToolRegistry>,
-    memory_manager: &Option<Arc<oclaws_memory_core::MemoryManager>>,
+    llm_provider: &Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>>,
+    channel_manager: &Option<Arc<RwLock<oclaw_channel_core::ChannelManager>>>,
+    tool_registry: &Arc<oclaw_tools_core::tool::ToolRegistry>,
+    memory_manager: &Option<Arc<oclaw_memory_core::MemoryManager>>,
 ) -> Result<(), String> {
-    let chat_id = event.pointer("/event/message/chat_id")
-        .and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let message_id = event.pointer("/event/message/message_id")
-        .and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let msg_type = event.pointer("/event/message/message_type")
-        .and_then(|v| v.as_str()).unwrap_or("text");
+    let chat_id = event
+        .pointer("/event/message/chat_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let message_id = event
+        .pointer("/event/message/message_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let msg_type = event
+        .pointer("/event/message/message_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("text");
 
-    info!("Feishu msg: chat_id={}, message_id={}, type={}", chat_id, message_id, msg_type);
+    info!(
+        "Feishu msg: chat_id={}, message_id={}, type={}",
+        chat_id, message_id, msg_type
+    );
 
     let text = match msg_type {
         "text" => {
-            let content_str = event.pointer("/event/message/content")
-                .and_then(|v| v.as_str()).unwrap_or("{}");
+            let content_str = event
+                .pointer("/event/message/content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("{}");
             let content: serde_json::Value = serde_json::from_str(content_str).unwrap_or_default();
             content["text"].as_str().unwrap_or("").to_string()
         }
@@ -1894,7 +2630,9 @@ async fn feishu_on_message_receive(
     };
 
     info!("Feishu text: {}", text);
-    if text.is_empty() { return Ok(()); }
+    if text.is_empty() {
+        return Ok(());
+    }
 
     let Some(provider) = llm_provider else {
         warn!("Feishu: no LLM provider configured");
@@ -1908,18 +2646,24 @@ async fn feishu_on_message_receive(
             let mut meta = std::collections::HashMap::new();
             meta.insert("chat_id".to_string(), chat_id.clone());
             meta.insert("message_id".to_string(), message_id.clone());
-            let msg = oclaws_channel_core::traits::ChannelMessage {
+            let msg = oclaw_channel_core::traits::ChannelMessage {
                 id: uuid::Uuid::new_v4().to_string(),
-                channel: "feishu".into(), sender: "bot".into(),
+                channel: "feishu".into(),
+                sender: "bot".into(),
                 content: "正在思考...".into(),
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default().as_millis() as i64,
+                    .unwrap_or_default()
+                    .as_millis() as i64,
                 metadata: meta,
             };
             ch.read().await.send_message(&msg).await.ok()
-        } else { None }
-    } else { None };
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     info!("Feishu: calling agent...");
     let session_key = format!("feishu_{}", chat_id);
@@ -1947,13 +2691,15 @@ async fn feishu_on_message_receive(
             } else {
                 meta.insert("message_id".to_string(), message_id.clone());
             }
-            let msg = oclaws_channel_core::traits::ChannelMessage {
+            let msg = oclaw_channel_core::traits::ChannelMessage {
                 id: uuid::Uuid::new_v4().to_string(),
-                channel: "feishu".into(), sender: "bot".into(),
+                channel: "feishu".into(),
+                sender: "bot".into(),
                 content: reply.clone(),
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default().as_millis() as i64,
+                    .unwrap_or_default()
+                    .as_millis() as i64,
                 metadata: meta,
             };
             match ch.read().await.send_message(&msg).await {

@@ -1,15 +1,15 @@
 use crate::error::{GatewayError, GatewayResult};
 use crate::message::{MessageHandler, SessionManager};
 use futures_util::{SinkExt, StreamExt};
-use oclaws_protocol::frames::{GatewayFrame, HelloOk, ServerFeatures, ServerInfo, Policy};
-use oclaws_protocol::snapshot::{AuthMode, Snapshot, StateVersion};
+use oclaw_protocol::frames::{GatewayFrame, HelloOk, Policy, ServerFeatures, ServerInfo};
+use oclaw_protocol::snapshot::{AuthMode, Snapshot, StateVersion};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tokio::task::JoinSet;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
-use tracing::{info, error, debug};
+use tracing::{debug, error, info};
 
 pub struct GatewayServer {
     port: u16,
@@ -38,19 +38,20 @@ impl GatewayServer {
             {
                 use std::os::windows::io::AsRawSocket;
                 unsafe {
-                    unsafe extern "system" { fn SetHandleInformation(h: usize, mask: u32, flags: u32) -> i32; }
+                    unsafe extern "system" {
+                        fn SetHandleInformation(h: usize, mask: u32, flags: u32) -> i32;
+                    }
                     SetHandleInformation(sock.as_raw_socket() as usize, 1, 0);
                 }
             }
-            let addr: SocketAddr = addr.parse().map_err(|e| {
-                GatewayError::ServerError(format!("Invalid address: {}", e))
-            })?;
+            let addr: SocketAddr = addr
+                .parse()
+                .map_err(|e| GatewayError::ServerError(format!("Invalid address: {}", e)))?;
             sock.bind(addr).map_err(|e| {
                 GatewayError::ServerError(format!("Failed to bind to {}: {}", addr, e))
             })?;
-            sock.listen(1024).map_err(|e| {
-                GatewayError::ServerError(format!("Failed to listen: {}", e))
-            })?
+            sock.listen(1024)
+                .map_err(|e| GatewayError::ServerError(format!("Failed to listen: {}", e)))?
         };
 
         info!("Gateway server listening on {}", addr);
@@ -108,8 +109,14 @@ impl GatewayServer {
         // Drain active connections with a 30-second timeout
         if !connections.is_empty() {
             let drain = async { while connections.join_next().await.is_some() {} };
-            if tokio::time::timeout(std::time::Duration::from_secs(30), drain).await.is_err() {
-                info!("Drain timeout reached, aborting {} remaining connections", connections.len());
+            if tokio::time::timeout(std::time::Duration::from_secs(30), drain)
+                .await
+                .is_err()
+            {
+                info!(
+                    "Drain timeout reached, aborting {} remaining connections",
+                    connections.len()
+                );
                 connections.shutdown().await;
             }
         }
@@ -129,14 +136,14 @@ async fn handle_connection(
     session_manager: Arc<RwLock<SessionManager>>,
     shutdown_tx: broadcast::Sender<()>,
 ) -> GatewayResult<()> {
-    let ws_stream = accept_async(stream).await.map_err(|e| {
-        GatewayError::WebSocketError(format!("WebSocket handshake failed: {}", e))
-    })?;
+    let ws_stream = accept_async(stream)
+        .await
+        .map_err(|e| GatewayError::WebSocketError(format!("WebSocket handshake failed: {}", e)))?;
 
     let (mut write, mut read) = ws_stream.split();
-    
+
     let hello = HelloOk {
-        frame_type: oclaws_protocol::frames::HelloOkType::HelloOk,
+        frame_type: oclaw_protocol::frames::HelloOkType::HelloOk,
         protocol: 1,
         server: ServerInfo {
             version: "0.1.0".to_string(),
@@ -182,9 +189,10 @@ async fn handle_connection(
     };
 
     let hello_json = serde_json::to_vec(&hello).map_err(GatewayError::JsonError)?;
-    write.send(Message::Binary(hello_json.into())).await.map_err(|e| {
-        GatewayError::WebSocketError(format!("Failed to send hello: {}", e))
-    })?;
+    write
+        .send(Message::Binary(hello_json.into()))
+        .await
+        .map_err(|e| GatewayError::WebSocketError(format!("Failed to send hello: {}", e)))?;
 
     debug!("Sent hello to {}", addr);
 
@@ -248,28 +256,35 @@ async fn handle_connection(
 
 async fn handle_frame(
     frame: GatewayFrame,
-    write: &mut futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>,
+    write: &mut futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<TcpStream>,
+        Message,
+    >,
     session_manager: &Arc<RwLock<SessionManager>>,
 ) -> GatewayResult<()> {
     match frame {
         GatewayFrame::Request(req) => {
             debug!("Received request: {} {}", req.id, req.method);
-            
+
             let response = match req.method.as_str() {
                 "session.create" => {
-                    let payload: Option<serde_json::Value> = req.params.map(serde_json::from_value).transpose()?;
-                    
+                    let payload: Option<serde_json::Value> =
+                        req.params.map(serde_json::from_value).transpose()?;
+
                     let manager = session_manager.read().await;
-                    let key = payload.as_ref()
+                    let key = payload
+                        .as_ref()
                         .and_then(|v| v.get("key"))
                         .and_then(|k| k.as_str())
                         .unwrap_or("default");
-                    let agent_id = payload.as_ref()
+                    let agent_id = payload
+                        .as_ref()
                         .and_then(|v| v.get("agentId"))
                         .and_then(|a| a.as_str())
                         .unwrap_or("default");
-                    
-                    let session = manager.create_session(key, agent_id)
+
+                    let session = manager
+                        .create_session(key, agent_id)
                         .map_err(GatewayError::ServerError)?;
 
                     MessageHandler::new_response(
@@ -281,9 +296,8 @@ async fn handle_frame(
                 }
                 "session.list" => {
                     let manager = session_manager.read().await;
-                    let sessions = manager.list_sessions()
-                        .map_err(GatewayError::ServerError)?;
-                    
+                    let sessions = manager.list_sessions().map_err(GatewayError::ServerError)?;
+
                     MessageHandler::new_response(
                         &req.id,
                         true,
@@ -291,66 +305,87 @@ async fn handle_frame(
                         None,
                     )
                 }
-                _ => {
-                    MessageHandler::new_response(
-                        &req.id,
-                        false,
-                        None,
-                        Some(oclaws_protocol::frames::ErrorDetails {
-                            code: "METHOD_NOT_FOUND".to_string(),
-                            message: format!("Unknown method: {}", req.method),
-                            details: None,
-                            retryable: Some(false),
-                            retry_after_ms: None,
-                        }),
-                    )
-                }
+                _ => MessageHandler::new_response(
+                    &req.id,
+                    false,
+                    None,
+                    Some(oclaw_protocol::frames::ErrorDetails {
+                        code: "METHOD_NOT_FOUND".to_string(),
+                        message: format!("Unknown method: {}", req.method),
+                        details: None,
+                        retryable: Some(false),
+                        retry_after_ms: None,
+                    }),
+                ),
             };
 
             let response_json = serde_json::to_vec(&response).map_err(GatewayError::JsonError)?;
-            write.send(Message::Binary(response_json.into())).await.map_err(|e| {
-                GatewayError::WebSocketError(format!("Failed to send response: {}", e))
-            })?;
+            write
+                .send(Message::Binary(response_json.into()))
+                .await
+                .map_err(|e| {
+                    GatewayError::WebSocketError(format!("Failed to send response: {}", e))
+                })?;
         }
         GatewayFrame::Hello(hello) => {
-            debug!("Received hello frame, min_protocol: {}, max_protocol: {}", hello.min_protocol, hello.max_protocol);
+            debug!(
+                "Received hello frame, min_protocol: {}, max_protocol: {}",
+                hello.min_protocol, hello.max_protocol
+            );
         }
         GatewayFrame::SessionCreate(sc) => {
-            let agent_id = sc.params.as_ref().map(|p| p.agent_id.as_str()).unwrap_or("default");
-            debug!("Received session.create frame id={}, agent={}", sc.id, agent_id);
+            let agent_id = sc
+                .params
+                .as_ref()
+                .map(|p| p.agent_id.as_str())
+                .unwrap_or("default");
+            debug!(
+                "Received session.create frame id={}, agent={}",
+                sc.id, agent_id
+            );
             let manager = session_manager.read().await;
-            let session = manager.create_session(&sc.id, agent_id)
+            let session = manager
+                .create_session(&sc.id, agent_id)
                 .map_err(GatewayError::ServerError)?;
-            let ok_frame = oclaws_protocol::frames::SessionCreateOk {
-                frame_type: oclaws_protocol::frames::SessionCreateOkType::SessionCreateOk,
+            let ok_frame = oclaw_protocol::frames::SessionCreateOk {
+                frame_type: oclaw_protocol::frames::SessionCreateOkType::SessionCreateOk,
                 id: sc.id,
-                session: oclaws_protocol::frames::SessionInfo {
+                session: oclaw_protocol::frames::SessionInfo {
                     session_id: session.key,
                     agent_id: session.agent_id,
-                    status: oclaws_protocol::frames::SessionStatus::Running,
+                    status: oclaw_protocol::frames::SessionStatus::Running,
                     created_at: session.created_at,
                     last_activity_at: Some(session.updated_at),
                     message_count: Some(session.message_count),
                 },
             };
             let json = serde_json::to_vec(&ok_frame).map_err(GatewayError::JsonError)?;
-            write.send(Message::Binary(json.into())).await.map_err(|e| {
-                GatewayError::WebSocketError(e.to_string())
-            })?;
+            write
+                .send(Message::Binary(json.into()))
+                .await
+                .map_err(|e| GatewayError::WebSocketError(e.to_string()))?;
         }
         GatewayFrame::SessionStart(ss) => {
-            let session_id = ss.params.as_ref().map(|p| p.session_id.clone()).unwrap_or_else(|| ss.id.clone());
-            debug!("Received session.start id={}, session={}", ss.id, session_id);
-            let ok_frame = oclaws_protocol::frames::SessionStartOk {
-                frame_type: oclaws_protocol::frames::SessionStartOkType::SessionStartOk,
+            let session_id = ss
+                .params
+                .as_ref()
+                .map(|p| p.session_id.clone())
+                .unwrap_or_else(|| ss.id.clone());
+            debug!(
+                "Received session.start id={}, session={}",
+                ss.id, session_id
+            );
+            let ok_frame = oclaw_protocol::frames::SessionStartOk {
+                frame_type: oclaw_protocol::frames::SessionStartOkType::SessionStartOk,
                 id: ss.id,
                 session_id,
                 response: String::new(),
             };
             let json = serde_json::to_vec(&ok_frame).map_err(GatewayError::JsonError)?;
-            write.send(Message::Binary(json.into())).await.map_err(|e| {
-                GatewayError::WebSocketError(e.to_string())
-            })?;
+            write
+                .send(Message::Binary(json.into()))
+                .await
+                .map_err(|e| GatewayError::WebSocketError(e.to_string()))?;
         }
         GatewayFrame::Event(event) => {
             debug!("Received event: {}", event.event);
@@ -358,8 +393,10 @@ async fn handle_frame(
         GatewayFrame::Error(err) => {
             error!("Client error: {} - {}", err.error.code, err.error.message);
         }
-        GatewayFrame::HelloOk(_) | GatewayFrame::SessionCreateOk(_) |
-        GatewayFrame::SessionStartOk(_) | GatewayFrame::Response(_) => {
+        GatewayFrame::HelloOk(_)
+        | GatewayFrame::SessionCreateOk(_)
+        | GatewayFrame::SessionStartOk(_)
+        | GatewayFrame::Response(_) => {
             debug!("Ignoring server-originated frame from client");
         }
     }
@@ -370,8 +407,8 @@ async fn handle_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_tungstenite::connect_async;
     use futures_util::StreamExt;
+    use tokio_tungstenite::connect_async;
 
     #[tokio::test]
     async fn test_ws_handshake_hello_ok() {
@@ -396,7 +433,12 @@ mod tests {
         let hello: HelloOk = serde_json::from_slice(&data).unwrap();
 
         assert_eq!(hello.protocol, 1);
-        assert!(hello.features.methods.contains(&"session.create".to_string()));
+        assert!(
+            hello
+                .features
+                .methods
+                .contains(&"session.create".to_string())
+        );
         assert!(hello.features.events.contains(&"tick".to_string()));
         assert_eq!(hello.policy.max_payload, 1024 * 1024);
 

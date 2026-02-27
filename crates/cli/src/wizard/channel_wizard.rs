@@ -1,6 +1,6 @@
 use crate::wizard::{get_config_dir, info, prompt, prompt_yes_no, success};
-use oclaws_config::Config;
-use oclaws_config::settings::*;
+use oclaw_config::Config;
+use oclaw_config::settings::*;
 
 pub struct ChannelWizard;
 
@@ -12,7 +12,10 @@ impl ChannelWizard {
         let mut channels = Channels::default();
 
         if prompt_yes_no("Enable WebChat?", true) {
-            channels.webchat = Some(WebchatChannel { enabled: Some(true), auth: None });
+            channels.webchat = Some(WebchatChannel {
+                enabled: Some(true),
+                auth: None,
+            });
         }
 
         if prompt_yes_no("Enable Discord?", false) {
@@ -70,8 +73,7 @@ impl ChannelWizard {
         let path = dir.join("config.json");
         let content = serde_json::to_string_pretty(config)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        std::fs::write(&path, content)
-            .map_err(|e| format!("Failed to write: {}", e))?;
+        std::fs::write(&path, content).map_err(|e| format!("Failed to write: {}", e))?;
         success(&format!("Channel config saved to {:?}", path));
         Ok(())
     }

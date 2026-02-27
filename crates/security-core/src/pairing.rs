@@ -157,13 +157,11 @@ impl PairingManager {
 
     pub async fn verify_code(&self, code: &str) -> Result<PairingRequest, PairingError> {
         let code_store = self.code_store.read().await;
-        
-        let request_id = code_store
-            .get(code)
-            .ok_or(PairingError::InvalidCode)?;
+
+        let request_id = code_store.get(code).ok_or(PairingError::InvalidCode)?;
 
         let requests = self.requests.read().await;
-        
+
         let request = requests
             .get(request_id)
             .ok_or(PairingError::RequestNotFound)?;
@@ -182,16 +180,19 @@ impl PairingManager {
 
     pub async fn get_pairing(&self, user_a: &str, user_b: &str) -> Option<DMPairing> {
         let pairings = self.pairings.read().await;
-        
+
         pairings
             .values()
-            .find(|p| (p.user_a == user_a && p.user_b == user_b) || (p.user_a == user_b && p.user_b == user_a))
+            .find(|p| {
+                (p.user_a == user_a && p.user_b == user_b)
+                    || (p.user_a == user_b && p.user_b == user_a)
+            })
             .cloned()
     }
 
     pub async fn list_user_pairings(&self, user_id: &str) -> Vec<DMPairing> {
         let pairings = self.pairings.read().await;
-        
+
         pairings
             .values()
             .filter(|p| p.user_a == user_id || p.user_b == user_id)
@@ -201,24 +202,24 @@ impl PairingManager {
 
     pub async fn remove_pairing(&self, pairing_id: &str) -> Result<(), PairingError> {
         let mut pairings = self.pairings.write().await;
-        
+
         if pairings.remove(pairing_id).is_none() {
             return Err(PairingError::PairingNotFound);
         }
-        
+
         Ok(())
     }
 
     pub async fn cleanup_expired(&self) {
         let now = chrono::Utc::now().timestamp();
-        
+
         let mut requests = self.requests.write().await;
         let expired: Vec<String> = requests
             .iter()
             .filter(|(_, r)| r.expires_at < now || r.status == PairingStatus::Expired)
             .map(|(id, _)| id.clone())
             .collect();
-        
+
         for id in expired {
             if let Some(request) = requests.remove(&id) {
                 let mut code_store = self.code_store.write().await;

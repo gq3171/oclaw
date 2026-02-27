@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-skills-core"
+name = "oclaw-skills-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

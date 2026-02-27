@@ -36,9 +36,5 @@ pub trait CronExecutor: Send + Sync {
     ) -> Result<String, String>;
 
     /// Deliver content to a specific channel target.
-    async fn deliver(
-        &self,
-        delivery: &CronDelivery,
-        content: &str,
-    ) -> Result<(), String>;
+    async fn deliver(&self, delivery: &CronDelivery, content: &str) -> Result<(), String>;
 }

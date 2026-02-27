@@ -60,7 +60,8 @@ impl TtsProviderBackend for ElevenLabsTts {
             }
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/text-to-speech/{}", self.base_url, voice_id))
             .header("xi-api-key", &self.api_key)
             .header("Accept", "audio/mpeg")

@@ -73,16 +73,21 @@ impl MattermostChannel {
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> ChannelResult<serde_json::Value> {
-        let server = self.server_url.as_ref()
+        let server = self
+            .server_url
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Server URL not set".to_string()))?;
 
         let url = format!("{}{}", server, path);
 
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".to_string()))?;
 
-        let http_method = reqwest::Method::from_bytes(method.as_bytes())
-            .map_err(|e| ChannelError::ConfigError(format!("Invalid HTTP method '{}': {}", method, e)))?;
+        let http_method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| {
+            ChannelError::ConfigError(format!("Invalid HTTP method '{}': {}", method, e))
+        })?;
         let mut request = client.request(http_method, &url);
 
         if let Some(token) = &self.access_token {
@@ -93,18 +98,26 @@ impl MattermostChannel {
             request = request.json(body);
         }
 
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?;
 
         if response.status().as_u16() >= 400 {
-            let mm_resp: MattermostResponse = response.json().await
+            let mm_resp: MattermostResponse = response
+                .json()
+                .await
                 .map_err(|e| ChannelError::MessageError(e.to_string()))?;
             return Err(ChannelError::MessageError(
-                mm_resp.message.unwrap_or_else(|| "Unknown error".to_string())
+                mm_resp
+                    .message
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        let mm_resp: MattermostResponse = response.json().await
+        let mm_resp: MattermostResponse = response
+            .json()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
         Ok(serde_json::json!({
@@ -136,7 +149,9 @@ impl Channel for MattermostChannel {
         self.status = ChannelStatus::Connecting;
         self.client = Some(Client::new());
 
-        let _: serde_json::Value = self.send_api_request("GET", "/api/v4/users/me", None).await?;
+        let _: serde_json::Value = self
+            .send_api_request("GET", "/api/v4/users/me", None)
+            .await?;
 
         tracing::info!("Mattermost channel connected");
 
@@ -160,7 +175,9 @@ impl Channel for MattermostChannel {
             return Err(ChannelError::ConnectionError("Not connected".to_string()));
         }
 
-        let channel_id = message.metadata.get("channel_id")
+        let channel_id = message
+            .metadata
+            .get("channel_id")
             .or(self.channel_id.as_ref())
             .cloned()
             .ok_or_else(|| ChannelError::MessageError("Channel ID not specified".to_string()))?;
@@ -172,13 +189,19 @@ impl Channel for MattermostChannel {
             file_ids: None,
         };
 
-        let response: serde_json::Value = self.send_api_request(
-            "POST",
-            "/api/v4/posts",
-            Some(&serde_json::to_value(&post).map_err(|e| ChannelError::MessageError(e.to_string()))?),
-        ).await?;
+        let response: serde_json::Value = self
+            .send_api_request(
+                "POST",
+                "/api/v4/posts",
+                Some(
+                    &serde_json::to_value(&post)
+                        .map_err(|e| ChannelError::MessageError(e.to_string()))?,
+                ),
+            )
+            .await?;
 
-        let post_id = response.get("id")
+        let post_id = response
+            .get("id")
             .and_then(|i| i.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| ChannelError::MessageError("No post ID returned".to_string()))?;
@@ -191,19 +214,24 @@ impl Channel for MattermostChannel {
             return Err(ChannelError::ConnectionError("Not connected".to_string()));
         }
 
-        let response: serde_json::Value = self.send_api_request("GET", "/api/v4/users/me", None).await?;
+        let response: serde_json::Value = self
+            .send_api_request("GET", "/api/v4/users/me", None)
+            .await?;
 
         let account = ChannelAccount {
-            id: response.get("id")
+            id: response
+                .get("id")
                 .and_then(|i| i.as_str())
                 .unwrap_or("unknown")
                 .to_string(),
-            name: response.get("username")
+            name: response
+                .get("username")
                 .and_then(|n| n.as_str())
                 .unwrap_or("unknown")
                 .to_string(),
             channel: "mattermost".to_string(),
-            avatar: response.get("last_picture_update")
+            avatar: response
+                .get("last_picture_update")
                 .and_then(|p| p.as_i64())
                 .map(|_| "avatar".to_string()),
             status: Some("active".to_string()),
@@ -214,11 +242,11 @@ impl Channel for MattermostChannel {
 
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Received Mattermost event: {:?}", event);
-        
+
         if event.event_type.as_str() == "posted" {
             tracing::info!("Received Mattermost message: {:?}", event.payload);
         }
-        
+
         Ok(())
     }
 
@@ -231,7 +259,8 @@ impl Channel for MattermostChannel {
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // Mattermost outgoing webhook: /text, /channel_id
         let text = payload.get("text").and_then(|v| v.as_str())?;
-        let chat_id = payload.get("channel_id")
+        let chat_id = payload
+            .get("channel_id")
             .and_then(|v| v.as_str())
             .unwrap_or("default");
         Some(WebhookMessage {
@@ -262,11 +291,16 @@ struct MattermostSender {
 }
 
 impl MessageSender for MattermostSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>>
+    {
         let channel = self.channel.clone();
         let content = content.to_string();
         let metadata = metadata.clone();
-        
+
         Box::pin(async move {
             let message = ChannelMessage {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -276,7 +310,7 @@ impl MessageSender for MattermostSender {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 metadata,
             };
-            
+
             channel.read().await.send_message(&message).await
         })
     }

@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -51,7 +51,10 @@ impl ChannelAccessManager {
     /// The policy is looked up by channel, but the allowlist/blocklist
     /// within that policy contain sender (user) IDs.
     pub fn check_access(&self, channel_id: &str, sender_id: &str) -> bool {
-        let policy = self.policies.get(channel_id).unwrap_or(&self.default_policy);
+        let policy = self
+            .policies
+            .get(channel_id)
+            .unwrap_or(&self.default_policy);
         policy.is_allowed(sender_id)
     }
 
@@ -118,10 +121,13 @@ mod tests {
     #[test]
     fn test_manager_per_channel_policy() {
         let mut mgr = ChannelAccessManager::new();
-        mgr.set_policy("ch1", ChannelPolicy {
-            blocklist: Some(HashSet::from(["bad_user".to_string()])),
-            ..Default::default()
-        });
+        mgr.set_policy(
+            "ch1",
+            ChannelPolicy {
+                blocklist: Some(HashSet::from(["bad_user".to_string()])),
+                ..Default::default()
+            },
+        );
         assert!(!mgr.check_access("ch1", "bad_user"));
         assert!(mgr.check_access("ch1", "good_user"));
         // Channel without a specific policy falls back to default (allow all)
@@ -131,10 +137,13 @@ mod tests {
     #[test]
     fn test_manager_model_override() {
         let mut mgr = ChannelAccessManager::new();
-        mgr.set_policy("ch1", ChannelPolicy {
-            model_override: Some("gpt-4".to_string()),
-            ..Default::default()
-        });
+        mgr.set_policy(
+            "ch1",
+            ChannelPolicy {
+                model_override: Some("gpt-4".to_string()),
+                ..Default::default()
+            },
+        );
         assert_eq!(mgr.get_model_override("ch1"), Some("gpt-4"));
         assert_eq!(mgr.get_model_override("ch2"), None);
     }
@@ -142,10 +151,13 @@ mod tests {
     #[test]
     fn test_manager_requires_mention() {
         let mut mgr = ChannelAccessManager::new();
-        mgr.set_policy("ch1", ChannelPolicy {
-            require_mention: true,
-            ..Default::default()
-        });
+        mgr.set_policy(
+            "ch1",
+            ChannelPolicy {
+                require_mention: true,
+                ..Default::default()
+            },
+        );
         assert!(mgr.requires_mention("ch1"));
         assert!(!mgr.requires_mention("ch2"));
     }

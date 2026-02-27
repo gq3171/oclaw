@@ -11,8 +11,7 @@ pub async fn fetch_link_content(
     url: &str,
     timeout_secs: u64,
 ) -> Result<FetchedContent, LinkFetchError> {
-    let parsed = url::Url::parse(url)
-        .map_err(|e| LinkFetchError::InvalidUrl(e.to_string()))?;
+    let parsed = url::Url::parse(url).map_err(|e| LinkFetchError::InvalidUrl(e.to_string()))?;
 
     // SSRF check
     if let Some(host) = parsed.host_str()
@@ -48,13 +47,20 @@ pub async fn fetch_link_content(
         return Err(LinkFetchError::UnsupportedContent(content_type));
     }
 
-    let body = resp.text().await
+    let body = resp
+        .text()
+        .await
         .map_err(|e| LinkFetchError::Request(e.to_string()))?;
 
     let title = extract_title(&body);
     let text = html_to_plain(&body);
 
-    Ok(FetchedContent { url: url.to_string(), title, text, content_type })
+    Ok(FetchedContent {
+        url: url.to_string(),
+        title,
+        text,
+        content_type,
+    })
 }
 
 #[derive(Debug, Clone)]

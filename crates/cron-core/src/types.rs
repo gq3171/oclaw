@@ -3,9 +3,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CronScheduleKind {
-    At { at: String },
-    Every { every_ms: u64, anchor_ms: Option<u64> },
-    Cron { expr: String, tz: Option<String> },
+    At {
+        at: String,
+    },
+    Every {
+        every_ms: u64,
+        anchor_ms: Option<u64>,
+    },
+    Cron {
+        expr: String,
+        tz: Option<String>,
+    },
 }
 
 /// Delivery target for cron job output.
@@ -20,7 +28,9 @@ pub struct CronDelivery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CronPayloadKind {
-    SystemEvent { text: String },
+    SystemEvent {
+        text: String,
+    },
     AgentTurn {
         message: String,
         model: Option<String>,

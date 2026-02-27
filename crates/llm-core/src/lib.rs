@@ -1,15 +1,15 @@
-pub mod providers;
-pub mod error;
+pub mod catalog;
 pub mod chat;
 pub mod embedding;
-pub mod tokenizer;
-pub mod catalog;
+pub mod error;
 pub mod health;
+pub mod providers;
+pub mod tokenizer;
 
-pub use error::*;
+pub use catalog::{ModelCatalog, ModelInfo};
 pub use chat::*;
 pub use embedding::*;
+pub use error::*;
+pub use health::ProviderHealth;
 pub use providers::*;
 pub use tokenizer::*;
-pub use catalog::{ModelCatalog, ModelInfo};
-pub use health::ProviderHealth;

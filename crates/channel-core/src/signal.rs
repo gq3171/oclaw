@@ -42,7 +42,11 @@ impl SignalChannel {
         }
     }
 
-    pub fn with_config(phone_number: &str, signal_cli_path: Option<&str>, api_url: Option<&str>) -> Self {
+    pub fn with_config(
+        phone_number: &str,
+        signal_cli_path: Option<&str>,
+        api_url: Option<&str>,
+    ) -> Self {
         Self {
             phone_number: Some(phone_number.to_string()),
             signal_cli_path: signal_cli_path.map(|s| s.to_string()),
@@ -59,10 +63,14 @@ impl SignalChannel {
     }
 
     async fn send_via_api(&self, message: &str, recipient: &str) -> ChannelResult<String> {
-        let api_url = self.api_url.as_ref()
+        let api_url = self
+            .api_url
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("API URL not configured".to_string()))?;
 
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".to_string()))?;
 
         let body = SignalSendMessage {
@@ -77,7 +85,9 @@ impl SignalChannel {
             .await
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?;
 
-        let signal_resp: SignalResponse = response.json().await
+        let signal_resp: SignalResponse = response
+            .json()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
         if let Some(err) = signal_resp.error {
@@ -110,7 +120,10 @@ impl Channel for SignalChannel {
         self.status = ChannelStatus::Connecting;
         self.client = Some(Client::new());
 
-        tracing::info!("Signal channel connecting with phone: {:?}", self.phone_number);
+        tracing::info!(
+            "Signal channel connecting with phone: {:?}",
+            self.phone_number
+        );
 
         self.status = ChannelStatus::Connected;
         Ok(())
@@ -132,7 +145,9 @@ impl Channel for SignalChannel {
             return Err(ChannelError::ConnectionError("Not connected".to_string()));
         }
 
-        let recipient = message.metadata.get("recipient")
+        let recipient = message
+            .metadata
+            .get("recipient")
             .or(self.recipient.as_ref())
             .cloned()
             .ok_or_else(|| ChannelError::MessageError("Recipient not specified".to_string()))?;
@@ -140,7 +155,9 @@ impl Channel for SignalChannel {
         if let Some(_api_url) = &self.api_url {
             self.send_via_api(&message.content, &recipient).await
         } else {
-            Err(ChannelError::ConfigError("Signal CLI or API URL required".to_string()))
+            Err(ChannelError::ConfigError(
+                "Signal CLI or API URL required".to_string(),
+            ))
         }
     }
 
@@ -173,10 +190,12 @@ impl Channel for SignalChannel {
 
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // Signal CLI REST API: /envelope/dataMessage/message
-        let text = payload.pointer("/envelope/dataMessage/message")
+        let text = payload
+            .pointer("/envelope/dataMessage/message")
             .or_else(|| payload.pointer("/dataMessage/body"))
             .and_then(|v| v.as_str())?;
-        let source = payload.pointer("/envelope/source")
+        let source = payload
+            .pointer("/envelope/source")
             .or_else(|| payload.get("source"))
             .and_then(|v| v.as_str())
             .unwrap_or("default");
@@ -209,11 +228,16 @@ struct SignalSender {
 }
 
 impl MessageSender for SignalSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>>
+    {
         let channel = self.channel.clone();
         let content = content.to_string();
         let metadata = metadata.clone();
-        
+
         Box::pin(async move {
             let message = ChannelMessage {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -223,7 +247,7 @@ impl MessageSender for SignalSender {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 metadata,
             };
-            
+
             channel.read().await.send_message(&message).await
         })
     }

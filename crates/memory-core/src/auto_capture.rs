@@ -93,16 +93,31 @@ mod tests {
 
     #[test]
     fn should_capture_disabled() {
-        let cfg = AutoCaptureConfig { enabled: false, ..Default::default() };
+        let cfg = AutoCaptureConfig {
+            enabled: false,
+            ..Default::default()
+        };
         assert!(!should_capture(100, &cfg));
     }
 
     #[test]
     fn filter_respects_config() {
         let items = vec![
-            CapturedMemory { content: "fact1".into(), category: CaptureCategory::Fact, confidence: 0.9 },
-            CapturedMemory { content: "pref1".into(), category: CaptureCategory::Preference, confidence: 0.8 },
-            CapturedMemory { content: "dec1".into(), category: CaptureCategory::Decision, confidence: 0.7 },
+            CapturedMemory {
+                content: "fact1".into(),
+                category: CaptureCategory::Fact,
+                confidence: 0.9,
+            },
+            CapturedMemory {
+                content: "pref1".into(),
+                category: CaptureCategory::Preference,
+                confidence: 0.8,
+            },
+            CapturedMemory {
+                content: "dec1".into(),
+                category: CaptureCategory::Decision,
+                confidence: 0.7,
+            },
         ];
         let cfg = AutoCaptureConfig {
             capture_facts: true,
@@ -125,7 +140,10 @@ mod tests {
                 confidence: 0.9,
             })
             .collect();
-        let cfg = AutoCaptureConfig { max_captures_per_session: 3, ..Default::default() };
+        let cfg = AutoCaptureConfig {
+            max_captures_per_session: 3,
+            ..Default::default()
+        };
         let filtered = filter_by_config(&items, &cfg);
         assert_eq!(filtered.len(), 3);
     }

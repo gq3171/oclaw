@@ -77,7 +77,13 @@ impl PageState {
         });
     }
 
-    pub fn push_request(&mut self, method: &str, url: &str, status: Option<u16>, resource_type: Option<&str>) {
+    pub fn push_request(
+        &mut self,
+        method: &str,
+        url: &str,
+        status: Option<u16>,
+        resource_type: Option<&str>,
+    ) {
         if self.requests.len() >= MAX_REQUESTS {
             self.requests.pop_front();
         }

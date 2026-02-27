@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-pairing"
+name = "oclaw-pairing"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

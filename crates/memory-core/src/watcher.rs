@@ -48,9 +48,7 @@ impl MemoryWatcher {
             );
 
             loop {
-                tokio::time::sleep(
-                    std::time::Duration::from_secs(self.poll_interval_secs)
-                ).await;
+                tokio::time::sleep(std::time::Duration::from_secs(self.poll_interval_secs)).await;
 
                 let mut current = std::collections::HashMap::new();
                 for dir in &self.directories {
@@ -98,10 +96,7 @@ fn collect_files(dir: &Path) -> std::io::Result<Vec<(PathBuf, u64)>> {
     Ok(results)
 }
 
-fn collect_files_recursive(
-    dir: &Path,
-    results: &mut Vec<(PathBuf, u64)>,
-) -> std::io::Result<()> {
+fn collect_files_recursive(dir: &Path, results: &mut Vec<(PathBuf, u64)>) -> std::io::Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
@@ -115,9 +110,7 @@ fn collect_files_recursive(
         let path = entry.path();
         if path.is_dir() {
             // Skip hidden dirs and common non-source dirs
-            let name = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if name.starts_with('.') || name == "node_modules" || name == "target" {
                 continue;
             }
@@ -125,7 +118,8 @@ fn collect_files_recursive(
         } else if path.is_file()
             && let Ok(meta) = path.metadata()
         {
-            let mtime = meta.modified()
+            let mtime = meta
+                .modified()
                 .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs())

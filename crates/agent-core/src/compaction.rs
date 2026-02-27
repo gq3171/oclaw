@@ -1,7 +1,7 @@
 use anyhow::Result;
-use oclaws_llm_core::chat::{ChatMessage, ChatRequest, MessageRole};
-use oclaws_llm_core::providers::LlmProvider;
-use oclaws_llm_core::tokenizer::TokenCounter;
+use oclaw_llm_core::chat::{ChatMessage, ChatRequest, MessageRole};
+use oclaw_llm_core::providers::LlmProvider;
+use oclaw_llm_core::tokenizer::TokenCounter;
 
 pub struct RetryConfig {
     pub attempts: usize,
@@ -12,7 +12,12 @@ pub struct RetryConfig {
 
 impl Default for RetryConfig {
     fn default() -> Self {
-        Self { attempts: 3, min_delay_ms: 500, max_delay_ms: 5000, jitter: 0.2 }
+        Self {
+            attempts: 3,
+            min_delay_ms: 500,
+            max_delay_ms: 5000,
+            jitter: 0.2,
+        }
     }
 }
 
@@ -67,11 +72,17 @@ async fn generate_summary(
     for attempt in 0..retry.attempts {
         if attempt > 0 {
             tokio::time::sleep(retry_delay(attempt - 1, retry)).await;
-            tracing::info!("Compaction retry attempt {}/{}", attempt + 1, retry.attempts);
+            tracing::info!(
+                "Compaction retry attempt {}/{}",
+                attempt + 1,
+                retry.attempts
+            );
         }
         match provider.chat(request.clone()).await {
             Ok(resp) => {
-                return Ok(resp.choices.first()
+                return Ok(resp
+                    .choices
+                    .first()
                     .map(|c| c.message.content.clone())
                     .unwrap_or_default());
             }
@@ -81,7 +92,11 @@ async fn generate_summary(
             }
         }
     }
-    Err(anyhow::anyhow!("Compaction failed after {} attempts: {}", retry.attempts, last_err))
+    Err(anyhow::anyhow!(
+        "Compaction failed after {} attempts: {}",
+        retry.attempts,
+        last_err
+    ))
 }
 
 pub async fn compact_history(
@@ -91,7 +106,8 @@ pub async fn compact_history(
     config: &CompactionConfig,
 ) -> Result<CompactionResult> {
     // Preserve the system prompt so it survives compaction
-    let system_prompt = messages.iter()
+    let system_prompt = messages
+        .iter()
         .find(|m| m.role == MessageRole::System)
         .cloned();
 
@@ -107,7 +123,9 @@ pub async fn compact_history(
         recent_tokens += t;
     }
     // Never summarize away the system prompt (index 0)
-    if split_idx <= 1 { split_idx = 1; }
+    if split_idx <= 1 {
+        split_idx = 1;
+    }
 
     let old = &messages[..split_idx];
     let kept = messages[split_idx..].to_vec();
@@ -116,7 +134,9 @@ pub async fn compact_history(
     summary_messages.push(ChatMessage {
         role: MessageRole::User,
         content: COMPACTION_PROMPT.to_string(),
-        name: None, tool_calls: None, tool_call_id: None,
+        name: None,
+        tool_calls: None,
+        tool_call_id: None,
     });
 
     let request = ChatRequest {
@@ -125,7 +145,11 @@ pub async fn compact_history(
         temperature: Some(0.0),
         top_p: None,
         max_tokens: Some(2048),
-        stop: None, tools: None, tool_choice: None, stream: None, response_format: None,
+        stop: None,
+        tools: None,
+        tool_choice: None,
+        stream: None,
+        response_format: None,
     };
 
     let summary_text = generate_summary(provider, request, &config.retry).await?;
@@ -134,7 +158,9 @@ pub async fn compact_history(
     let summary_msg = ChatMessage {
         role: MessageRole::System,
         content: format!("[Conversation summary]\n{}", summary_text),
-        name: None, tool_calls: None, tool_call_id: None,
+        name: None,
+        tool_calls: None,
+        tool_call_id: None,
     };
 
     if let Some(sys) = system_prompt {

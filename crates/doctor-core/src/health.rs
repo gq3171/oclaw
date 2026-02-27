@@ -144,12 +144,16 @@ pub struct SystemHealthCheck {
 
 impl SystemHealthCheck {
     pub fn new() -> Self {
-        Self { started: std::time::Instant::now() }
+        Self {
+            started: std::time::Instant::now(),
+        }
     }
 }
 
 impl Default for SystemHealthCheck {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HealthCheck for SystemHealthCheck {
@@ -168,7 +172,10 @@ pub struct FlagHealthCheck {
 
 impl FlagHealthCheck {
     pub fn new(name: &str, flag: Arc<AtomicBool>) -> Self {
-        Self { name: name.to_string(), flag }
+        Self {
+            name: name.to_string(),
+            flag,
+        }
     }
 }
 
@@ -315,8 +322,7 @@ mod tests {
     #[test]
     fn test_callback_health_check() {
         let check = CallbackHealthCheck::new(Box::new(|| {
-            HealthComponent::new("custom", HealthStatus::Degraded)
-                .with_message("high latency")
+            HealthComponent::new("custom", HealthStatus::Degraded).with_message("high latency")
         }));
         let comp = check.check();
         assert_eq!(comp.name, "custom");

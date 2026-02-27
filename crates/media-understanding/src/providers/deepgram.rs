@@ -4,9 +4,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use tracing::debug;
 
-use super::{
-    AudioRequest, ImageRequest, MediaProvider, MediaProviderError, VideoRequest,
-};
+use super::{AudioRequest, ImageRequest, MediaProvider, MediaProviderError, VideoRequest};
 use crate::types::MediaCapability;
 
 pub struct DeepgramMediaProvider {
@@ -40,6 +38,13 @@ impl MediaProvider for DeepgramMediaProvider {
         vec![MediaCapability::Audio]
     }
 
+    fn model_for(&self, capability: MediaCapability) -> Option<String> {
+        match capability {
+            MediaCapability::Audio => Some("nova-2".to_string()),
+            MediaCapability::Image | MediaCapability::Video => None,
+        }
+    }
+
     async fn describe_image(&self, _req: &ImageRequest) -> Result<String, MediaProviderError> {
         Err(MediaProviderError::Unsupported(
             "Deepgram does not support image description".to_string(),
@@ -49,8 +54,12 @@ impl MediaProvider for DeepgramMediaProvider {
     async fn transcribe_audio(&self, req: &AudioRequest) -> Result<String, MediaProviderError> {
         debug!(provider = "deepgram", "Sending transcription request");
 
-        let resp = self.client
-            .post(format!("{}/listen?model=nova-2&smart_format=true", self.base_url))
+        let resp = self
+            .client
+            .post(format!(
+                "{}/listen?model=nova-2&smart_format=true",
+                self.base_url
+            ))
             .header("Authorization", format!("Token {}", self.api_key))
             .header("Content-Type", &req.mime_type)
             .body(req.audio_data.clone())

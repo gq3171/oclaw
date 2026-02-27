@@ -2,9 +2,12 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Serialize;
 
-use crate::chat::{ChatRequest, ChatCompletion, MessageRole};
+use crate::chat::{ChatCompletion, ChatRequest, MessageRole};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::{LlmError, LlmResult};
+use crate::providers::media_markdown::{
+    ParsedMarkdownSegment, markdown_contains_data_url_image, parse_markdown_data_url_segments,
+};
 use crate::providers::{LlmProvider, ProviderType};
 
 pub struct OpenAiProvider {
@@ -17,7 +20,11 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
-    pub fn new(api_key: &str, base_url: Option<&str>, defaults: crate::providers::ProviderDefaults) -> LlmResult<Self> {
+    pub fn new(
+        api_key: &str,
+        base_url: Option<&str>,
+        defaults: crate::providers::ProviderDefaults,
+    ) -> LlmResult<Self> {
         let base = base_url.unwrap_or("https://api.openai.com/v1");
         let model = defaults.model.unwrap_or_else(|| "gpt-4o".to_string());
         Ok(Self {
@@ -41,32 +48,39 @@ impl LlmProvider for OpenAiProvider {
         let url = format!("{}/chat/completions", self.base_url);
 
         // Build messages as serde_json::Value to handle all fields correctly
-        let messages: Vec<serde_json::Value> = request.messages.iter().map(|m| {
-            let role = match m.role {
-                MessageRole::System => "system",
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::Tool => "tool",
-            };
-            let mut msg = serde_json::json!({ "role": role, "content": m.content });
-            if let Some(ref tc) = m.tool_calls {
-                let calls: Vec<serde_json::Value> = tc.iter().map(|c| {
+        let messages: Vec<serde_json::Value> = request
+            .messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    MessageRole::System => "system",
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    MessageRole::Tool => "tool",
+                };
+                let mut msg = serde_json::json!({
+                    "role": role,
+                    "content": openai_message_content(role, &m.content),
+                });
+                if let Some(ref tc) = m.tool_calls {
+                    let calls: Vec<serde_json::Value> = tc.iter().map(|c| {
                     serde_json::json!({
                         "id": c.id,
                         "type": c.type_,
                         "function": { "name": c.function.name, "arguments": c.function.arguments }
                     })
                 }).collect();
-                msg["tool_calls"] = serde_json::Value::Array(calls);
-            }
-            if let Some(ref id) = m.tool_call_id {
-                msg["tool_call_id"] = serde_json::Value::String(id.clone());
-            }
-            if let Some(ref name) = m.name {
-                msg["name"] = serde_json::Value::String(name.clone());
-            }
-            msg
-        }).collect();
+                    msg["tool_calls"] = serde_json::Value::Array(calls);
+                }
+                if let Some(ref id) = m.tool_call_id {
+                    msg["tool_call_id"] = serde_json::Value::String(id.clone());
+                }
+                if let Some(ref name) = m.name {
+                    msg["name"] = serde_json::Value::String(name.clone());
+                }
+                msg
+            })
+            .collect();
 
         let mut req = serde_json::json!({
             "model": request.model,
@@ -79,20 +93,24 @@ impl LlmProvider for OpenAiProvider {
             req["max_tokens"] = serde_json::json!(m);
         }
         if let Some(ref tools) = request.tools {
-            let tools_json: Vec<serde_json::Value> = tools.iter().map(|t| {
-                serde_json::json!({
-                    "type": t.type_,
-                    "function": {
-                        "name": t.function.name,
-                        "description": t.function.description,
-                        "parameters": t.function.parameters,
-                    }
+            let tools_json: Vec<serde_json::Value> = tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "type": t.type_,
+                        "function": {
+                            "name": t.function.name,
+                            "description": t.function.description,
+                            "parameters": t.function.parameters,
+                        }
+                    })
                 })
-            }).collect();
+                .collect();
             req["tools"] = serde_json::Value::Array(tools_json);
         }
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -108,49 +126,49 @@ impl LlmProvider for OpenAiProvider {
         }
 
         // Parse response manually to handle snake_case fields
-        let body: serde_json::Value = response.json().await
+        let body: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| LlmError::ParseError(e.to_string()))?;
 
         parse_chat_completion(body)
     }
 
-    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<crate::chat::StreamChunk>>> {
+    async fn chat_stream(
+        &self,
+        request: ChatRequest,
+    ) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<crate::chat::StreamChunk>>> {
         let url = format!("{}/chat/completions", self.base_url);
-
-        #[derive(Serialize)]
-        struct OpenAiStreamRequest {
-            model: String,
-            messages: Vec<OpenAiMessage>,
-            temperature: Option<f64>,
-            max_tokens: Option<i32>,
-            stream: bool,
+        let messages: Vec<serde_json::Value> = request
+            .messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    MessageRole::System => "system",
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    MessageRole::Tool => "tool",
+                };
+                serde_json::json!({
+                    "role": role,
+                    "content": openai_message_content(role, &m.content),
+                })
+            })
+            .collect();
+        let mut req = serde_json::json!({
+            "model": request.model.clone(),
+            "messages": messages,
+            "stream": true,
+        });
+        if let Some(t) = request.temperature.or(self.default_temperature) {
+            req["temperature"] = serde_json::json!(t);
+        }
+        if let Some(m) = request.max_tokens.or(self.default_max_tokens) {
+            req["max_tokens"] = serde_json::json!(m);
         }
 
-        #[derive(Serialize)]
-        struct OpenAiMessage {
-            role: String,
-            content: String,
-        }
-
-        let messages: Vec<OpenAiMessage> = request.messages.iter().map(|m| {
-            let role = match m.role {
-                MessageRole::System => "system",
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::Tool => "tool",
-            };
-            OpenAiMessage { role: role.to_string(), content: m.content.clone() }
-        }).collect();
-
-        let req = OpenAiStreamRequest {
-            model: request.model.clone(),
-            messages,
-            temperature: request.temperature.or(self.default_temperature),
-            max_tokens: request.max_tokens.or(self.default_max_tokens),
-            stream: true,
-        };
-
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -212,7 +230,7 @@ impl LlmProvider for OpenAiProvider {
 
     async fn embeddings(&self, request: EmbeddingRequest) -> LlmResult<EmbeddingResponse> {
         let url = format!("{}/embeddings", self.base_url);
-        
+
         let input = match request.input {
             crate::embedding::EmbeddingInput::String(s) => vec![s],
             crate::embedding::EmbeddingInput::Strings(v) => v,
@@ -229,7 +247,8 @@ impl LlmProvider for OpenAiProvider {
             model: request.model.clone(),
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -239,7 +258,8 @@ impl LlmProvider for OpenAiProvider {
             .map_err(|e| LlmError::NetworkError(e.to_string()))?;
 
         if response.status().is_success() {
-            response.json::<EmbeddingResponse>()
+            response
+                .json::<EmbeddingResponse>()
                 .await
                 .map_err(|e| LlmError::ParseError(e.to_string()))
         } else {
@@ -248,7 +268,11 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        let mut models = vec!["gpt-4o".to_string(), "gpt-4".to_string(), "gpt-3.5-turbo".to_string()];
+        let mut models = vec![
+            "gpt-4o".to_string(),
+            "gpt-4".to_string(),
+            "gpt-3.5-turbo".to_string(),
+        ];
         if !models.contains(&self.default_model_name) {
             models.insert(0, self.default_model_name.clone());
         }
@@ -260,16 +284,50 @@ impl LlmProvider for OpenAiProvider {
     }
 }
 
+fn openai_message_content(role: &str, content: &str) -> serde_json::Value {
+    if role == "user" && markdown_contains_data_url_image(content) {
+        let mut blocks = Vec::new();
+        for seg in parse_markdown_data_url_segments(content) {
+            match seg {
+                ParsedMarkdownSegment::Text(text) => {
+                    if !text.is_empty() {
+                        blocks.push(serde_json::json!({
+                            "type": "text",
+                            "text": text,
+                        }));
+                    }
+                }
+                ParsedMarkdownSegment::Image(image) => {
+                    blocks.push(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:{};base64,{}", image.mime_type, image.base64_data),
+                        }
+                    }));
+                }
+            }
+        }
+        if !blocks.is_empty() {
+            return serde_json::Value::Array(blocks);
+        }
+    }
+    serde_json::Value::String(content.to_string())
+}
+
 /// Parse OpenAI-compatible JSON response into ChatCompletion, handling snake_case fields.
 pub fn parse_chat_completion(body: serde_json::Value) -> LlmResult<ChatCompletion> {
     use crate::chat::*;
 
     let id = body["id"].as_str().unwrap_or("").to_string();
-    let object = body["object"].as_str().unwrap_or("chat.completion").to_string();
+    let object = body["object"]
+        .as_str()
+        .unwrap_or("chat.completion")
+        .to_string();
     let created = body["created"].as_i64().unwrap_or(0);
     let model = body["model"].as_str().unwrap_or("").to_string();
 
-    let choices_arr = body["choices"].as_array()
+    let choices_arr = body["choices"]
+        .as_array()
         .ok_or_else(|| LlmError::ParseError("missing choices".into()))?;
 
     let mut choices = Vec::new();
@@ -286,24 +344,35 @@ pub fn parse_chat_completion(body: serde_json::Value) -> LlmResult<ChatCompletio
         let content = if let Some(s) = msg["content"].as_str() {
             s.to_string()
         } else if let Some(arr) = msg["content"].as_array() {
-            arr.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("")
+            arr.iter()
+                .filter_map(|b| b["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("")
         } else {
             String::new()
         };
 
         // Parse tool_calls
-        let tool_calls = msg["tool_calls"].as_array().map(|arr| {
-            arr.iter().filter_map(|tc| {
-                Some(ToolCall {
-                    id: tc["id"].as_str()?.to_string(),
-                    type_: tc["type"].as_str().unwrap_or("function").to_string(),
-                    function: ToolCallFunction {
-                        name: tc["function"]["name"].as_str()?.to_string(),
-                        arguments: tc["function"]["arguments"].as_str().unwrap_or("{}").to_string(),
-                    },
-                })
-            }).collect::<Vec<_>>()
-        }).filter(|v| !v.is_empty());
+        let tool_calls = msg["tool_calls"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|tc| {
+                        Some(ToolCall {
+                            id: tc["id"].as_str()?.to_string(),
+                            type_: tc["type"].as_str().unwrap_or("function").to_string(),
+                            function: ToolCallFunction {
+                                name: tc["function"]["name"].as_str()?.to_string(),
+                                arguments: tc["function"]["arguments"]
+                                    .as_str()
+                                    .unwrap_or("{}")
+                                    .to_string(),
+                            },
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty());
 
         choices.push(ChatChoice {
             index: c["index"].as_i64().unwrap_or(0) as i32,

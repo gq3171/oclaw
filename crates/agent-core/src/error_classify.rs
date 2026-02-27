@@ -86,9 +86,7 @@ pub fn classify_error(err: &str) -> ErrorClass {
     }
 
     // Tool errors
-    if lower.contains("tool error")
-        || lower.contains("tool execution")
-        || lower.contains("tool '")
+    if lower.contains("tool error") || lower.contains("tool execution") || lower.contains("tool '")
     {
         return ErrorClass::ToolError;
     }
@@ -99,7 +97,10 @@ pub fn classify_error(err: &str) -> ErrorClass {
 impl ErrorClass {
     /// Whether this error class should trigger a retry.
     pub fn should_retry(&self) -> bool {
-        matches!(self, Self::RateLimit | Self::NetworkError | Self::ProviderError | Self::Unknown)
+        matches!(
+            self,
+            Self::RateLimit | Self::NetworkError | Self::ProviderError | Self::Unknown
+        )
     }
 
     /// Whether this error class should trigger model fallback.
@@ -120,36 +121,66 @@ mod tests {
 
     #[test]
     fn test_rate_limit() {
-        assert_eq!(classify_error("HTTP 429: Too Many Requests"), ErrorClass::RateLimit);
+        assert_eq!(
+            classify_error("HTTP 429: Too Many Requests"),
+            ErrorClass::RateLimit
+        );
         assert_eq!(classify_error("rate limit exceeded"), ErrorClass::RateLimit);
     }
 
     #[test]
     fn test_auth() {
-        assert_eq!(classify_error("HTTP 401 Unauthorized"), ErrorClass::AuthFailure);
-        assert_eq!(classify_error("Invalid API key provided"), ErrorClass::AuthFailure);
+        assert_eq!(
+            classify_error("HTTP 401 Unauthorized"),
+            ErrorClass::AuthFailure
+        );
+        assert_eq!(
+            classify_error("Invalid API key provided"),
+            ErrorClass::AuthFailure
+        );
     }
 
     #[test]
     fn test_context_overflow() {
-        assert_eq!(classify_error("context length exceeded"), ErrorClass::ContextOverflow);
-        assert_eq!(classify_error("content_too_large"), ErrorClass::ContextOverflow);
+        assert_eq!(
+            classify_error("context length exceeded"),
+            ErrorClass::ContextOverflow
+        );
+        assert_eq!(
+            classify_error("content_too_large"),
+            ErrorClass::ContextOverflow
+        );
     }
 
     #[test]
     fn test_network() {
-        assert_eq!(classify_error("connection timed out"), ErrorClass::NetworkError);
-        assert_eq!(classify_error("DNS resolution failed"), ErrorClass::NetworkError);
+        assert_eq!(
+            classify_error("connection timed out"),
+            ErrorClass::NetworkError
+        );
+        assert_eq!(
+            classify_error("DNS resolution failed"),
+            ErrorClass::NetworkError
+        );
     }
 
     #[test]
     fn test_provider() {
-        assert_eq!(classify_error("HTTP 503 Service Unavailable"), ErrorClass::ProviderError);
-        assert_eq!(classify_error("server overloaded"), ErrorClass::ProviderError);
+        assert_eq!(
+            classify_error("HTTP 503 Service Unavailable"),
+            ErrorClass::ProviderError
+        );
+        assert_eq!(
+            classify_error("server overloaded"),
+            ErrorClass::ProviderError
+        );
     }
 
     #[test]
     fn test_unknown() {
-        assert_eq!(classify_error("something weird happened"), ErrorClass::Unknown);
+        assert_eq!(
+            classify_error("something weird happened"),
+            ErrorClass::Unknown
+        );
     }
 }

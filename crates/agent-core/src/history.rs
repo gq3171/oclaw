@@ -1,4 +1,4 @@
-use oclaws_llm_core::chat::{ChatMessage, MessageRole};
+use oclaw_llm_core::chat::{ChatMessage, MessageRole};
 
 /// Limit messages sent to LLM by keeping only the last `max_turns` user turns
 /// plus their associated assistant/tool responses. System messages at index 0 are always kept.
@@ -46,7 +46,9 @@ pub fn limit_history_turns(messages: &[ChatMessage], max_turns: usize) -> Vec<Ch
 
     result.retain(|m| {
         if m.role == MessageRole::Tool {
-            m.tool_call_id.as_ref().is_none_or(|id| kept_tc_ids.contains(id))
+            m.tool_call_id
+                .as_ref()
+                .is_none_or(|id| kept_tc_ids.contains(id))
         } else {
             true
         }

@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-tts-core"
+name = "oclaw-tts-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

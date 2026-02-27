@@ -65,10 +65,7 @@ pub enum AgentRunError {
 impl AgentRunError {
     /// Whether this error is retryable.
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::RateLimited { .. } | Self::Transient(_)
-        )
+        matches!(self, Self::RateLimited { .. } | Self::Transient(_))
     }
 
     /// Whether this error needs context compaction.

@@ -6,4 +6,8 @@ pub mod providers;
 pub mod types;
 
 pub use pipeline::MediaPipeline;
-pub use types::{MediaAttachment, MediaCapability, MediaConfig, MediaOutputKind, MediaUnderstandingOutput};
+pub use types::{
+    MediaAttachment, MediaAttachmentDecision, MediaCapability, MediaCapabilityDecision,
+    MediaConfig, MediaDecisionOutcome, MediaModelDecision, MediaModelDecisionOutcome,
+    MediaModelDecisionType, MediaOutputKind, MediaUnderstandingOutput,
+};

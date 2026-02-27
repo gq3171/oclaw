@@ -1,12 +1,12 @@
 [package]
-name = "oclaws-config"
+name = "oclaw-config"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [dependencies]
-oclaws-protocol.workspace = true
+oclaw-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

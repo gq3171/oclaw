@@ -45,7 +45,9 @@ impl TwitchChannel {
 }
 
 impl Default for TwitchChannel {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Clone for TwitchChannel {
@@ -63,14 +65,20 @@ impl Clone for TwitchChannel {
 
 #[async_trait]
 impl Channel for TwitchChannel {
-    fn channel_type(&self) -> &str { "twitch" }
+    fn channel_type(&self) -> &str {
+        "twitch"
+    }
 
     async fn connect(&mut self) -> ChannelResult<()> {
         self.status = ChannelStatus::Connecting;
 
-        let _token = self.access_token.as_ref()
+        let _token = self
+            .access_token
+            .as_ref()
             .ok_or_else(|| ChannelError::AuthenticationError("Access token not set".into()))?;
-        let _channel = self.channel_name.as_ref()
+        let _channel = self
+            .channel_name
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Channel name not set".into()))?;
 
         self.client = Some(reqwest::Client::new());
@@ -92,14 +100,18 @@ impl Channel for TwitchChannel {
         Ok(())
     }
 
-    fn status(&self) -> ChannelStatus { self.status }
+    fn status(&self) -> ChannelStatus {
+        self.status
+    }
 
     async fn send_message(&self, message: &ChannelMessage) -> ChannelResult<String> {
         if self.status != ChannelStatus::Connected {
             return Err(ChannelError::ConnectionError("Not connected".into()));
         }
 
-        let _channel = self.channel_name.as_ref()
+        let _channel = self
+            .channel_name
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Channel name not set".into()))?;
 
         // In a full implementation this would send a PRIVMSG over the WSS connection.
@@ -111,7 +123,9 @@ impl Channel for TwitchChannel {
     }
 
     async fn list_accounts(&self) -> ChannelResult<Vec<ChannelAccount>> {
-        let nick = self.nick.clone()
+        let nick = self
+            .nick
+            .clone()
             .or_else(|| self.channel_name.clone())
             .unwrap_or_default();
         Ok(vec![ChannelAccount {
@@ -119,7 +133,14 @@ impl Channel for TwitchChannel {
             name: nick,
             channel: "twitch".into(),
             avatar: None,
-            status: Some(if self.status == ChannelStatus::Connected { "online" } else { "offline" }.into()),
+            status: Some(
+                if self.status == ChannelStatus::Connected {
+                    "online"
+                } else {
+                    "offline"
+                }
+                .into(),
+            ),
         }])
     }
 
@@ -129,15 +150,19 @@ impl Channel for TwitchChannel {
     }
 
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
-        Ok(Box::new(TwitchSender { channel: Arc::new(RwLock::new(self.clone())) }))
+        Ok(Box::new(TwitchSender {
+            channel: Arc::new(RwLock::new(self.clone())),
+        }))
     }
 
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // Twitch EventSub: /event/message/text or /event/user_input
-        let text = payload.pointer("/event/message/text")
+        let text = payload
+            .pointer("/event/message/text")
             .or_else(|| payload.pointer("/event/user_input"))
             .and_then(|v| v.as_str())?;
-        let chat_id = payload.pointer("/event/broadcaster_user_id")
+        let chat_id = payload
+            .pointer("/event/broadcaster_user_id")
             .and_then(|v| v.as_str())
             .unwrap_or("default");
         Some(WebhookMessage {
@@ -155,7 +180,11 @@ struct TwitchSender {
 }
 
 impl MessageSender for TwitchSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
         let channel = self.channel.clone();
         let content = content.to_string();
         Box::pin(async move {

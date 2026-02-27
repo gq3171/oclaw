@@ -66,7 +66,9 @@ impl NostrChannel {
     }
 
     async fn send_to_relay(&self, relay_url: &str, event: &NostrEvent) -> ChannelResult<String> {
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".to_string()))?;
 
         let request = NostrSendRequest {
@@ -81,14 +83,18 @@ impl NostrChannel {
             .await
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?;
 
-        let nostr_resp: NostrResponse = response.json().await
+        let nostr_resp: NostrResponse = response
+            .json()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
         if nostr_resp.ok.unwrap_or(false) {
             Ok(nostr_resp.event_id.unwrap_or_else(|| "unknown".to_string()))
         } else {
             Err(ChannelError::MessageError(
-                nostr_resp.message.unwrap_or_else(|| "Unknown error".to_string())
+                nostr_resp
+                    .message
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ))
         }
     }
@@ -116,7 +122,10 @@ impl Channel for NostrChannel {
         self.status = ChannelStatus::Connecting;
         self.client = Some(Client::new());
 
-        tracing::info!("Nostr channel connecting to {} relays", self.relay_urls.len());
+        tracing::info!(
+            "Nostr channel connecting to {} relays",
+            self.relay_urls.len()
+        );
 
         self.status = ChannelStatus::Connected;
         Ok(())
@@ -138,10 +147,13 @@ impl Channel for NostrChannel {
             return Err(ChannelError::ConnectionError("Not connected".to_string()));
         }
 
-        let pubkey = self.public_key.as_ref()
+        let pubkey = self
+            .public_key
+            .as_ref()
             .ok_or_else(|| ChannelError::AuthenticationError("Public key not set".to_string()))?;
 
-        let tags: Vec<Vec<String>> = message.metadata
+        let tags: Vec<Vec<String>> = message
+            .metadata
             .get("tags")
             .map(|t| {
                 t.split(',')
@@ -167,7 +179,9 @@ impl Channel for NostrChannel {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| ChannelError::MessageError("Failed to send to all relays".to_string())))
+        Err(last_error.unwrap_or_else(|| {
+            ChannelError::MessageError("Failed to send to all relays".to_string())
+        }))
     }
 
     async fn list_accounts(&self) -> ChannelResult<Vec<ChannelAccount>> {
@@ -199,9 +213,9 @@ impl Channel for NostrChannel {
 
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // Nostr event: /content, /pubkey
-        let text = payload.get("content")
-            .and_then(|v| v.as_str())?;
-        let pubkey = payload.get("pubkey")
+        let text = payload.get("content").and_then(|v| v.as_str())?;
+        let pubkey = payload
+            .get("pubkey")
             .and_then(|v| v.as_str())
             .unwrap_or("default");
         Some(WebhookMessage {
@@ -231,11 +245,16 @@ struct NostrSender {
 }
 
 impl MessageSender for NostrSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>>
+    {
         let channel = self.channel.clone();
         let content = content.to_string();
         let metadata = metadata.clone();
-        
+
         Box::pin(async move {
             let message = ChannelMessage {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -245,7 +264,7 @@ impl MessageSender for NostrSender {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 metadata,
             };
-            
+
             channel.read().await.send_message(&message).await
         })
     }

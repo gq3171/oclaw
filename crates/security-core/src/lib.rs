@@ -1,13 +1,13 @@
-mod oauth;
-mod pairing;
-mod session;
 pub mod audit;
 pub mod auth_profiles;
 pub mod device_pairing;
+mod oauth;
+mod pairing;
+mod session;
 
-pub use oauth::{OAuthProvider, OAuthClient, OAuthToken, OAuthUser, OAuthStateStore};
-pub use audit::{AuditLog, AuditEvent, AuditEventKind};
-pub use pairing::{DMPairing, PairingRequest, PairingManager};
+pub use audit::{AuditEvent, AuditEventKind, AuditLog};
+pub use oauth::{OAuthClient, OAuthProvider, OAuthStateStore, OAuthToken, OAuthUser};
+pub use pairing::{DMPairing, PairingManager, PairingRequest};
 pub use session::{SecuritySession, SessionManager};
 
 use serde::{Deserialize, Serialize};

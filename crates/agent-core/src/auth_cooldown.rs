@@ -44,9 +44,9 @@ impl AuthCooldownTracker {
 
     /// Check if a profile is currently in cooldown.
     pub fn is_cooled_down(&self, profile_id: &str, now_ms: u64) -> bool {
-        self.profiles.get(profile_id).is_some_and(|s| {
-            s.cooldown_until.is_some_and(|until| now_ms < until)
-        })
+        self.profiles
+            .get(profile_id)
+            .is_some_and(|s| s.cooldown_until.is_some_and(|until| now_ms < until))
     }
 
     /// Clear expired cooldowns and reset error counters.

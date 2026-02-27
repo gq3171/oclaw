@@ -43,11 +43,7 @@ pub fn is_mentioned(text: &str, patterns: &[Regex]) -> bool {
 }
 
 /// Gating decision: should we process this message?
-pub fn should_process(
-    is_group: bool,
-    activation: GroupActivation,
-    mentioned: bool,
-) -> bool {
+pub fn should_process(is_group: bool, activation: GroupActivation, mentioned: bool) -> bool {
     if !is_group {
         return true; // DMs always processed
     }

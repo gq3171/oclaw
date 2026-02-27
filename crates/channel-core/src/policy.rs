@@ -51,8 +51,7 @@ pub fn resolve_allowlist_match(
         return true;
     }
     allowlist.iter().any(|entry| {
-        entry == sender_id
-            || sender_name.is_some_and(|n| n.eq_ignore_ascii_case(entry))
+        entry == sender_id || sender_name.is_some_and(|n| n.eq_ignore_ascii_case(entry))
     })
 }
 

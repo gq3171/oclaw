@@ -1,7 +1,17 @@
-//! IDENTITY.md — agent name, emoji, avatar, creature type, vibe.
+//! IDENTITY.md — agent name, emoji, avatar, creature type, vibe, theme.
 
 use crate::files::Workspace;
 use serde::{Deserialize, Serialize};
+
+/// Placeholder values that should be ignored during parsing.
+/// These are the default hint texts seeded in IDENTITY.md templates.
+const IDENTITY_PLACEHOLDER_VALUES: &[&str] = &[
+    "pick something you like",
+    "ai? robot? familiar? ghost in the machine? something weirder?",
+    "how do you come across? sharp? warm? chaotic? calm?",
+    "your signature - pick one that feels right",
+    "workspace-relative path, http(s) url, or data uri",
+];
 
 /// Parsed agent identity from IDENTITY.md.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -11,6 +21,7 @@ pub struct AgentIdentity {
     pub creature: Option<String>,
     pub vibe: Option<String>,
     pub avatar: Option<String>,
+    pub theme: Option<String>,
 }
 
 impl AgentIdentity {
@@ -36,8 +47,16 @@ impl AgentIdentity {
             if let Some((key, val)) = entry.split_once(':') {
                 let key = key.trim().to_lowercase();
                 let val = val.trim().trim_matches('_').trim();
-                if val.is_empty() || val.starts_with("(") {
-                    continue; // placeholder
+                if val.is_empty() || val.starts_with('(') {
+                    continue; // empty or parenthesised placeholder
+                }
+                // Skip known placeholder hint text (case-insensitive)
+                let val_lower = val.to_lowercase();
+                if IDENTITY_PLACEHOLDER_VALUES
+                    .iter()
+                    .any(|p| val_lower.contains(*p))
+                {
+                    continue;
                 }
                 match key.as_str() {
                     "name" => id.name = Some(val.to_string()),
@@ -45,6 +64,7 @@ impl AgentIdentity {
                     "creature" => id.creature = Some(val.to_string()),
                     "vibe" => id.vibe = Some(val.to_string()),
                     "avatar" => id.avatar = Some(val.to_string()),
+                    "theme" => id.theme = Some(val.to_string()),
                     _ => {}
                 }
             }
@@ -79,6 +99,9 @@ impl AgentIdentity {
         }
         if let Some(a) = &self.avatar {
             lines.push(format!("- **Avatar:** {}", a));
+        }
+        if let Some(t) = &self.theme {
+            lines.push(format!("- **Theme:** {}", t));
         }
         lines.join("\n") + "\n"
     }

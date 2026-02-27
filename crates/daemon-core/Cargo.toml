@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-daemon-core"
+name = "oclaw-daemon-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

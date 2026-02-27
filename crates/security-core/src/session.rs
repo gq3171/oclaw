@@ -1,8 +1,8 @@
+use crate::{AuthError, AuthUser};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::{AuthUser, AuthError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecuritySession {
@@ -83,9 +83,7 @@ impl SessionManager {
     pub async fn validate_session(&self, token: &str) -> Result<AuthUser, AuthError> {
         let sessions = self.sessions.read().await;
 
-        let session = sessions
-            .get(token)
-            .ok_or(AuthError::TokenInvalid)?;
+        let session = sessions.get(token).ok_or(AuthError::TokenInvalid)?;
 
         if session.is_expired() {
             drop(sessions);
@@ -107,9 +105,7 @@ impl SessionManager {
     pub async fn refresh_session(&self, token: &str) -> Result<String, AuthError> {
         let mut sessions = self.sessions.write().await;
 
-        let session = sessions
-            .get_mut(token)
-            .ok_or(AuthError::TokenInvalid)?;
+        let session = sessions.get_mut(token).ok_or(AuthError::TokenInvalid)?;
 
         if session.is_expired() {
             return Err(AuthError::TokenExpired);
@@ -146,7 +142,7 @@ impl SessionManager {
         };
 
         let count = tokens.len();
-        
+
         let mut sessions = self.sessions.write().await;
         for token in &tokens {
             sessions.remove(token);
@@ -163,7 +159,7 @@ impl SessionManager {
     pub async fn list_user_sessions(&self, user_id: &str) -> Vec<SecuritySession> {
         let user_sessions = self.user_sessions.read().await;
         let sessions = self.sessions.read().await;
-        
+
         user_sessions
             .get(user_id)
             .map(|tokens| {
@@ -177,7 +173,7 @@ impl SessionManager {
 
     pub async fn cleanup_expired(&self) {
         let now = chrono::Utc::now().timestamp();
-        
+
         let expired_tokens: Vec<String> = {
             let sessions = self.sessions.read().await;
             sessions
@@ -223,7 +219,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_session() {
         let manager = SessionManager::new(3600);
-        
+
         let user = AuthUser {
             id: "user1".to_string(),
             username: "testuser".to_string(),
@@ -233,7 +229,7 @@ mod tests {
             roles: vec![],
             provider: "test".to_string(),
         };
-        
+
         let token = manager.create_session(&user).await.unwrap();
         assert!(!token.is_empty());
     }
@@ -241,7 +237,7 @@ mod tests {
     #[tokio::test]
     async fn test_validate_session() {
         let manager = SessionManager::new(3600);
-        
+
         let user = AuthUser {
             id: "user1".to_string(),
             username: "testuser".to_string(),
@@ -251,17 +247,17 @@ mod tests {
             roles: vec![],
             provider: "test".to_string(),
         };
-        
+
         let token = manager.create_session(&user).await.unwrap();
         let validated = manager.validate_session(&token).await.unwrap();
-        
+
         assert_eq!(validated.id, "user1");
     }
 
     #[tokio::test]
     async fn test_revoke_session() {
         let manager = SessionManager::new(3600);
-        
+
         let user = AuthUser {
             id: "user1".to_string(),
             username: "testuser".to_string(),
@@ -271,10 +267,10 @@ mod tests {
             roles: vec![],
             provider: "test".to_string(),
         };
-        
+
         let token = manager.create_session(&user).await.unwrap();
         manager.revoke_session(&token).await.unwrap();
-        
+
         let result = manager.validate_session(&token).await;
         assert!(result.is_err());
     }

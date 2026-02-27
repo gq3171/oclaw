@@ -5,9 +5,7 @@ use base64::Engine;
 use reqwest::Client;
 use tracing::debug;
 
-use super::{
-    AudioRequest, ImageRequest, MediaProvider, MediaProviderError, VideoRequest,
-};
+use super::{AudioRequest, ImageRequest, MediaProvider, MediaProviderError, VideoRequest};
 use crate::types::MediaCapability;
 
 pub struct AnthropicMediaProvider {
@@ -48,6 +46,13 @@ impl MediaProvider for AnthropicMediaProvider {
         vec![MediaCapability::Image]
     }
 
+    fn model_for(&self, capability: MediaCapability) -> Option<String> {
+        match capability {
+            MediaCapability::Image => Some(self.model.clone()),
+            MediaCapability::Audio | MediaCapability::Video => None,
+        }
+    }
+
     async fn describe_image(&self, req: &ImageRequest) -> Result<String, MediaProviderError> {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&req.image_data);
         let media_type = match req.mime_type.as_str() {
@@ -56,7 +61,10 @@ impl MediaProvider for AnthropicMediaProvider {
             "image/webp" => "image/webp",
             _ => "image/jpeg",
         };
-        let prompt = req.prompt.as_deref().unwrap_or("Describe this image concisely.");
+        let prompt = req
+            .prompt
+            .as_deref()
+            .unwrap_or("Describe this image concisely.");
 
         let body = serde_json::json!({
             "model": self.model,
@@ -79,7 +87,8 @@ impl MediaProvider for AnthropicMediaProvider {
 
         debug!(provider = "anthropic", "Sending vision request");
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/messages", self.base_url))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")

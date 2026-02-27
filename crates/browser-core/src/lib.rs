@@ -1,13 +1,13 @@
+pub mod browser;
 pub mod cdp;
 pub mod connection;
-pub mod browser;
+pub mod error;
 pub mod page;
 pub mod state;
-pub mod error;
 
-pub use error::*;
+pub use browser::*;
 pub use cdp::*;
 pub use connection::*;
-pub use browser::*;
+pub use error::*;
 pub use page::*;
 pub use state::*;

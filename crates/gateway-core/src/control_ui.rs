@@ -1,13 +1,13 @@
 use axum::{
+    Router,
     extract::{Path, State},
     http::StatusCode,
     response::Json,
     routing::get,
-    Router,
 };
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use chrono::Utc;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HealthStatus {
@@ -72,7 +72,7 @@ pub fn create_control_ui_router(state: Arc<ControlUiState>) -> Router {
 
 async fn health_handler(State(state): State<Arc<ControlUiState>>) -> Json<HealthStatus> {
     let uptime = Utc::now().timestamp() - state.start_time;
-    
+
     Json(HealthStatus {
         status: "healthy".to_string(),
         uptime_seconds: uptime,
@@ -99,7 +99,9 @@ async fn list_sessions_handler() -> Json<Vec<SessionStatusResponse>> {
     Json(vec![])
 }
 
-async fn session_detail_handler(Path(session_id): Path<String>) -> Result<Json<SessionStatusResponse>, StatusCode> {
+async fn session_detail_handler(
+    Path(session_id): Path<String>,
+) -> Result<Json<SessionStatusResponse>, StatusCode> {
     Ok(Json(SessionStatusResponse {
         session_id,
         agent_id: "default".to_string(),
@@ -117,21 +119,23 @@ mod tests {
     async fn test_health_handler() {
         let state = Arc::new(ControlUiState::new());
         let result = health_handler(State(state)).await;
-        
+
         assert_eq!(result.status, "healthy");
     }
 
     #[tokio::test]
     async fn test_stats_handler() {
         let result = stats_handler().await;
-        
+
         assert_eq!(result.total_sessions, 0);
     }
 
     #[tokio::test]
     async fn test_session_detail() {
-        let result = session_detail_handler(Path("test-123".to_string())).await.unwrap();
-        
+        let result = session_detail_handler(Path("test-123".to_string()))
+            .await
+            .unwrap();
+
         assert_eq!(result.session_id, "test-123");
     }
 }

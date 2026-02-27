@@ -1,6 +1,6 @@
 use crate::types::{MemoryChunk, MemorySearchResult};
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::PathBuf;
 use tracing::{debug, info};
 
@@ -112,9 +112,7 @@ impl MemoryStore {
             )?;
 
             // Re-populate FTS from existing chunks
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM chunks", [], |row| row.get(0),
-            )?;
+            let count: i64 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
             if count > 0 {
                 conn.execute_batch(
                     "INSERT INTO chunks_fts(rowid, id, content, path, source)
@@ -129,9 +127,10 @@ impl MemoryStore {
 
     pub fn upsert(&self, chunk: &MemoryChunk) -> Result<()> {
         let conn = self.open()?;
-        let embedding_blob = chunk.embedding.as_ref().map(|v| {
-            v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>()
-        });
+        let embedding_blob = chunk
+            .embedding
+            .as_ref()
+            .map(|v| v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>());
         conn.execute(
             "INSERT INTO chunks (id, path, start_line, end_line, content, source, embedding, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -181,7 +180,8 @@ impl MemoryStore {
         let keywords = crate::query_expand::extract_keywords(query);
 
         // Strategy 1: FTS trigram MATCH for keywords >= 3 chars
-        let long_keywords: Vec<&str> = keywords.iter()
+        let long_keywords: Vec<&str> = keywords
+            .iter()
             .filter(|k| k.chars().count() >= 3)
             .map(|k| k.as_str())
             .collect();
@@ -208,7 +208,12 @@ impl MemoryStore {
         self.like_search(&conn, query, limit)
     }
 
-    fn fts_match(&self, conn: &Connection, query: &str, limit: usize) -> Result<Vec<MemorySearchResult>> {
+    fn fts_match(
+        &self,
+        conn: &Connection,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<MemorySearchResult>> {
         let mut stmt = conn.prepare(
             "SELECT c.id, c.path, c.start_line, c.end_line, c.content, c.source,
                     rank
@@ -221,7 +226,7 @@ impl MemoryStore {
         let rows = stmt.query_map(params![query, limit as i64], |row| {
             let rank: f64 = row.get(6)?;
             Ok(MemorySearchResult {
-                id: row.get::<_, i64>(0)?.to_string(),
+                id: get_row_id_string(row, 0)?,
                 path: row.get(1)?,
                 start_line: row.get::<_, i64>(2)? as usize,
                 end_line: row.get::<_, i64>(3)? as usize,
@@ -241,7 +246,12 @@ impl MemoryStore {
     /// LIKE-based search using extracted keywords. Matches any keyword (OR logic),
     /// scores by number of keywords matched. This handles short CJK words (< 3 chars)
     /// that the FTS5 trigram tokenizer cannot match.
-    fn keyword_like_search(&self, conn: &Connection, keywords: &[String], limit: usize) -> Result<Vec<MemorySearchResult>> {
+    fn keyword_like_search(
+        &self,
+        conn: &Connection,
+        keywords: &[String],
+        limit: usize,
+    ) -> Result<Vec<MemorySearchResult>> {
         // Build WHERE clause: content LIKE '%kw1%' OR content LIKE '%kw2%' ...
         let conditions: Vec<String> = (1..=keywords.len())
             .map(|i| format!("content LIKE ?{}", i))
@@ -260,7 +270,9 @@ impl MemoryStore {
              WHERE {}
              ORDER BY match_score DESC, updated_at DESC
              LIMIT ?{}",
-            score_expr, where_clause, keywords.len() + 1
+            score_expr,
+            where_clause,
+            keywords.len() + 1
         );
 
         let mut stmt = conn.prepare(&sql)?;
@@ -268,15 +280,14 @@ impl MemoryStore {
         // Build params: each keyword as "%keyword%"
         let patterns: Vec<String> = keywords.iter().map(|k| format!("%{}%", k)).collect();
         let limit_i64 = limit as i64;
-        let mut param_values: Vec<&dyn rusqlite::ToSql> = patterns.iter()
-            .map(|p| p as &dyn rusqlite::ToSql)
-            .collect();
+        let mut param_values: Vec<&dyn rusqlite::ToSql> =
+            patterns.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
         param_values.push(&limit_i64);
 
         let rows = stmt.query_map(param_values.as_slice(), |row| {
             let match_score: i64 = row.get(6)?;
             Ok(MemorySearchResult {
-                id: row.get::<_, i64>(0)?.to_string(),
+                id: get_row_id_string(row, 0)?,
                 path: row.get(1)?,
                 start_line: row.get::<_, i64>(2)? as usize,
                 end_line: row.get::<_, i64>(3)? as usize,
@@ -293,7 +304,12 @@ impl MemoryStore {
         Ok(results)
     }
 
-    fn like_search(&self, conn: &Connection, query: &str, limit: usize) -> Result<Vec<MemorySearchResult>> {
+    fn like_search(
+        &self,
+        conn: &Connection,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<MemorySearchResult>> {
         let pattern = format!("%{}%", query);
         let mut stmt = conn.prepare(
             "SELECT id, path, start_line, end_line, content, source
@@ -304,7 +320,7 @@ impl MemoryStore {
         )?;
         let rows = stmt.query_map(params![pattern, limit as i64], |row| {
             Ok(MemorySearchResult {
-                id: row.get::<_, i64>(0)?.to_string(),
+                id: get_row_id_string(row, 0)?,
                 path: row.get(1)?,
                 start_line: row.get::<_, i64>(2)? as usize,
                 end_line: row.get::<_, i64>(3)? as usize,
@@ -339,7 +355,7 @@ impl MemoryStore {
              LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![safe_query, limit as i64], |row| {
-            let id: String = row.get(0)?;
+            let id = get_row_id_string(row, 0)?;
             let rank: f64 = row.get(1)?;
             Ok((id, -rank))
         })?;
@@ -352,11 +368,10 @@ impl MemoryStore {
 
     pub fn all_with_embeddings(&self) -> Result<Vec<(String, Vec<f32>)>> {
         let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL")?;
         let rows = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
+            let id = get_row_id_string(row, 0)?;
             let blob: Vec<u8> = row.get(1)?;
             Ok((id, blob))
         })?;
@@ -381,10 +396,9 @@ impl MemoryStore {
             placeholders.join(", ")
         );
         let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
-        let rows = stmt.query_map(params.as_slice(), |row| {
-            Ok(row_to_chunk_rusqlite(row))
-        })?;
+        let params: Vec<&dyn rusqlite::ToSql> =
+            ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(params.as_slice(), |row| Ok(row_to_chunk_rusqlite(row)))?;
         let mut results = Vec::new();
         for r in rows {
             results.push(r??);
@@ -403,7 +417,7 @@ fn row_to_chunk(row: &rusqlite::Row) -> Result<MemoryChunk> {
     let embedding_blob: Option<Vec<u8>> = row.get(6)?;
     let embedding = embedding_blob.map(|b| blob_to_embedding(&b));
     Ok(MemoryChunk {
-        id: row.get(0)?,
+        id: get_row_id_string(row, 0)?,
         path: row.get(1)?,
         start_line: row.get::<_, i64>(2)? as usize,
         end_line: row.get::<_, i64>(3)? as usize,
@@ -418,8 +432,61 @@ fn row_to_chunk_rusqlite(row: &rusqlite::Row) -> Result<MemoryChunk> {
     row_to_chunk(row)
 }
 
+fn get_row_id_string(row: &rusqlite::Row, index: usize) -> rusqlite::Result<String> {
+    use rusqlite::types::ValueRef;
+    let col_name = row.as_ref().column_name(index).unwrap_or("id").to_string();
+    match row.get_ref(index)? {
+        ValueRef::Text(bytes) => Ok(String::from_utf8_lossy(bytes).to_string()),
+        ValueRef::Integer(v) => Ok(v.to_string()),
+        ValueRef::Real(v) => Ok(v.to_string()),
+        ValueRef::Null => Err(rusqlite::Error::InvalidColumnType(
+            index,
+            col_name,
+            rusqlite::types::Type::Null,
+        )),
+        ValueRef::Blob(bytes) => Ok(blob_to_hex(bytes)),
+    }
+}
+
 fn blob_to_embedding(blob: &[u8]) -> Vec<f32> {
     blob.chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect()
+}
+
+fn blob_to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_id_string_supports_text_and_integer() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        conn.execute_batch(
+            "CREATE TABLE t(id);
+             INSERT INTO t(id) VALUES ('abc');
+             INSERT INTO t(id) VALUES (123);",
+        )
+        .expect("seed table");
+
+        let mut stmt = conn
+            .prepare("SELECT id FROM t ORDER BY rowid")
+            .expect("prepare");
+        let rows = stmt
+            .query_map([], |row| get_row_id_string(row, 0))
+            .expect("query");
+        let ids: Vec<String> = rows
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect ids");
+        assert_eq!(ids, vec!["abc".to_string(), "123".to_string()]);
+    }
 }

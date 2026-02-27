@@ -1,14 +1,14 @@
 [package]
-name = "oclaws-agent-core"
+name = "oclaw-agent-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [dependencies]
-oclaws-llm-core.workspace = true
-oclaws-protocol.workspace = true
-oclaws-tools-core.workspace = true
+oclaw-llm-core.workspace = true
+oclaw-protocol.workspace = true
+oclaw-tools-core.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1,7 +1,9 @@
+use reedline::{
+    FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
+    Reedline, Signal,
+};
 use std::io;
 use tokio::sync::mpsc;
-use reedline::{Reedline, Signal, Prompt, PromptEditMode, PromptHistorySearch,
-               PromptHistorySearchStatus, FileBackedHistory};
 
 use crate::commands::{self, SlashCommand};
 use crate::gateway::{GatewayClient, GatewayConfig, GatewayEvent};
@@ -82,6 +84,14 @@ pub struct TuiApp {
     hatching: bool,
     /// Conversation history maintained during hatching for multi-turn context.
     hatching_history: Vec<(String, String)>,
+    /// Active streaming task handle (if a reply is in progress).
+    active_stream: Option<tokio::task::JoinHandle<()>>,
+    /// Stream accumulator for the active run.
+    stream_full_text: String,
+    /// Whether we already printed at least one stream chunk.
+    stream_got_content: bool,
+    /// Whether the active stream belongs to a hatching turn.
+    stream_hatching_turn: bool,
 }
 
 impl TuiApp {
@@ -100,15 +110,16 @@ impl TuiApp {
             last_assistant_text: None,
             hatching: false,
             hatching_history: Vec::new(),
+            active_stream: None,
+            stream_full_text: String::new(),
+            stream_got_content: false,
+            stream_hatching_turn: false,
         }
     }
 
     pub async fn run(&mut self) -> io::Result<()> {
         // 1. Print header
-        render::print_header(
-            &self.gateway.config().model,
-            &self.gateway.config().session,
-        );
+        render::print_header(&self.gateway.config().model, &self.gateway.config().session);
 
         // 2. Connect to gateway
         self.try_connect().await;
@@ -134,21 +145,27 @@ impl TuiApp {
                 Some(input) = input_rx.recv() => {
                     match input {
                         UserInput::Line(text) => {
-                            let should_quit = self.process_input(
-                                &text, &event_tx, &mut event_rx,
-                            ).await;
+                            let should_quit = self.process_input(&text, &event_tx).await;
                             if should_quit {
                                 break;
                             }
                             // Ready for next input
                             let _ = ready_tx.send(true);
                         }
-                        UserInput::Quit => break,
+                        UserInput::Quit => {
+                            let _ = self.abort_active_stream();
+                            break;
+                        }
                     }
+                }
+                Some(ev) = event_rx.recv() => {
+                    self.handle_gateway_event(ev).await;
                 }
                 else => break,
             }
         }
+
+        let _ = self.abort_active_stream();
 
         println!();
         render::print_system("Goodbye!");
@@ -181,12 +198,7 @@ impl TuiApp {
     }
 
     /// Process user input. Returns true if the app should quit.
-    async fn process_input(
-        &mut self,
-        text: &str,
-        _event_tx: &mpsc::Sender<GatewayEvent>,
-        _event_rx: &mut mpsc::Receiver<GatewayEvent>,
-    ) -> bool {
+    async fn process_input(&mut self, text: &str, event_tx: &mpsc::Sender<GatewayEvent>) -> bool {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return false;
@@ -197,43 +209,40 @@ impl TuiApp {
             if let Some(msg) = &result.message {
                 render::print_warning(msg);
             }
-            return self.handle_command(result.command);
+            return self.handle_command(result.command).await;
         }
 
-        // Regular message
-        render::print_separator();
-        self.send_and_stream(trimmed).await;
-        render::print_separator();
-
-        // Check if hatching just completed
-        if self.hatching
-            && let Ok(status) = self.gateway.check_agent_status().await
-            && status["needs_hatching"].as_bool() != Some(true)
-        {
-            self.hatching = false;
-            self.hatching_history.clear();
-            render::print_system("Identity setup complete!");
+        if self.active_stream.is_some() {
+            render::print_warning("当前有进行中的回复，请先使用 /abort 取消。");
+            return false;
         }
 
+        // Regular message: start stream and return immediately.
+        render::print_separator();
+        self.start_stream(trimmed, event_tx).await;
         false
     }
 
     /// Handle a slash command. Returns true if the app should quit.
-    fn handle_command(&mut self, cmd: SlashCommand) -> bool {
+    async fn handle_command(&mut self, cmd: SlashCommand) -> bool {
         match cmd {
             SlashCommand::Help => render::print_help(),
             SlashCommand::Clear => {
                 // ANSI clear screen + move cursor to top
                 print!("\x1b[2J\x1b[H");
-                render::print_header(
-                    &self.gateway.config().model,
-                    &self.gateway.config().session,
-                );
+                render::print_header(&self.gateway.config().model, &self.gateway.config().session);
                 render::print_system("Screen cleared.");
             }
-            SlashCommand::Exit => return true,
+            SlashCommand::Exit => {
+                let _ = self.abort_active_stream();
+                return true;
+            }
             SlashCommand::Status => {
-                let conn = if self.connected { "Connected" } else { "Disconnected" };
+                let conn = if self.connected {
+                    "Connected"
+                } else {
+                    "Disconnected"
+                };
                 let model = &self.gateway.config().model;
                 let session = &self.gateway.config().session;
                 render::print_system(&format!(
@@ -268,11 +277,29 @@ impl TuiApp {
                 let state = if self.verbose { "on" } else { "off" };
                 render::print_system(&format!("Verbose: {}", state));
             }
-            SlashCommand::Usage => {
-                render::print_system("Usage stats not yet implemented.");
-            }
+            SlashCommand::Usage => match self.gateway.list_sessions().await {
+                Ok(sessions) => {
+                    let total_sessions = sessions.len();
+                    let total_messages: u64 = sessions.iter().map(|s| s.message_count).sum();
+                    let current_session = &self.gateway.config().session;
+                    let current_messages = sessions
+                        .iter()
+                        .find(|s| s.key == *current_session)
+                        .map(|s| s.message_count)
+                        .unwrap_or(0);
+                    render::print_system(&format!(
+                        "Sessions: {} | Messages: {} | Current({}): {}",
+                        total_sessions, total_messages, current_session, current_messages
+                    ));
+                }
+                Err(e) => {
+                    render::print_warning(&format!("Failed to load usage stats: {}", e));
+                }
+            },
             SlashCommand::Abort => {
-                render::print_warning("Nothing to abort.");
+                if !self.abort_active_stream() {
+                    render::print_warning("Nothing to abort.");
+                }
             }
             SlashCommand::Copy => {
                 if let Some(ref text) = self.last_assistant_text {
@@ -286,6 +313,118 @@ impl TuiApp {
             }
         }
         false
+    }
+
+    async fn start_stream(&mut self, text: &str, event_tx: &mpsc::Sender<GatewayEvent>) {
+        if !self.connected {
+            render::print_error("Not connected to gateway.");
+            return;
+        }
+
+        if self.hatching {
+            self.hatching_history
+                .push(("user".to_string(), text.to_string()));
+            if self.verbose {
+                render::print_system(&format!(
+                    "[debug] hatching history: {} messages",
+                    self.hatching_history.len()
+                ));
+            }
+        }
+
+        let tx = event_tx.clone();
+        let gw_config = self.gateway.config().clone();
+        let client = GatewayClient::new(gw_config);
+        let hatching = self.hatching;
+        let history = self.hatching_history.clone();
+        let msg = text.to_string();
+
+        self.stream_full_text.clear();
+        self.stream_got_content = false;
+        self.stream_hatching_turn = hatching;
+        self.active_stream = Some(tokio::spawn(async move {
+            if hatching {
+                if let Err(e) = client.send_messages(&history, tx.clone()).await {
+                    let _ = tx.send(GatewayEvent::Error(e)).await;
+                }
+            } else if let Err(e) = client.send_message(&msg, tx.clone()).await {
+                let _ = tx.send(GatewayEvent::Error(e)).await;
+            }
+        }));
+    }
+
+    async fn handle_gateway_event(&mut self, ev: GatewayEvent) {
+        if self.active_stream.is_none() {
+            return;
+        }
+
+        match ev {
+            GatewayEvent::Chunk(chunk) => {
+                self.stream_got_content = true;
+                self.stream_full_text.push_str(&chunk);
+                render::print_chunk(&chunk);
+            }
+            GatewayEvent::Done(_) => {
+                if self.stream_got_content {
+                    render::finish_stream();
+                }
+                self.complete_active_stream(true).await;
+            }
+            GatewayEvent::Error(err) => {
+                if self.stream_got_content {
+                    render::finish_stream();
+                }
+                render::print_error(&format!("Error: {}", err));
+                self.complete_active_stream(false).await;
+            }
+            _ => {}
+        }
+    }
+
+    async fn complete_active_stream(&mut self, succeeded: bool) {
+        self.active_stream.take();
+        let full_text = std::mem::take(&mut self.stream_full_text);
+        let is_hatching_turn = self.stream_hatching_turn;
+        self.stream_hatching_turn = false;
+        self.stream_got_content = false;
+
+        if !full_text.is_empty() {
+            self.last_assistant_text = Some(full_text.clone());
+            if is_hatching_turn {
+                self.hatching_history
+                    .push(("assistant".to_string(), full_text));
+            }
+        }
+
+        if succeeded
+            && self.hatching
+            && let Ok(status) = self.gateway.check_agent_status().await
+            && status["needs_hatching"].as_bool() != Some(true)
+        {
+            self.hatching = false;
+            self.hatching_history.clear();
+            render::print_system("Identity setup complete!");
+        }
+
+        render::print_separator();
+    }
+
+    fn abort_active_stream(&mut self) -> bool {
+        let Some(handle) = self.active_stream.take() else {
+            return false;
+        };
+        handle.abort();
+
+        if self.stream_got_content {
+            render::finish_stream();
+        }
+        self.stream_got_content = false;
+        self.stream_hatching_turn = false;
+        self.stream_full_text.clear();
+
+        render::print_warning("已中断当前回复。");
+        render::print_separator();
+        true
     }
 
     /// Load recent chat history from the gateway and display it.
@@ -319,10 +458,12 @@ impl TuiApp {
 
         // During hatching, maintain conversation history for multi-turn context
         if self.hatching {
-            self.hatching_history.push(("user".to_string(), text.to_string()));
+            self.hatching_history
+                .push(("user".to_string(), text.to_string()));
             if self.verbose {
                 render::print_system(&format!(
-                    "[debug] hatching history: {} messages", self.hatching_history.len()
+                    "[debug] hatching history: {} messages",
+                    self.hatching_history.len()
                 ));
             }
         }
@@ -380,7 +521,8 @@ impl TuiApp {
             self.last_assistant_text = Some(full_text.clone());
             // Track assistant reply in hatching history
             if self.hatching {
-                self.hatching_history.push(("assistant".to_string(), full_text));
+                self.hatching_history
+                    .push(("assistant".to_string(), full_text));
             }
         }
     }
@@ -404,8 +546,7 @@ fn run_reedline(
     }
 
     let history = Box::new(
-        FileBackedHistory::with_file(500, history_path)
-            .expect("Failed to create history file"),
+        FileBackedHistory::with_file(500, history_path).expect("Failed to create history file"),
     );
 
     let mut editor = Reedline::create().with_history(history);
@@ -418,7 +559,15 @@ fn run_reedline(
                     break;
                 }
             }
-            Ok(Signal::CtrlC) | Ok(Signal::CtrlD) => {
+            Ok(Signal::CtrlC) => {
+                if input_tx
+                    .send(UserInput::Line("/abort".to_string()))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(Signal::CtrlD) => {
                 let _ = input_tx.send(UserInput::Quit);
                 break;
             }

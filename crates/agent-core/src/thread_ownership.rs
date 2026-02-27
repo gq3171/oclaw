@@ -21,8 +21,10 @@ impl ThreadOwnership {
 
     fn clean_expired(&mut self) {
         let now = Instant::now();
-        self.mentions.retain(|_, ts| now.duration_since(*ts) < self.ttl);
-        self.owners.retain(|_, (_, ts)| now.duration_since(*ts) < self.ttl);
+        self.mentions
+            .retain(|_, ts| now.duration_since(*ts) < self.ttl);
+        self.owners
+            .retain(|_, (_, ts)| now.duration_since(*ts) < self.ttl);
     }
 
     /// Record that this agent was @-mentioned in a thread.
@@ -33,7 +35,8 @@ impl ThreadOwnership {
 
     /// Was this agent recently mentioned in the thread?
     pub fn was_mentioned(&self, thread_key: &str) -> bool {
-        self.mentions.get(thread_key)
+        self.mentions
+            .get(thread_key)
             .is_some_and(|ts| Instant::now().duration_since(*ts) < self.ttl)
     }
 
@@ -44,7 +47,10 @@ impl ThreadOwnership {
         if let Some((owner, _)) = self.owners.get(thread_key) {
             return owner == agent_id;
         }
-        self.owners.insert(thread_key.to_string(), (agent_id.to_string(), Instant::now()));
+        self.owners.insert(
+            thread_key.to_string(),
+            (agent_id.to_string(), Instant::now()),
+        );
         true
     }
 

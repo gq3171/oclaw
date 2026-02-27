@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-security-core"
+name = "oclaw-security-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -48,12 +48,8 @@ impl BindingRouter {
 
     fn matches(matcher: &BindingMatcher, key: &SessionKey) -> bool {
         match matcher {
-            BindingMatcher::Channel { channel } => {
-                key.channel == *channel
-            }
-            BindingMatcher::User { user_id } => {
-                key.user_id.as_deref() == Some(user_id.as_str())
-            }
+            BindingMatcher::Channel { channel } => key.channel == *channel,
+            BindingMatcher::User { user_id } => key.user_id.as_deref() == Some(user_id.as_str()),
             BindingMatcher::Group { channel, group_id } => {
                 key.channel == *channel && key.chat_id == *group_id
             }

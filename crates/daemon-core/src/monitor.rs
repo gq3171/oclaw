@@ -1,7 +1,7 @@
 //! System Monitoring - Real implementation using sysinfo
 
 use serde::{Deserialize, Serialize};
-use sysinfo::{System, Disks};
+use sysinfo::{Disks, System};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemStats {
@@ -39,17 +39,22 @@ impl SystemMonitor {
             cpu_usage: self.sys.global_cpu_usage(),
             memory_used: self.sys.used_memory(),
             memory_total: self.sys.total_memory(),
-            disks: disks.iter().map(|d| DiskInfo {
-                mount_point: d.mount_point().to_string_lossy().into_owned(),
-                total: d.total_space(),
-                used: d.total_space() - d.available_space(),
-            }).collect(),
+            disks: disks
+                .iter()
+                .map(|d| DiskInfo {
+                    mount_point: d.mount_point().to_string_lossy().into_owned(),
+                    total: d.total_space(),
+                    used: d.total_space() - d.available_space(),
+                })
+                .collect(),
         }
     }
 
     pub fn memory_percent(&self) -> f32 {
         let total = self.sys.total_memory();
-        if total == 0 { return 0.0; }
+        if total == 0 {
+            return 0.0;
+        }
         (self.sys.used_memory() as f32 / total as f32) * 100.0
     }
 
@@ -59,5 +64,7 @@ impl SystemMonitor {
 }
 
 impl Default for SystemMonitor {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

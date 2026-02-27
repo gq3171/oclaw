@@ -92,10 +92,7 @@ pub fn format_link_context(results: &[LinkResult]) -> Option<String> {
     let mut parts = Vec::new();
     for r in results {
         let title = r.title.as_deref().unwrap_or("(no title)");
-        parts.push(format!(
-            "[Link: {} — {}]\n{}",
-            title, r.url, r.content
-        ));
+        parts.push(format!("[Link: {} — {}]\n{}", title, r.url, r.content));
     }
 
     Some(parts.join("\n\n"))

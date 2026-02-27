@@ -15,10 +15,13 @@ pub struct CommandPollTracker {
 
 impl CommandPollTracker {
     pub fn record(&mut self, command_id: &str, has_new_output: bool, now_ms: u64) -> u64 {
-        let state = self.polls.entry(command_id.to_string()).or_insert(PollState {
-            count: 0,
-            last_poll_at: now_ms,
-        });
+        let state = self
+            .polls
+            .entry(command_id.to_string())
+            .or_insert(PollState {
+                count: 0,
+                last_poll_at: now_ms,
+            });
         state.last_poll_at = now_ms;
         if has_new_output {
             state.count = 0;
@@ -29,7 +32,9 @@ impl CommandPollTracker {
     }
 
     pub fn suggestion(&self, command_id: &str) -> u64 {
-        self.polls.get(command_id).map_or(BACKOFF_SCHEDULE[0], |s| backoff_ms(s.count))
+        self.polls
+            .get(command_id)
+            .map_or(BACKOFF_SCHEDULE[0], |s| backoff_ms(s.count))
     }
 
     pub fn reset(&mut self, command_id: &str) {
@@ -38,7 +43,8 @@ impl CommandPollTracker {
 
     /// Remove polls older than `max_age_ms` (default 1 hour).
     pub fn prune_stale(&mut self, now_ms: u64, max_age_ms: u64) {
-        self.polls.retain(|_, s| now_ms.saturating_sub(s.last_poll_at) < max_age_ms);
+        self.polls
+            .retain(|_, s| now_ms.saturating_sub(s.last_poll_at) < max_age_ms);
     }
 }
 

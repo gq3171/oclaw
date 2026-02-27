@@ -1,9 +1,9 @@
-use crate::cdp::{build_method, CdpDomain, RemoteObject};
+use crate::cdp::{CdpDomain, RemoteObject, build_method};
 use crate::connection::CdpConnection;
 use crate::error::{BrowserError, BrowserResult};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 pub struct Page {
     target_id: String,
@@ -20,7 +20,7 @@ impl Page {
         pages: Arc<RwLock<HashMap<String, Page>>>,
     ) -> BrowserResult<Self> {
         let connection = CdpConnection::connect(ws_url).await?;
-        
+
         let event_receiver = connection.subscribe();
 
         let page = Self {
@@ -38,30 +38,28 @@ impl Page {
 
     async fn enable_domains(&self) -> BrowserResult<()> {
         if let Some(conn) = &self.connection {
-            conn.enable_domains(&[
-                "Page",
-                "Network",
-                "Runtime",
-                "Console",
-            ]).await?;
+            conn.enable_domains(&["Page", "Network", "Runtime", "Console"])
+                .await?;
         }
         Ok(())
     }
 
     pub async fn navigate(&mut self, url: &str) -> BrowserResult<String> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
         let params = serde_json::json!({
             "url": url
         });
 
-        let response = conn.send_command(
-            &build_method(CdpDomain::Page, "navigate"),
-            Some(params),
-        ).await?;
+        let response = conn
+            .send_command(&build_method(CdpDomain::Page, "navigate"), Some(params))
+            .await?;
 
-        let frame_id = response.result
+        let frame_id = response
+            .result
             .as_ref()
             .and_then(|r| r.get("frameId"))
             .and_then(|f| f.as_str())
@@ -71,19 +69,21 @@ impl Page {
     }
 
     pub async fn reload(&mut self) -> BrowserResult<()> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
-        conn.send_command(
-            &build_method(CdpDomain::Page, "reload"),
-            None,
-        ).await?;
+        conn.send_command(&build_method(CdpDomain::Page, "reload"), None)
+            .await?;
 
         Ok(())
     }
 
     pub async fn go_back(&mut self) -> BrowserResult<()> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
         conn.send_command(
@@ -91,13 +91,16 @@ impl Page {
             Some(serde_json::json!({
                 "entryId": -1
             })),
-        ).await?;
+        )
+        .await?;
 
         Ok(())
     }
 
     pub async fn go_forward(&mut self) -> BrowserResult<()> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
         conn.send_command(
@@ -105,13 +108,16 @@ impl Page {
             Some(serde_json::json!({
                 "entryId": 1
             })),
-        ).await?;
+        )
+        .await?;
 
         Ok(())
     }
 
     pub async fn evaluate(&self, expression: &str) -> BrowserResult<RemoteObject> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
         let params = serde_json::json!({
@@ -121,12 +127,12 @@ impl Page {
             "returnByValue": false
         });
 
-        let response = conn.send_command(
-            &build_method(CdpDomain::Runtime, "evaluate"),
-            Some(params),
-        ).await?;
+        let response = conn
+            .send_command(&build_method(CdpDomain::Runtime, "evaluate"), Some(params))
+            .await?;
 
-        let result = response.result
+        let result = response
+            .result
             .as_ref()
             .and_then(|r| r.get("result"))
             .cloned()
@@ -149,7 +155,9 @@ impl Page {
         wait_for: &str,
         timeout_ms: u64,
     ) -> BrowserResult<RemoteObject> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
         let params = serde_json::json!({
@@ -160,10 +168,12 @@ impl Page {
 
         let start = std::time::Instant::now();
         loop {
-            let response = conn.send_command(
-                &build_method(CdpDomain::Runtime, "evaluate"),
-                Some(params.clone()),
-            ).await?;
+            let response = conn
+                .send_command(
+                    &build_method(CdpDomain::Runtime, "evaluate"),
+                    Some(params.clone()),
+                )
+                .await?;
 
             if let Some(result) = response.result.as_ref().and_then(|r| r.get("result"))
                 && let Some(value) = result.get("value").and_then(|v| v.as_bool())
@@ -184,7 +194,9 @@ impl Page {
     }
 
     pub async fn take_screenshot(&self) -> BrowserResult<Vec<u8>> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
         let params = serde_json::json!({
@@ -192,12 +204,15 @@ impl Page {
             "captureBeyondViewport": true
         });
 
-        let response = conn.send_command(
-            &build_method(CdpDomain::Page, "captureScreenshot"),
-            Some(params),
-        ).await?;
+        let response = conn
+            .send_command(
+                &build_method(CdpDomain::Page, "captureScreenshot"),
+                Some(params),
+            )
+            .await?;
 
-        let data = response.result
+        let data = response
+            .result
             .as_ref()
             .and_then(|r| r.get("data"))
             .and_then(|d| d.as_str())
@@ -210,15 +225,17 @@ impl Page {
     }
 
     pub async fn get_document(&self) -> BrowserResult<String> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
-        let response = conn.send_command(
-            &build_method(CdpDomain::DOM, "getDocument"),
-            None,
-        ).await?;
+        let response = conn
+            .send_command(&build_method(CdpDomain::DOM, "getDocument"), None)
+            .await?;
 
-        let root_node_id = response.result
+        let root_node_id = response
+            .result
             .as_ref()
             .and_then(|r| r.get("root"))
             .and_then(|root| root.get("nodeId"))
@@ -232,7 +249,8 @@ impl Page {
         self.evaluate(&format!(
             r#"document.querySelector('{}').click()"#,
             selector
-        )).await?;
+        ))
+        .await?;
         Ok(())
     }
 
@@ -248,20 +266,23 @@ impl Page {
             "#,
             selector,
             text.replace('\'', "\\\'")
-        )).await?;
+        ))
+        .await?;
         Ok(())
     }
 
     pub async fn get_cookies(&self) -> BrowserResult<Vec<serde_json::Value>> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
-        let response = conn.send_command(
-            &build_method(CdpDomain::Network, "getAllCookies"),
-            None,
-        ).await?;
+        let response = conn
+            .send_command(&build_method(CdpDomain::Network, "getAllCookies"), None)
+            .await?;
 
-        let cookies = response.result
+        let cookies = response
+            .result
             .as_ref()
             .and_then(|r| r.get("cookies"))
             .and_then(|c| c.as_array())
@@ -272,7 +293,9 @@ impl Page {
     }
 
     pub async fn set_cookies(&self, cookies: Vec<serde_json::Value>) -> BrowserResult<()> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
         let params = serde_json::json!({
@@ -282,54 +305,77 @@ impl Page {
         conn.send_command(
             &build_method(CdpDomain::Network, "setCookies"),
             Some(params),
-        ).await?;
+        )
+        .await?;
 
         Ok(())
     }
 
     pub async fn get_html(&self) -> BrowserResult<String> {
         let result = self.evaluate("document.documentElement.outerHTML").await?;
-        Ok(result.value.and_then(|v| v.as_str().map(String::from)).unwrap_or_default())
+        Ok(result
+            .value
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_default())
     }
 
     pub async fn wait_for_selector(&self, selector: &str, timeout_ms: u64) -> BrowserResult<()> {
         let start = std::time::Instant::now();
-        let expr = format!(r#"!!document.querySelector('{}')"#, selector.replace('\'', "\\'"));
+        let expr = format!(
+            r#"!!document.querySelector('{}')"#,
+            selector.replace('\'', "\\'")
+        );
         loop {
             let result = self.evaluate(&expr).await?;
             if result.value.and_then(|v| v.as_bool()).unwrap_or(false) {
                 return Ok(());
             }
             if start.elapsed().as_millis() > timeout_ms as u128 {
-                return Err(BrowserError::Timeout(format!("Selector '{}' not found", selector)));
+                return Err(BrowserError::Timeout(format!(
+                    "Selector '{}' not found",
+                    selector
+                )));
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
     }
 
     pub async fn set_viewport(&self, width: i32, height: i32) -> BrowserResult<()> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".into()))?;
-        conn.send_command("Emulation.setDeviceMetricsOverride", Some(serde_json::json!({
-            "width": width, "height": height,
-            "deviceScaleFactor": 1, "mobile": false,
-        }))).await?;
+        conn.send_command(
+            "Emulation.setDeviceMetricsOverride",
+            Some(serde_json::json!({
+                "width": width, "height": height,
+                "deviceScaleFactor": 1, "mobile": false,
+            })),
+        )
+        .await?;
         Ok(())
     }
 
     pub async fn get_pdf(&self) -> BrowserResult<Vec<u8>> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| BrowserError::ConnectionError("Not connected".into()))?;
-        let response = conn.send_command(
-            &build_method(CdpDomain::Page, "printToPDF"),
-            Some(serde_json::json!({"printBackground": true})),
-        ).await?;
-        let data = response.result.as_ref()
+        let response = conn
+            .send_command(
+                &build_method(CdpDomain::Page, "printToPDF"),
+                Some(serde_json::json!({"printBackground": true})),
+            )
+            .await?;
+        let data = response
+            .result
+            .as_ref()
             .and_then(|r| r.get("data"))
             .and_then(|d| d.as_str())
             .ok_or_else(|| BrowserError::PageError("No PDF data".into()))?;
         use base64::Engine;
-        base64::engine::general_purpose::STANDARD.decode(data)
+        base64::engine::general_purpose::STANDARD
+            .decode(data)
             .map_err(|e| BrowserError::ProtocolError(e.to_string()))
     }
 

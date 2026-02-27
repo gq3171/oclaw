@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-cron-core"
+name = "oclaw-cron-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

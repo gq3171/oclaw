@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-tui-core"
+name = "oclaw-tui-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -13,17 +13,16 @@ thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-ratatui = "0.29"
+reedline = "0.38"
+termimad = "0.30"
 crossterm = "0.28"
 unicode-width = "0.2"
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 futures = "0.3"
 url = "2"
 chrono.workspace = true
 uuid.workspace = true
 reqwest.workspace = true
+dirs = "6.0"
 
 [features]
 default = []
-crossterm = ["ratatui/crossterm"]
-termion = ["ratatui/termion"]

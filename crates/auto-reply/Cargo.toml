@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-auto-reply"
+name = "oclaw-auto-reply"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

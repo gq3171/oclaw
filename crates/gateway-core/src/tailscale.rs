@@ -2,10 +2,10 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::RwLock;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 use crate::error::{GatewayError, GatewayResult};
-use oclaws_config::settings::Tailscale;
+use oclaw_config::settings::Tailscale;
 
 pub struct TailscaleManager {
     config: Tailscale,
@@ -54,9 +54,10 @@ impl TailscaleManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let output = cmd.output().await.map_err(|e| {
-            GatewayError::ServerError(format!("Failed to start Tailscale: {}", e))
-        })?;
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| GatewayError::ServerError(format!("Failed to start Tailscale: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -78,9 +79,7 @@ impl TailscaleManager {
             .args(["down"])
             .output()
             .await
-            .map_err(|e| {
-                GatewayError::ServerError(format!("Failed to stop Tailscale: {}", e))
-            })?;
+            .map_err(|e| GatewayError::ServerError(format!("Failed to stop Tailscale: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -139,9 +138,7 @@ impl TailscaleManager {
             .args(["down"])
             .output()
             .await
-            .map_err(|e| {
-                GatewayError::ServerError(format!("Failed to reset Tailscale: {}", e))
-            })?;
+            .map_err(|e| GatewayError::ServerError(format!("Failed to reset Tailscale: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

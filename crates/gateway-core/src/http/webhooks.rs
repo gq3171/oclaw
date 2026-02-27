@@ -1,20 +1,25 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    Json,
 };
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use crate::http::HttpState;
-use oclaws_channel_core::traits::ChannelEvent;
-use oclaws_channel_core::group_gate;
+use oclaw_channel_core::group_gate;
+use oclaw_channel_core::traits::ChannelEvent;
 
 // ── Webhook signature verification ──────────────────────────────────────
 
 /// Verify Slack webhook signature (HMAC-SHA256).
-fn verify_slack_signature(signing_secret: &str, timestamp: &str, body: &str, expected_sig: &str) -> bool {
+fn verify_slack_signature(
+    signing_secret: &str,
+    timestamp: &str,
+    body: &str,
+    expected_sig: &str,
+) -> bool {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     let base = format!("v0:{}:{}", timestamp, body);
@@ -27,26 +32,44 @@ fn verify_slack_signature(signing_secret: &str, timestamp: &str, body: &str, exp
 }
 
 /// Verify Feishu/Lark webhook signature.
-fn verify_feishu_signature(encrypt_key: &str, timestamp: &str, body: &str, expected_sig: &str) -> bool {
-    use sha2::{Sha256, Digest};
+fn verify_feishu_signature(
+    encrypt_key: &str,
+    timestamp: &str,
+    body: &str,
+    expected_sig: &str,
+) -> bool {
+    use sha2::{Digest, Sha256};
     let to_sign = format!("{}\n{}\n{}", timestamp, encrypt_key, body);
     let hash = hex::encode(Sha256::digest(to_sign.as_bytes()));
     constant_time_eq(hash.as_bytes(), expected_sig.as_bytes())
 }
 
 /// Verify Discord webhook signature (Ed25519).
-fn verify_discord_signature(public_key_hex: &str, signature_hex: &str, timestamp: &str, body: &str) -> bool {
-    use ed25519_dalek::{Signature, VerifyingKey, Verifier};
+fn verify_discord_signature(
+    public_key_hex: &str,
+    signature_hex: &str,
+    timestamp: &str,
+    body: &str,
+) -> bool {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-    let Ok(key_bytes) = hex::decode(public_key_hex) else { return false };
-    let Ok(sig_bytes) = hex::decode(signature_hex) else { return false };
+    let Ok(key_bytes) = hex::decode(public_key_hex) else {
+        return false;
+    };
+    let Ok(sig_bytes) = hex::decode(signature_hex) else {
+        return false;
+    };
 
     let key_arr: [u8; 32] = match key_bytes.try_into() {
         Ok(a) => a,
         Err(_) => return false,
     };
-    let Ok(verifying_key) = VerifyingKey::from_bytes(&key_arr) else { return false };
-    let Ok(signature) = Signature::from_slice(&sig_bytes) else { return false };
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&key_arr) else {
+        return false;
+    };
+    let Ok(signature) = Signature::from_slice(&sig_bytes) else {
+        return false;
+    };
 
     let message = format!("{}{}", timestamp, body);
     verifying_key.verify(message.as_bytes(), &signature).is_ok()
@@ -78,14 +101,24 @@ async fn get_channel_and_forward(
 ) -> Response {
     let manager = match &state.channel_manager {
         Some(m) => m,
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "No channel manager configured"}))).into_response(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "No channel manager configured"})),
+            )
+                .into_response();
+        }
     };
     let mgr = manager.read().await;
     let channel = match mgr.get(channel_name).await {
         Some(c) => c,
         None => {
             tracing::warn!("Webhook for unregistered channel '{}'", channel_name);
-            return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("Channel '{}' not found", channel_name)}))).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": format!("Channel '{}' not found", channel_name)})),
+            )
+                .into_response();
         }
     };
     let ch = channel.read().await;
@@ -93,7 +126,11 @@ async fn get_channel_and_forward(
         Ok(()) => Json(serde_json::json!({"ok": true})).into_response(),
         Err(e) => {
             error!("Webhook event handling failed: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response()
         }
     }
 }
@@ -111,7 +148,11 @@ pub async fn telegram_webhook(
             .unwrap_or("");
         if !verify_telegram_secret(&secret, header_token) {
             warn!("Telegram webhook: invalid secret token");
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid secret token"}))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid secret token"})),
+            )
+                .into_response();
         }
     }
 
@@ -126,7 +167,10 @@ pub async fn telegram_webhook(
     let (chat_id, text, is_group) = if event_type == "message" {
         let cid = payload.pointer("/message/chat/id").and_then(|v| v.as_i64());
         let txt = payload.pointer("/message/text").and_then(|v| v.as_str());
-        let chat_type = payload.pointer("/message/chat/type").and_then(|v| v.as_str()).unwrap_or("private");
+        let chat_type = payload
+            .pointer("/message/chat/type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("private");
         let group = chat_type == "group" || chat_type == "supergroup";
         (cid, txt.map(|s| s.to_string()), group)
     } else {
@@ -137,12 +181,15 @@ pub async fn telegram_webhook(
         let is_echo = state.echo_tracker.lock().await.has(&text);
         // Telegram: check for @bot mention via entities (type=mention or bot_command)
         // This is more accurate than naive text.contains('@') which matches any @ symbol
-        let has_mention = payload.pointer("/message/entities")
+        let has_mention = payload
+            .pointer("/message/entities")
             .and_then(|v| v.as_array())
-            .is_some_and(|arr| arr.iter().any(|e| {
-                let t = e["type"].as_str().unwrap_or("");
-                t == "mention" || t == "bot_command"
-            }));
+            .is_some_and(|arr| {
+                arr.iter().any(|e| {
+                    let t = e["type"].as_str().unwrap_or("");
+                    t == "mention" || t == "bot_command"
+                })
+            });
         let should = group_gate::should_process(is_group, state.group_activation, has_mention);
 
         if !is_echo && should {
@@ -172,13 +219,8 @@ async fn handle_telegram_reply(
     let mut metadata = std::collections::HashMap::new();
     metadata.insert("chat_id".to_string(), chat_id.to_string());
 
-    crate::pipeline::process_message(
-        state,
-        "telegram",
-        &chat_id.to_string(),
-        text,
-        metadata,
-    ).await?;
+    crate::pipeline::process_message(state, "telegram", &chat_id.to_string(), text, metadata)
+        .await?;
     Ok(())
 }
 
@@ -205,23 +247,39 @@ pub async fn slack_webhook(
             let now = chrono::Utc::now().timestamp();
             if (now - ts).unsigned_abs() > 300 {
                 warn!("Slack webhook: timestamp too old (replay attack?)");
-                return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Request too old"}))).into_response();
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"error": "Request too old"})),
+                )
+                    .into_response();
             }
         } else {
             warn!("Slack webhook: missing or invalid timestamp");
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid timestamp"}))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid timestamp"})),
+            )
+                .into_response();
         }
 
         if !verify_slack_signature(&signing_secret, timestamp, &body_str, signature) {
             warn!("Slack webhook: invalid signature");
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid signature"}))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid signature"})),
+            )
+                .into_response();
         }
     }
 
     let mut payload: serde_json::Value = match serde_json::from_str(&body_str) {
         Ok(v) => v,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
 
@@ -232,26 +290,43 @@ pub async fn slack_webhook(
     }
 
     // Inject Slack signature headers + raw body into payload for downstream verification
-    if let Some(ts) = headers.get("x-slack-request-timestamp").and_then(|v| v.to_str().ok()) {
+    if let Some(ts) = headers
+        .get("x-slack-request-timestamp")
+        .and_then(|v| v.to_str().ok())
+    {
         payload["_slack_timestamp"] = serde_json::json!(ts);
     }
-    if let Some(sig) = headers.get("x-slack-signature").and_then(|v| v.to_str().ok()) {
+    if let Some(sig) = headers
+        .get("x-slack-signature")
+        .and_then(|v| v.to_str().ok())
+    {
         payload["_slack_signature"] = serde_json::json!(sig);
     }
     payload["_slack_raw_body"] = serde_json::json!(body_str);
 
-    let event_type = payload.get("event").and_then(|e| e.get("type")).and_then(|t| t.as_str()).unwrap_or("event");
+    let event_type = payload
+        .get("event")
+        .and_then(|e| e.get("type"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("event");
     info!("Slack webhook: {}", event_type);
 
     // Extract text from message events and run through pipeline for memory capture
     if event_type == "message" || event_type == "app_mention" {
-        let text = payload.pointer("/event/text").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let channel_id = payload.pointer("/event/channel").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let text = payload
+            .pointer("/event/text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let channel_id = payload
+            .pointer("/event/channel")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let bot_id = payload.pointer("/event/bot_id");
         let subtype = payload.pointer("/event/subtype");
 
         // Skip bot messages and message_changed subtypes
-        if bot_id.is_none() && subtype.is_none()
+        if bot_id.is_none()
+            && subtype.is_none()
             && let (Some(text), Some(channel_id)) = (text, channel_id)
             && !text.is_empty()
         {
@@ -259,8 +334,14 @@ pub async fn slack_webhook(
             let metadata = std::collections::HashMap::new();
             tokio::spawn(async move {
                 if let Err(e) = crate::pipeline::process_message(
-                    &state_clone, "slack", &channel_id, &text, metadata,
-                ).await {
+                    &state_clone,
+                    "slack",
+                    &channel_id,
+                    &text,
+                    metadata,
+                )
+                .await
+                {
                     error!("Slack pipeline error: {}", e);
                 }
             });
@@ -295,19 +376,31 @@ pub async fn discord_webhook(
 
         if signature.is_empty() || timestamp.is_empty() {
             warn!("Discord webhook: missing signature or timestamp");
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Missing signature"}))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Missing signature"})),
+            )
+                .into_response();
         }
 
         if !verify_discord_signature(&public_key, signature, timestamp, &body_str) {
             warn!("Discord webhook: invalid signature");
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid signature"}))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid signature"})),
+            )
+                .into_response();
         }
     }
 
     let payload: serde_json::Value = match serde_json::from_str(&body_str) {
         Ok(v) => v,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
 
@@ -316,18 +409,24 @@ pub async fn discord_webhook(
         return Json(serde_json::json!({"type": 1})).into_response();
     }
 
-    let event_type = payload.get("type").and_then(|t| t.as_u64()).map(|t| format!("interaction_{}", t)).unwrap_or_else(|| "interaction".to_string());
+    let event_type = payload
+        .get("type")
+        .and_then(|t| t.as_u64())
+        .map(|t| format!("interaction_{}", t))
+        .unwrap_or_else(|| "interaction".to_string());
     info!("Discord webhook: {}", event_type);
 
     // Extract text from interactions and run through pipeline for memory capture
     // Type 2 = APPLICATION_COMMAND, Type 4 = MESSAGE_COMPONENT
     let interaction_type = payload.get("type").and_then(|t| t.as_u64()).unwrap_or(0);
     if interaction_type == 2 || interaction_type == 4 {
-        let text = payload.pointer("/data/options/0/value")
+        let text = payload
+            .pointer("/data/options/0/value")
             .and_then(|v| v.as_str())
             .or_else(|| payload.pointer("/data/custom_id").and_then(|v| v.as_str()))
             .map(|s| s.to_string());
-        let channel_id = payload.pointer("/channel_id")
+        let channel_id = payload
+            .pointer("/channel_id")
             .and_then(|v| v.as_str())
             .unwrap_or("default")
             .to_string();
@@ -339,8 +438,14 @@ pub async fn discord_webhook(
             let metadata = std::collections::HashMap::new();
             tokio::spawn(async move {
                 if let Err(e) = crate::pipeline::process_message(
-                    &state_clone, "discord", &channel_id, &text, metadata,
-                ).await {
+                    &state_clone,
+                    "discord",
+                    &channel_id,
+                    &text,
+                    metadata,
+                )
+                .await
+                {
                     error!("Discord pipeline error: {}", e);
                 }
             });
@@ -374,11 +479,19 @@ pub async fn feishu_webhook(
 
         if signature.is_empty() || timestamp.is_empty() {
             warn!("Feishu webhook: missing signature or timestamp");
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Missing signature"}))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Missing signature"})),
+            )
+                .into_response();
         }
         if !verify_feishu_signature(&encrypt_key, timestamp, &body_str, signature) {
             warn!("Feishu webhook: invalid signature");
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid signature"}))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid signature"})),
+            )
+                .into_response();
         }
     }
 
@@ -389,24 +502,39 @@ pub async fn feishu_webhook(
     }
 
     // Extract event type
-    let event_type = payload.pointer("/header/event_type")
+    let event_type = payload
+        .pointer("/header/event_type")
         .and_then(|t| t.as_str())
         .unwrap_or("event");
     info!("Feishu webhook: {}", event_type);
 
     // Handle im.message.receive_v1
     if event_type == "im.message.receive_v1" {
-        let chat_id = payload.pointer("/event/message/chat_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let message_id = payload.pointer("/event/message/message_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let msg_type = payload.pointer("/event/message/message_type").and_then(|v| v.as_str()).unwrap_or("text");
-        let chat_type = payload.pointer("/event/message/chat_type").and_then(|v| v.as_str()).unwrap_or("p2p");
+        let chat_id = payload
+            .pointer("/event/message/chat_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let message_id = payload
+            .pointer("/event/message/message_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let msg_type = payload
+            .pointer("/event/message/message_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("text");
+        let chat_type = payload
+            .pointer("/event/message/chat_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("p2p");
         let is_group = chat_type == "group";
-        let has_mention = payload.pointer("/event/message/mentions")
+        let has_mention = payload
+            .pointer("/event/message/mentions")
             .and_then(|v| v.as_array())
             .is_some_and(|arr| !arr.is_empty());
 
         let text = if msg_type == "text" {
-            payload.pointer("/event/message/content")
+            payload
+                .pointer("/event/message/content")
                 .and_then(|v| v.as_str())
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
                 .and_then(|v| v["text"].as_str().map(|s| s.to_string()))
@@ -424,7 +552,10 @@ pub async fn feishu_webhook(
                 let state_clone = state.clone();
                 let message_id = message_id.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_feishu_reply(&state_clone, &chat_id, message_id.as_deref(), &text).await {
+                    if let Err(e) =
+                        handle_feishu_reply(&state_clone, &chat_id, message_id.as_deref(), &text)
+                            .await
+                    {
                         error!("Failed to handle Feishu reply: {}", e);
                     }
                 });
@@ -454,13 +585,7 @@ async fn handle_feishu_reply(
         metadata.insert("message_id".to_string(), mid.to_string());
     }
 
-    crate::pipeline::process_message(
-        state,
-        "feishu",
-        chat_id,
-        text,
-        metadata,
-    ).await?;
+    crate::pipeline::process_message(state, "feishu", chat_id, text, metadata).await?;
     Ok(())
 }
 
@@ -493,14 +618,22 @@ pub async fn whatsapp_webhook(
             .unwrap_or("");
         if !verify_whatsapp_signature(&app_secret, &body_str, signature) {
             warn!("WhatsApp webhook: invalid signature");
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid signature"}))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid signature"})),
+            )
+                .into_response();
         }
     }
 
     let payload: serde_json::Value = match serde_json::from_str(&body_str) {
         Ok(v) => v,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
 
@@ -516,10 +649,15 @@ pub async fn whatsapp_webhook(
     let messages = payload.pointer("/entry/0/changes/0/value/messages");
     if let Some(msgs) = messages.and_then(|v| v.as_array()) {
         for msg in msgs {
-            let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let from = msg
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("text");
             let text = if msg_type == "text" {
-                msg.pointer("/text/body").and_then(|v| v.as_str()).map(|s| s.to_string())
+                msg.pointer("/text/body")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
             } else if msg_type == "interactive" {
                 msg.pointer("/interactive/button_reply/title")
                     .or_else(|| msg.pointer("/interactive/list_reply/title"))
@@ -540,8 +678,14 @@ pub async fn whatsapp_webhook(
                     metadata.insert("recipient".to_string(), from.clone());
                     tokio::spawn(async move {
                         if let Err(e) = crate::pipeline::process_message(
-                            &state_clone, "whatsapp", &from, &text, metadata,
-                        ).await {
+                            &state_clone,
+                            "whatsapp",
+                            &from,
+                            &text,
+                            metadata,
+                        )
+                        .await
+                        {
                             error!("WhatsApp pipeline error: {}", e);
                         }
                     });
@@ -588,16 +732,21 @@ pub async fn generic_webhook(
         && !msg.text.is_empty()
     {
         let is_echo = state.echo_tracker.lock().await.has(&msg.text);
-        let should = group_gate::should_process(
-            msg.is_group, state.group_activation, msg.has_mention,
-        );
+        let should =
+            group_gate::should_process(msg.is_group, state.group_activation, msg.has_mention);
         if !is_echo && should {
             let state_clone = state.clone();
             let ch = channel_name.clone();
             tokio::spawn(async move {
                 if let Err(e) = crate::pipeline::process_message(
-                    &state_clone, &ch, &msg.chat_id, &msg.text, msg.metadata,
-                ).await {
+                    &state_clone,
+                    &ch,
+                    &msg.chat_id,
+                    &msg.text,
+                    msg.metadata,
+                )
+                .await
+                {
                     error!("{} pipeline error: {}", ch, e);
                 }
             });

@@ -69,15 +69,33 @@ impl TokenCounter {
 
     pub fn max_tokens(model: &str) -> Option<usize> {
         let m = model.to_lowercase();
-        if m.contains("gpt-4o") { return Some(128000); }
-        if m.contains("gpt-4-turbo") { return Some(128000); }
-        if m.contains("gpt-4-32k") { return Some(32768); }
-        if m.contains("gpt-4") { return Some(8192); }
-        if m.contains("gpt-3.5-turbo-16k") { return Some(16385); }
-        if m.contains("gpt-3.5") { return Some(4096); }
-        if m.contains("claude-3") || m.contains("claude-4") { return Some(200000); }
-        if m.contains("gemini-pro") { return Some(32768); }
-        if m.contains("gemini-1.5") { return Some(1048576); }
+        if m.contains("gpt-4o") {
+            return Some(128000);
+        }
+        if m.contains("gpt-4-turbo") {
+            return Some(128000);
+        }
+        if m.contains("gpt-4-32k") {
+            return Some(32768);
+        }
+        if m.contains("gpt-4") {
+            return Some(8192);
+        }
+        if m.contains("gpt-3.5-turbo-16k") {
+            return Some(16385);
+        }
+        if m.contains("gpt-3.5") {
+            return Some(4096);
+        }
+        if m.contains("claude-3") || m.contains("claude-4") {
+            return Some(200000);
+        }
+        if m.contains("gemini-pro") {
+            return Some(32768);
+        }
+        if m.contains("gemini-1.5") {
+            return Some(1048576);
+        }
         None
     }
 

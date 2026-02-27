@@ -1,24 +1,24 @@
 [package]
-name = "oclaws"
+name = "oclaw"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "oclaws"
+name = "oclaw"
 path = "src/main.rs"
 
 [dependencies]
-oclaws-protocol.workspace = true
-oclaws-config.workspace = true
-oclaws-gateway-core.workspace = true
-oclaws-channel-core.workspace = true
-oclaws-llm-core.workspace = true
-oclaws-agent-core.workspace = true
-oclaws-memory-core.workspace = true
-oclaws-tools-core.workspace = true
-oclaws-doctor-core.workspace = true
+oclaw-protocol.workspace = true
+oclaw-config.workspace = true
+oclaw-gateway-core.workspace = true
+oclaw-channel-core.workspace = true
+oclaw-llm-core.workspace = true
+oclaw-agent-core.workspace = true
+oclaw-memory-core.workspace = true
+oclaw-tools-core.workspace = true
+oclaw-doctor-core.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -29,12 +29,12 @@ serde_json.workspace = true
 uuid.workspace = true
 futures.workspace = true
 reqwest.workspace = true
-oclaws-tui-core = { path = "../tui-core" }
-oclaws-daemon-core = { path = "../daemon-core" }
-oclaws-skills-core = { path = "../skills-core" }
-oclaws-plugin-core = { path = "../plugin-core" }
-oclaws-cron-core = { path = "../cron-core" }
-oclaws-workspace-core = { path = "../workspace-core" }
+oclaw-tui-core = { path = "../tui-core" }
+oclaw-daemon-core = { path = "../daemon-core" }
+oclaw-skills-core = { path = "../skills-core" }
+oclaw-plugin-core = { path = "../plugin-core" }
+oclaw-cron-core = { path = "../cron-core" }
+oclaw-workspace-core = { path = "../workspace-core" }
 async-trait.workspace = true
 dotenvy.workspace = true
 tokio-tungstenite.workspace = true

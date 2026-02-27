@@ -93,24 +93,28 @@ opentelemetry-otlp = { version = "0.27", features = ["tonic"] }
 tracing-opentelemetry = "0.28"
 
 # Workspace member crates
-oclaws-protocol = { path = "crates/protocol" }
-oclaws-config = { path = "crates/config" }
-oclaws-gateway-core = { path = "crates/gateway-core" }
-oclaws-channel-core = { path = "crates/channel-core" }
-oclaws-browser-core = { path = "crates/browser-core" }
-oclaws-llm-core = { path = "crates/llm-core" }
-oclaws-tools-core = { path = "crates/tools-core" }
-oclaws-agent-core = { path = "crates/agent-core" }
-oclaws-plugin-core = { path = "crates/plugin-core" }
-oclaws-skills-core = { path = "crates/skills-core" }
-oclaws-doctor-core = { path = "crates/doctor-core" }
-oclaws-security-core = { path = "crates/security-core" }
-oclaws-tui-core = { path = "crates/tui-core" }
-oclaws-daemon-core = { path = "crates/daemon-core" }
-oclaws-cron-core = { path = "crates/cron-core" }
-oclaws-memory-core = { path = "crates/memory-core" }
-oclaws-auto-reply = { path = "crates/auto-reply" }
-oclaws-workspace-core = { path = "crates/workspace-core" }
+oclaw-protocol = { path = "crates/protocol" }
+oclaw-config = { path = "crates/config" }
+oclaw-gateway-core = { path = "crates/gateway-core" }
+oclaw-channel-core = { path = "crates/channel-core" }
+oclaw-browser-core = { path = "crates/browser-core" }
+oclaw-llm-core = { path = "crates/llm-core" }
+oclaw-tools-core = { path = "crates/tools-core" }
+oclaw-agent-core = { path = "crates/agent-core" }
+oclaw-plugin-core = { path = "crates/plugin-core" }
+oclaw-skills-core = { path = "crates/skills-core" }
+oclaw-doctor-core = { path = "crates/doctor-core" }
+oclaw-security-core = { path = "crates/security-core" }
+oclaw-tui-core = { path = "crates/tui-core" }
+oclaw-daemon-core = { path = "crates/daemon-core" }
+oclaw-cron-core = { path = "crates/cron-core" }
+oclaw-memory-core = { path = "crates/memory-core" }
+oclaw-auto-reply = { path = "crates/auto-reply" }
+oclaw-media-understanding = { path = "crates/media-understanding" }
+oclaw-workspace-core = { path = "crates/workspace-core" }
+oclaw-acp = { path = "crates/acp" }
+oclaw-tts-core = { path = "crates/tts-core" }
+oclaw-pairing = { path = "crates/pairing" }
 
 [profile.release]
 lto = "thin"

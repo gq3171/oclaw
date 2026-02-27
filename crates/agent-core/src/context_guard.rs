@@ -1,8 +1,8 @@
 //! Context Window Guard — prevents context overflow by proactively managing token budgets.
 
-use oclaws_llm_core::chat::{ChatMessage, MessageRole};
-use oclaws_llm_core::tokenizer::TokenCounter;
 use crate::str_util::floor_char_boundary;
+use oclaw_llm_core::chat::{ChatMessage, MessageRole};
+use oclaw_llm_core::tokenizer::TokenCounter;
 
 const HARD_MIN_TOKENS: usize = 16_000;
 const WARNING_THRESHOLD: usize = 32_000;
@@ -91,9 +91,7 @@ impl ContextGuard {
                     let max_chars = limit_per_tool * 4;
                     if msg.content.len() > max_chars {
                         let safe_max = floor_char_boundary(&msg.content, max_chars);
-                        let cut = msg.content[..safe_max]
-                            .rfind('\n')
-                            .unwrap_or(safe_max);
+                        let cut = msg.content[..safe_max].rfind('\n').unwrap_or(safe_max);
                         msg.content = format!(
                             "{}\n\n[Truncated by context guard — original ~{} tokens, limit {}]",
                             &msg.content[..cut],

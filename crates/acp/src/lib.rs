@@ -29,7 +29,7 @@ pub const SESSION_RATE_LIMIT_WINDOW_MS: u64 = 10_000;
 pub struct SessionRateLimiter {
     max_requests: u32,
     window_ms: u64,
-    timestamps: parking_lot::Mutex<std::collections::VecDeque<u64>>,
+    buckets: parking_lot::Mutex<std::collections::HashMap<String, std::collections::VecDeque<u64>>>,
 }
 
 impl SessionRateLimiter {
@@ -37,7 +37,7 @@ impl SessionRateLimiter {
         Self {
             max_requests,
             window_ms,
-            timestamps: parking_lot::Mutex::new(std::collections::VecDeque::new()),
+            buckets: parking_lot::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -47,12 +47,25 @@ impl SessionRateLimiter {
 
     /// Returns `Ok(())` if request is allowed, `Err` if rate limit exceeded.
     pub fn check(&self) -> Result<(), &'static str> {
+        self.check_with_key("global")
+    }
+
+    /// Keyed sliding-window check (for example, per client IP).
+    pub fn check_with_key(&self, key: &str) -> Result<(), &'static str> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
 
-        let mut ts = self.timestamps.lock();
+        let mut buckets = self.buckets.lock();
+        let bucket_key = if key.trim().is_empty() {
+            "global".to_string()
+        } else {
+            key.to_string()
+        };
+        let ts = buckets
+            .entry(bucket_key)
+            .or_insert_with(std::collections::VecDeque::new);
 
         // Remove entries outside the window
         let cutoff = now.saturating_sub(self.window_ms);

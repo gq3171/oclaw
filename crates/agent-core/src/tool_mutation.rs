@@ -1,13 +1,31 @@
 use std::collections::HashSet;
 
 const MUTATING_TOOLS: &[&str] = &[
-    "write", "edit", "apply_patch", "exec", "bash", "process",
-    "message", "sessions_send", "cron", "gateway", "canvas", "nodes", "session_status",
+    "write",
+    "edit",
+    "apply_patch",
+    "exec",
+    "bash",
+    "process",
+    "message",
+    "sessions_send",
+    "cron",
+    "gateway",
+    "canvas",
+    "nodes",
+    "session_status",
 ];
 
 const PROCESS_MUTATING_ACTIONS: &[&str] = &["write", "send_keys", "submit", "paste", "kill"];
 const MESSAGE_MUTATING_ACTIONS: &[&str] = &[
-    "send", "reply", "thread_reply", "edit", "delete", "react", "pin", "unpin",
+    "send",
+    "reply",
+    "thread_reply",
+    "edit",
+    "delete",
+    "react",
+    "pin",
+    "unpin",
 ];
 const READ_ONLY_ACTIONS: &[&str] = &["list", "get", "read", "status", "search", "query"];
 
@@ -36,8 +54,17 @@ pub fn is_mutating_tool_call(name: &str, args: &serde_json::Value) -> bool {
 }
 
 const TARGET_KEYS: &[&str] = &[
-    "path", "filePath", "oldPath", "newPath", "to", "target",
-    "messageId", "sessionKey", "jobId", "id", "model",
+    "path",
+    "filePath",
+    "oldPath",
+    "newPath",
+    "to",
+    "target",
+    "messageId",
+    "sessionKey",
+    "jobId",
+    "id",
+    "model",
 ];
 
 pub fn build_tool_action_fingerprint(
@@ -64,9 +91,7 @@ pub fn build_tool_action_fingerprint(
         }
     }
 
-    if !found_target
-        && let Some(m) = meta
-    {
+    if !found_target && let Some(m) = meta {
         let normalized = m.trim().to_lowercase();
         if !normalized.is_empty() {
             parts.push(format!("meta={}", normalized));

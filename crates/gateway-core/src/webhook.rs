@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -167,7 +167,8 @@ impl WebhookManager {
 
     pub async fn list_by_event(&self, event: &WebhookEvent) -> Vec<WebhookRegistration> {
         let webhooks = self.webhooks.read().await;
-        webhooks.values()
+        webhooks
+            .values()
             .filter(|w| w.enabled && w.subscribes_to(event))
             .cloned()
             .collect()
@@ -195,16 +196,24 @@ impl WebhookManager {
 
     pub async fn trigger(&self, event: WebhookEvent, data: serde_json::Value) {
         let subscribers = self.list_by_event(&event).await;
-        
+
         for webhook in subscribers {
             let payload = WebhookPayload::new(event, data.clone());
             let http_client = self.http_client.clone();
             let webhook_url = webhook.url.clone();
             let secret = webhook.secret.clone();
             let headers = webhook.headers.clone();
-            
+
             tokio::spawn(async move {
-                if let Err(e) = send_webhook(&http_client, &webhook_url, payload, secret.as_deref(), &headers).await {
+                if let Err(e) = send_webhook(
+                    &http_client,
+                    &webhook_url,
+                    payload,
+                    secret.as_deref(),
+                    &headers,
+                )
+                .await
+                {
                     tracing::error!("Failed to send webhook to {}: {}", webhook_url, e);
                 }
             });
@@ -231,43 +240,44 @@ async fn send_webhook(
     headers: &HashMap<String, String>,
 ) -> Result<(), WebhookError> {
     let mut request = client.post(url);
-    
+
     for (key, value) in headers {
         request = request.header(key, value);
     }
-    
+
     if let Some(secret) = secret {
-        let payload_str = serde_json::to_string(&payload).map_err(WebhookError::SerializationError)?;
+        let payload_str =
+            serde_json::to_string(&payload).map_err(WebhookError::SerializationError)?;
         let signature = calculate_hmac_sha256(secret, &payload_str);
         request = request.header("X-Webhook-Signature", signature);
     }
-    
+
     request = request.header("Content-Type", "application/json");
-    
+
     let response = request
         .json(&payload)
         .send()
         .await
         .map_err(WebhookError::RequestError)?;
-    
+
     if !response.status().is_success() {
         return Err(WebhookError::ResponseError(format!(
             "HTTP {}",
             response.status()
         )));
     }
-    
+
     Ok(())
 }
 
 fn calculate_hmac_sha256(secret: &str, message: &str) -> String {
     use hmac::{Hmac, Mac};
     type HmacSha256 = Hmac<sha2::Sha256>;
-    
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC can take key of any size");
+
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(message.as_bytes());
-    
+
     let result = mac.finalize();
     hex::encode(result.into_bytes())
 }
@@ -276,10 +286,10 @@ fn calculate_hmac_sha256(secret: &str, message: &str) -> String {
 pub enum WebhookError {
     #[error("Request error: {0}")]
     RequestError(#[from] reqwest::Error),
-    
+
     #[error("Response error: {0}")]
     ResponseError(String),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
 }
@@ -291,9 +301,12 @@ mod tests {
     #[test]
     fn test_webhook_registration() {
         let webhook = WebhookRegistration::new("https://example.com/webhook")
-            .with_events(vec![WebhookEvent::MessageReceived, WebhookEvent::MessageSent])
+            .with_events(vec![
+                WebhookEvent::MessageReceived,
+                WebhookEvent::MessageSent,
+            ])
             .with_secret("my_secret");
-        
+
         assert!(webhook.subscribes_to(&WebhookEvent::MessageReceived));
         assert!(webhook.subscribes_to(&WebhookEvent::MessageSent));
         assert!(!webhook.subscribes_to(&WebhookEvent::PresenceChanged));
@@ -316,9 +329,9 @@ mod tests {
     fn test_webhook_payload() {
         let payload = WebhookPayload::new(
             WebhookEvent::MessageReceived,
-            serde_json::json!({"text": "hello"})
+            serde_json::json!({"text": "hello"}),
         );
-        
+
         assert_eq!(payload.event, WebhookEvent::MessageReceived);
         assert!(payload.source.is_none());
     }

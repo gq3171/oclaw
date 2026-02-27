@@ -23,9 +23,15 @@ impl UsageAccumulator {
     }
 
     /// Record usage from a single LLM call.
-    pub fn record(&mut self, usage: &oclaws_llm_core::chat::Usage) {
-        self.inner.input_tokens = self.inner.input_tokens.saturating_add(usage.prompt_tokens as i64);
-        self.inner.output_tokens = self.inner.output_tokens.saturating_add(usage.completion_tokens as i64);
+    pub fn record(&mut self, usage: &oclaw_llm_core::chat::Usage) {
+        self.inner.input_tokens = self
+            .inner
+            .input_tokens
+            .saturating_add(usage.prompt_tokens as i64);
+        self.inner.output_tokens = self
+            .inner
+            .output_tokens
+            .saturating_add(usage.completion_tokens as i64);
         self.inner.total_calls = self.inner.total_calls.saturating_add(1);
     }
 
@@ -61,6 +67,8 @@ impl UsageAccumulator {
 
     /// Total tokens (input + output), saturating to avoid overflow.
     pub fn total_tokens(&self) -> i64 {
-        self.inner.input_tokens.saturating_add(self.inner.output_tokens)
+        self.inner
+            .input_tokens
+            .saturating_add(self.inner.output_tokens)
     }
 }

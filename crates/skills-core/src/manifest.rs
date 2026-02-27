@@ -40,14 +40,20 @@ pub struct OpenClawMeta {
     #[serde(default)]
     pub install: Vec<InstallSpec>,
     pub primary_env: Option<String>,
+    pub skill_key: Option<String>,
+    pub emoji: Option<String>,
+    pub always: Option<bool>,
     #[serde(default)]
     pub os: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct RequiresSpec {
     #[serde(default)]
     pub bins: Vec<String>,
+    #[serde(default)]
+    pub any_bins: Vec<String>,
     #[serde(default)]
     pub env: Vec<String>,
     #[serde(default)]
@@ -57,7 +63,13 @@ pub struct RequiresSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallSpec {
+    pub id: Option<String>,
     pub kind: String, // brew, node, go, uv, download
+    pub label: Option<String>,
+    #[serde(default)]
+    pub os: Vec<String>,
+    #[serde(default)]
+    pub bins: Vec<String>,
     pub formula: Option<String>,
     pub package: Option<String>,
     pub module: Option<String>,

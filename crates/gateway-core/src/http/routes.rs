@@ -1,13 +1,16 @@
 use axum::{
-    extract::State,
-    http::{StatusCode, HeaderMap},
-    response::{sse::{Event, Sse}, IntoResponse, Response},
     Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{
+        IntoResponse, Response,
+        sse::{Event, Sse},
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use crate::http::HttpState;
 use oclaw_memory_core::MemoryManager;
@@ -26,6 +29,161 @@ fn spawn_memory_capture(mm: Arc<MemoryManager>, user_text: String, assistant_tex
     });
 }
 
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+}
+
+fn normalize_agent_id(raw: &str) -> String {
+    let trimmed = raw.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return "main".to_string();
+    }
+
+    let mut out = String::with_capacity(trimmed.len());
+    let mut prev_dash = false;
+    for ch in trimmed.chars() {
+        let valid = ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-';
+        if valid {
+            out.push(ch);
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        "main".to_string()
+    } else {
+        out.chars().take(64).collect()
+    }
+}
+
+fn resolve_agent_id_from_model(model: &str) -> Option<String> {
+    let raw = model.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = raw.strip_prefix("openclaw:") {
+        return Some(normalize_agent_id(rest));
+    }
+    if let Some(rest) = raw.strip_prefix("openclaw/") {
+        return Some(normalize_agent_id(rest));
+    }
+    if let Some(rest) = raw.strip_prefix("agent:") {
+        return Some(normalize_agent_id(rest));
+    }
+    None
+}
+
+fn resolve_agent_id_for_request(headers: &HeaderMap, model: &str) -> String {
+    if let Some(v) = header_value(headers, "x-openclaw-agent-id")
+        .or_else(|| header_value(headers, "x-openclaw-agent"))
+    {
+        return normalize_agent_id(&v);
+    }
+    resolve_agent_id_from_model(model).unwrap_or_else(|| "main".to_string())
+}
+
+fn sanitize_transcript_session_id(raw: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    raw.hash(&mut hasher);
+    let digest = format!("{:016x}", hasher.finish());
+
+    let mut safe = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.' {
+            safe.push(ch.to_ascii_lowercase());
+        } else {
+            safe.push('_');
+        }
+    }
+
+    while safe.contains("__") {
+        safe = safe.replace("__", "_");
+    }
+
+    let safe = safe.trim_matches('_');
+    if safe.is_empty() {
+        format!("session_{}", digest)
+    } else {
+        let head: String = safe.chars().take(96).collect();
+        format!("{}_{}", head, digest)
+    }
+}
+
+fn resolve_chat_completions_session_id(
+    headers: &HeaderMap,
+    model: &str,
+    user: Option<&str>,
+) -> Option<String> {
+    if let Some(explicit) = header_value(headers, "x-openclaw-session-key") {
+        return Some(sanitize_transcript_session_id(&explicit));
+    }
+
+    let user = user
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_lowercase)?;
+
+    let agent_id = resolve_agent_id_for_request(headers, model);
+    let key = format!("agent-{}-openai-user-{}", agent_id, user);
+    Some(sanitize_transcript_session_id(&key))
+}
+
+fn payload_has_explicit_history(messages: &[ChatMessage]) -> bool {
+    messages.iter().any(|m| {
+        matches!(
+            m.role.as_str(),
+            "assistant" | "tool" | "function" | "developer"
+        )
+    })
+}
+
+async fn persist_transcript_turn(session_id: Option<&str>, user_text: &str, assistant_text: &str) {
+    let Some(sid) = session_id.map(str::trim).filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let user_text = user_text.trim();
+    let assistant_text = assistant_text.trim();
+    if user_text.is_empty() || assistant_text.is_empty() {
+        return;
+    }
+
+    let transcript = oclaw_agent_core::Transcript::new(sid);
+    let user_msg = oclaw_llm_core::chat::ChatMessage {
+        role: oclaw_llm_core::chat::MessageRole::User,
+        content: user_text.to_string(),
+        name: None,
+        tool_calls: None,
+        tool_call_id: None,
+    };
+    if let Err(e) = transcript.append(&user_msg).await {
+        warn!("Transcript append user failed for {}: {}", sid, e);
+        return;
+    }
+
+    let assistant_msg = oclaw_llm_core::chat::ChatMessage {
+        role: oclaw_llm_core::chat::MessageRole::Assistant,
+        content: assistant_text.to_string(),
+        name: None,
+        tool_calls: None,
+        tool_call_id: None,
+    };
+    if let Err(e) = transcript.append(&assistant_msg).await {
+        warn!("Transcript append assistant failed for {}: {}", sid, e);
+    }
+}
+
 fn sanitize_error(msg: &str) -> String {
     // Strip anything that looks like an API key or token from error messages.
     // Regex is compiled once via LazyLock to avoid per-call overhead.
@@ -39,6 +197,8 @@ fn sanitize_error(msg: &str) -> String {
 pub struct ChatCompletionsRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
+    #[serde(default)]
+    pub user: Option<String>,
     #[serde(default)]
     pub temperature: Option<f64>,
     #[serde(default)]
@@ -113,32 +273,38 @@ pub struct ChunkDelta {
 }
 
 fn to_llm_messages(msgs: &[ChatMessage]) -> Vec<oclaw_llm_core::chat::ChatMessage> {
-    msgs.iter().map(|m| {
-        let role = match m.role.as_str() {
-            "system" => oclaw_llm_core::chat::MessageRole::System,
-            "assistant" => oclaw_llm_core::chat::MessageRole::Assistant,
-            "tool" => oclaw_llm_core::chat::MessageRole::Tool,
-            _ => oclaw_llm_core::chat::MessageRole::User,
-        };
-        oclaw_llm_core::chat::ChatMessage {
-            role,
-            content: m.content.clone(),
-            name: m.name.clone(),
-            tool_calls: None,
-            tool_call_id: m.tool_call_id.clone(),
-        }
-    }).collect()
+    msgs.iter()
+        .map(|m| {
+            let role = match m.role.as_str() {
+                "system" => oclaw_llm_core::chat::MessageRole::System,
+                "assistant" => oclaw_llm_core::chat::MessageRole::Assistant,
+                "tool" => oclaw_llm_core::chat::MessageRole::Tool,
+                _ => oclaw_llm_core::chat::MessageRole::User,
+            };
+            oclaw_llm_core::chat::ChatMessage {
+                role,
+                content: m.content.clone(),
+                name: m.name.clone(),
+                tool_calls: None,
+                tool_call_id: m.tool_call_id.clone(),
+            }
+        })
+        .collect()
 }
 
 pub async fn chat_completions_handler(
     State(state): State<Arc<HttpState>>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
     Json(payload): Json<ChatCompletionsRequest>,
 ) -> Response {
-    let is_hatching = state.needs_hatching.load(std::sync::atomic::Ordering::Relaxed);
+    let is_hatching = state
+        .needs_hatching
+        .load(std::sync::atomic::Ordering::Relaxed);
     info!(
         "Chat completions: model={}, messages={}, hatching={}",
-        payload.model, payload.messages.len(), is_hatching
+        payload.model,
+        payload.messages.len(),
+        is_hatching
     );
     // Log message roles for debugging hatching conversation flow
     if is_hatching {
@@ -153,34 +319,63 @@ pub async fn chat_completions_handler(
         None => return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": {"message": "No LLM provider configured", "type": "server_error"}}))).into_response(),
     };
 
+    let session_id =
+        resolve_chat_completions_session_id(&headers, &payload.model, payload.user.as_deref());
+
     let mut messages = to_llm_messages(&payload.messages);
+    if let Some(ref sid) = session_id
+        && !payload_has_explicit_history(&payload.messages)
+    {
+        let transcript = oclaw_agent_core::Transcript::new(sid);
+        let mut recalled = transcript.load().await;
+        if !recalled.is_empty() {
+            let insert_pos = messages
+                .iter()
+                .position(|m| m.role != oclaw_llm_core::chat::MessageRole::System)
+                .unwrap_or(messages.len());
+            info!(
+                "chat.completions replayed {} transcript messages for session {}",
+                recalled.len(),
+                sid
+            );
+            messages.splice(insert_pos..insert_pos, recalled.drain(..));
+        }
+    }
 
     // Inject hatching system prompt if first run
     if is_hatching {
-        let hatching_prompt = oclaw_workspace_core::bootstrap::BootstrapRunner::hatching_system_prompt();
-        messages.insert(0, oclaw_llm_core::chat::ChatMessage {
-            role: oclaw_llm_core::chat::MessageRole::System,
-            content: hatching_prompt.to_string(),
-            name: None,
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        let hatching_prompt =
+            oclaw_workspace_core::bootstrap::BootstrapRunner::hatching_system_prompt();
+        messages.insert(
+            0,
+            oclaw_llm_core::chat::ChatMessage {
+                role: oclaw_llm_core::chat::MessageRole::System,
+                content: hatching_prompt.to_string(),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        );
     }
 
     // Memory recall: inject relevant context from long-term memory
     if let Some(ref mm) = state.memory_manager {
-        let query = payload.messages.iter().rev()
+        let query = payload
+            .messages
+            .iter()
+            .rev()
             .find(|m| m.role == "user")
             .map(|m| m.content.clone())
             .unwrap_or_default();
         if !query.is_empty() {
             let recaller = crate::memory_bridge::MemoryManagerRecaller::new(mm.clone());
-            let results = oclaw_agent_core::auto_recall::MemoryRecaller::recall(
-                &recaller, &query, 5, 0.3,
-            ).await;
+            let results =
+                oclaw_agent_core::auto_recall::MemoryRecaller::recall(&recaller, &query, 5, 0.3)
+                    .await;
             if let Some(ctx_msg) = oclaw_agent_core::auto_recall::format_recall_context(&results) {
                 // Insert recall context right after any system messages
-                let insert_pos = messages.iter()
+                let insert_pos = messages
+                    .iter()
                     .position(|m| m.role != oclaw_llm_core::chat::MessageRole::System)
                     .unwrap_or(0);
                 messages.insert(insert_pos, ctx_msg);
@@ -189,7 +384,10 @@ pub async fn chat_completions_handler(
     }
 
     // Extract last user message for memory capture after LLM responds
-    let user_query_for_capture = payload.messages.iter().rev()
+    let user_query_for_capture = payload
+        .messages
+        .iter()
+        .rev()
         .find(|m| m.role == "user")
         .map(|m| m.content.clone())
         .unwrap_or_default();
@@ -197,16 +395,19 @@ pub async fn chat_completions_handler(
     // Build tool schemas for hatching mode
     let hatching_tools: Option<Vec<oclaw_llm_core::chat::Tool>> = if is_hatching {
         state.tool_registry.as_ref().map(|r| {
-            r.list_for_llm().into_iter().filter_map(|v| {
-                Some(oclaw_llm_core::chat::Tool {
-                    type_: "function".to_string(),
-                    function: oclaw_llm_core::chat::ToolFunction {
-                        name: v["name"].as_str()?.to_string(),
-                        description: v["description"].as_str().unwrap_or("").to_string(),
-                        parameters: v["parameters"].clone(),
-                    },
+            r.list_for_llm()
+                .into_iter()
+                .filter_map(|v| {
+                    Some(oclaw_llm_core::chat::Tool {
+                        type_: "function".to_string(),
+                        function: oclaw_llm_core::chat::ToolFunction {
+                            name: v["name"].as_str()?.to_string(),
+                            description: v["description"].as_str().unwrap_or("").to_string(),
+                            parameters: v["parameters"].clone(),
+                        },
+                    })
                 })
-            }).collect()
+                .collect()
         })
     } else {
         None
@@ -232,6 +433,7 @@ pub async fn chat_completions_handler(
         let model_name = payload.model.clone();
         let mm_for_stream = state.memory_manager.clone();
         let user_q_for_stream = user_query_for_capture.clone();
+        let session_for_stream = session_id.clone();
         match provider.chat_stream(request).await {
             Ok(mut rx) => {
                 let stream = async_stream::stream! {
@@ -302,8 +504,13 @@ pub async fn chat_completions_handler(
 
                     // Memory capture after stream completes
                     if let Some(mm) = mm_for_stream {
-                        spawn_memory_capture(mm, user_q_for_stream, full_text);
+                        spawn_memory_capture(mm, user_q_for_stream.clone(), full_text.clone());
                     }
+                    persist_transcript_turn(
+                        session_for_stream.as_deref(),
+                        &user_q_for_stream,
+                        &full_text,
+                    ).await;
                 };
                 Sse::new(stream).into_response()
             }
@@ -312,14 +519,25 @@ pub async fn chat_completions_handler(
     } else if is_hatching && state.tool_registry.is_some() {
         // Hatching mode: inline tool execution loop
         hatching_tool_loop(
-            &provider, &state, &payload, request, hatching_tools,
+            &provider,
+            &state,
+            &payload,
+            request,
+            hatching_tools,
             &user_query_for_capture,
-        ).await
+            session_id.as_deref(),
+        )
+        .await
     } else {
         // Standard non-streaming path
         non_streaming_response(
-            &provider, &state, request, &user_query_for_capture,
-        ).await
+            &provider,
+            &state,
+            request,
+            &user_query_for_capture,
+            session_id.as_deref(),
+        )
+        .await
     }
 }
 
@@ -331,6 +549,7 @@ async fn hatching_tool_loop(
     initial_request: oclaw_llm_core::chat::ChatRequest,
     tools: Option<Vec<oclaw_llm_core::chat::Tool>>,
     user_query: &str,
+    session_id: Option<&str>,
 ) -> Response {
     let registry = state.tool_registry.as_ref().unwrap();
     let mut loop_messages = initial_request.messages.clone();
@@ -371,9 +590,19 @@ async fn hatching_tool_loop(
         };
 
         // No tool_calls → we have a final text reply
-        if choice.message.tool_calls.is_none() || choice.message.tool_calls.as_ref().is_some_and(|tc| tc.is_empty()) {
+        if choice.message.tool_calls.is_none()
+            || choice
+                .message
+                .tool_calls
+                .as_ref()
+                .is_some_and(|tc| tc.is_empty())
+        {
             final_content = choice.message.content.clone();
-            info!("[hatching] round {}: text reply ({} chars), no tool calls", _round, final_content.len());
+            info!(
+                "[hatching] round {}: text reply ({} chars), no tool calls",
+                _round,
+                final_content.len()
+            );
             break;
         }
 
@@ -382,10 +611,14 @@ async fn hatching_tool_loop(
 
         // Execute each tool call and append results
         let tool_calls = choice.message.tool_calls.as_ref().unwrap();
-        info!("[hatching] round {}: {} tool call(s)", _round, tool_calls.len());
+        info!(
+            "[hatching] round {}: {} tool call(s)",
+            _round,
+            tool_calls.len()
+        );
         for tc in tool_calls {
-            let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
-                .unwrap_or(serde_json::Value::Null);
+            let args: serde_json::Value =
+                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
             let call = oclaw_tools_core::tool::ToolCall {
                 id: tc.id.clone(),
                 name: tc.function.name.clone(),
@@ -414,6 +647,7 @@ async fn hatching_tool_loop(
     if let Some(ref mm) = state.memory_manager {
         spawn_memory_capture(mm.clone(), user_query.to_string(), final_content.clone());
     }
+    persist_transcript_turn(session_id, user_query, &final_content).await;
 
     // Return final text as a standard ChatCompletionsResponse
     Json(ChatCompletionsResponse {
@@ -432,27 +666,39 @@ async fn hatching_tool_loop(
             },
             finish_reason: "stop".to_string(),
         }],
-        usage: Usage { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-    }).into_response()
+        usage: Usage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        },
+    })
+    .into_response()
 }
 
 /// Check if the agent identity has been fully personalized and clear the hatching flag.
 /// Requires name + at least one of (emoji, creature, vibe) to prevent premature completion
 /// when the agent writes the name before finishing the full hatching conversation.
 async fn check_hatching_complete(state: &Arc<HttpState>) {
-    if !state.needs_hatching.load(std::sync::atomic::Ordering::Relaxed) {
+    if !state
+        .needs_hatching
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
         return;
     }
     if let Some(ref ws) = state.workspace
         && let Ok(Some(identity)) = oclaw_workspace_core::identity::AgentIdentity::load(ws).await
     {
         let has_name = identity.name.is_some();
-        let has_extras = identity.emoji.is_some()
-            || identity.creature.is_some()
-            || identity.vibe.is_some();
+        let has_extras =
+            identity.emoji.is_some() || identity.creature.is_some() || identity.vibe.is_some();
         if has_name && has_extras {
-            state.needs_hatching.store(false, std::sync::atomic::Ordering::Relaxed);
-            info!("Hatching complete — identity personalized: {}", identity.display_name());
+            state
+                .needs_hatching
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            info!(
+                "Hatching complete — identity personalized: {}",
+                identity.display_name()
+            );
 
             // Clear all old session transcripts so every channel
             // picks up the new identity on next message.
@@ -471,6 +717,7 @@ async fn non_streaming_response(
     state: &Arc<HttpState>,
     request: oclaw_llm_core::chat::ChatRequest,
     user_query: &str,
+    session_id: Option<&str>,
 ) -> Response {
     match provider.chat(request).await {
         Ok(completion) => {
@@ -478,8 +725,9 @@ async fn non_streaming_response(
                 .map(|c| c.message.content.clone())
                 .unwrap_or_default();
             if let Some(ref mm) = state.memory_manager {
-                spawn_memory_capture(mm.clone(), user_query.to_string(), assistant_text);
+                spawn_memory_capture(mm.clone(), user_query.to_string(), assistant_text.clone());
             }
+            persist_transcript_turn(session_id, user_query, &assistant_text).await;
 
             let choices: Vec<Choice> = completion.choices.iter().map(|c| Choice {
                 index: c.index,
@@ -563,11 +811,15 @@ pub async fn responses_handler(
 
     let input_text = match &payload.input {
         serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Array(arr) => {
-            arr.iter().filter_map(|item| {
-                item.get("content").and_then(|c| c.as_str()).map(|s| s.to_string())
-            }).collect::<Vec<_>>().join("\n")
-        }
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|item| {
+                item.get("content")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => String::new(),
     };
 
@@ -576,12 +828,18 @@ pub async fn responses_handler(
         messages: vec![oclaw_llm_core::chat::ChatMessage {
             role: oclaw_llm_core::chat::MessageRole::User,
             content: input_text,
-            name: None, tool_calls: None, tool_call_id: None,
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
         }],
         temperature: payload.temperature,
         top_p: None,
         max_tokens: payload.max_tokens,
-        stop: None, tools: None, tool_choice: None, stream: None, response_format: None,
+        stop: None,
+        tools: None,
+        tool_choice: None,
+        stream: None,
+        response_format: None,
     };
 
     match provider.chat(request).await {
@@ -611,11 +869,11 @@ pub async fn responses_handler(
 
 // --- Management API endpoints ---
 
-pub async fn agent_status_handler(
-    State(state): State<Arc<HttpState>>,
-) -> impl IntoResponse {
+pub async fn agent_status_handler(State(state): State<Arc<HttpState>>) -> impl IntoResponse {
     let has_provider = state.llm_provider.is_some();
-    let needs_hatching = state.needs_hatching.load(std::sync::atomic::Ordering::Relaxed);
+    let needs_hatching = state
+        .needs_hatching
+        .load(std::sync::atomic::Ordering::Relaxed);
     Json(serde_json::json!({
         "status": if has_provider { "ready" } else { "no_provider" },
         "provider_configured": has_provider,
@@ -631,7 +889,8 @@ pub async fn transcript_history_handler(
     axum::extract::Path(session_key): axum::extract::Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let limit = params.get("limit")
+    let limit = params
+        .get("limit")
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(30);
 
@@ -642,23 +901,27 @@ pub async fn transcript_history_handler(
 
     let all = transcript.load().await;
     let total = all.len();
-    let recent: Vec<serde_json::Value> = all.iter().rev().take(limit).rev().map(|m| {
-        serde_json::json!({
-            "role": match m.role {
-                oclaw_llm_core::chat::MessageRole::Assistant => "assistant",
-                oclaw_llm_core::chat::MessageRole::System => "system",
-                _ => "user",
-            },
-            "content": m.content,
+    let recent: Vec<serde_json::Value> = all
+        .iter()
+        .rev()
+        .take(limit)
+        .rev()
+        .map(|m| {
+            serde_json::json!({
+                "role": match m.role {
+                    oclaw_llm_core::chat::MessageRole::Assistant => "assistant",
+                    oclaw_llm_core::chat::MessageRole::System => "system",
+                    _ => "user",
+                },
+                "content": m.content,
+            })
         })
-    }).collect();
+        .collect();
 
     Json(serde_json::json!({ "messages": recent, "total": total }))
 }
 
-pub async fn sessions_list_handler(
-    State(state): State<Arc<HttpState>>,
-) -> impl IntoResponse {
+pub async fn sessions_list_handler(State(state): State<Arc<HttpState>>) -> impl IntoResponse {
     let manager = state.gateway_server.session_manager.read().await;
     let sessions = manager.list_sessions().unwrap_or_default();
     Json(serde_json::json!({ "sessions": sessions }))
@@ -670,15 +933,24 @@ pub async fn sessions_delete_handler(
 ) -> Response {
     let manager = state.gateway_server.session_manager.read().await;
     match manager.remove_session(&key) {
-        Ok(Some(_)) => Json(serde_json::json!({"ok": true})).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "session not found"}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))).into_response(),
+        Ok(Some(_)) => {
+            state.clear_session_counters(&key);
+            Json(serde_json::json!({"ok": true})).into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "session not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response(),
     }
 }
 
-pub async fn config_get_handler(
-    State(state): State<Arc<HttpState>>,
-) -> impl IntoResponse {
+pub async fn config_get_handler(State(state): State<Arc<HttpState>>) -> impl IntoResponse {
     Json(serde_json::to_value(&*state._gateway).unwrap_or_default())
 }
 
@@ -688,9 +960,7 @@ pub async fn config_reload_handler() -> impl IntoResponse {
     Json(serde_json::json!({"ok": true, "message": "reload requested"}))
 }
 
-pub async fn models_list_handler(
-    State(state): State<Arc<HttpState>>,
-) -> impl IntoResponse {
+pub async fn models_list_handler(State(state): State<Arc<HttpState>>) -> impl IntoResponse {
     let models = match &state.llm_provider {
         Some(p) => p.supported_models(),
         None => vec![],
@@ -698,15 +968,17 @@ pub async fn models_list_handler(
     Json(serde_json::json!({ "models": models }))
 }
 
-pub async fn config_full_get_handler(
-    State(state): State<Arc<HttpState>>,
-) -> Response {
+pub async fn config_full_get_handler(State(state): State<Arc<HttpState>>) -> Response {
     match &state.full_config {
         Some(cfg) => {
             let cfg = cfg.read().await;
             Json(serde_json::to_value(&*cfg).unwrap_or_default()).into_response()
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "full config not available"}))).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "full config not available"})),
+        )
+            .into_response(),
     }
 }
 
@@ -716,20 +988,36 @@ pub async fn config_full_put_handler(
 ) -> Response {
     let errors = new_config.validate();
     if !errors.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"errors": errors}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"errors": errors})),
+        )
+            .into_response();
     }
     let Some(ref full_config) = state.full_config else {
-        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "full config not available"}))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "full config not available"})),
+        )
+            .into_response();
     };
     if let Some(ref path) = state.config_path {
         match serde_json::to_string_pretty(&new_config) {
             Ok(content) => {
                 if let Err(e) = tokio::fs::write(path, content).await {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("write failed: {}", e)}))).into_response();
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": format!("write failed: {}", e)})),
+                    )
+                        .into_response();
                 }
             }
             Err(e) => {
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("serialize failed: {}", e)}))).into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("serialize failed: {}", e)})),
+                )
+                    .into_response();
             }
         }
     }
@@ -746,7 +1034,7 @@ pub async fn webchat_ui_handler() -> axum::response::Html<&'static str> {
 }
 
 const CONFIG_UI_HTML: &str = concat!(
-r##"<!DOCTYPE html>
+    r##"<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OpenClaw Config</title>
 <style>
@@ -864,8 +1152,8 @@ a{color:var(--accent)}
 <div class="footer-bar"><span class="status" id="status-bar">Loading...</span></div>
 <div id="toast"></div>
 "##,
-// --- CONFIG_UI script part 1: i18n + schema ---
-r##"<script>
+    // --- CONFIG_UI script part 1: i18n + schema ---
+    r##"<script>
 let lang='en',cfg={},currentPage='gateway';
 const I={en:{
 title:'OpenClaw Configuration',save:'Save',saving:'Saving...',saved:'Configuration saved',
@@ -1185,8 +1473,8 @@ fc.appendChild(mkRow([mkInput('models.fallback.cooldownSecs','Cooldown (seconds)
 pg.appendChild(fc);
 }
 "##,
-// --- CONFIG_UI script part 2: channels + session pages ---
-r##"
+    // --- CONFIG_UI script part 2: channels + session pages ---
+    r##"
 // --- Page: Channels ---
 function pgChannels(pg){
 pgTitle(pg,'channels');
@@ -1275,8 +1563,8 @@ rc.appendChild(mkInput('session.reset.idleMinutes','Idle Reset (minutes)','numbe
 pg.appendChild(rc);
 }
 "##,
-// --- CONFIG_UI script part 3: browser + cron + memory + logging pages ---
-r##"
+    // --- CONFIG_UI script part 3: browser + cron + memory + logging pages ---
+    r##"
 // --- Page: Browser ---
 function pgBrowser(pg){
 pgTitle(pg,'browser');
@@ -1349,8 +1637,8 @@ c.appendChild(mkInput('logging.redactPatterns','Redact Patterns','textarea',{pla
 pg.appendChild(c);
 }
 "##,
-// --- CONFIG_UI script part 4: advanced page + save/load/init ---
-r##"
+    // --- CONFIG_UI script part 4: advanced page + save/load/init ---
+    r##"
 // --- Page: Advanced ---
 function pgAdvanced(pg){
 pgTitle(pg,'advanced');
@@ -1502,7 +1790,7 @@ fetch('/api/config/full').then(r=>r.json()).then(j=>{cfg=j;renderAll();document.
 );
 
 const WEBCHAT_HTML: &str = concat!(
-r##"<!DOCTYPE html>
+    r##"<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OpenClaw Chat</title>
 <style>
@@ -1575,8 +1863,8 @@ a{color:#00d4ff}
 </style></head>
 <body>
 "##,
-// --- WEBCHAT_HTML body ---
-r##"<div class="header">
+    // --- WEBCHAT_HTML body ---
+    r##"<div class="header">
   <div class="dot" id="dot"></div>
   <span class="brand">OpenClaw</span>
   <select id="model-sel" title="Model"><option>loading...</option></select>
@@ -1595,8 +1883,8 @@ r##"<div class="header">
   </div>
 </div>
 "##,
-// --- WEBCHAT_HTML script ---
-r##"<script>
+    // --- WEBCHAT_HTML script ---
+    r##"<script>
 const $=s=>document.getElementById(s);
 const thread=$('thread'),input=$('input'),sendBtn=$('send-btn'),dot=$('dot'),
       statusText=$('status-text'),modelSel=$('model-sel'),sessionSel=$('session-sel'),
@@ -1700,8 +1988,8 @@ function handleMsg(d){
   }
 }
 "##,
-// --- WEBCHAT_HTML markdown renderer ---
-r##"
+    // --- WEBCHAT_HTML markdown renderer ---
+    r##"
 // --- Markdown renderer ---
 function md(text){
   if(!text)return'';
@@ -1749,8 +2037,8 @@ function copyCode(id){
   if(el)navigator.clipboard.writeText(el.textContent).catch(()=>{});
 }
 "##,
-// --- WEBCHAT_HTML UI rendering ---
-r##"
+    // --- WEBCHAT_HTML UI rendering ---
+    r##"
 // --- Render messages ---
 function renderMessages(){
   const wasAtBottom=!userScrolled;
@@ -1805,8 +2093,8 @@ thread.addEventListener('scroll',()=>{
   userScrolled=diff>60;
 });
 "##,
-// --- WEBCHAT_HTML tool cards + selects ---
-r##"
+    // --- WEBCHAT_HTML tool cards + selects ---
+    r##"
 // --- Tool cards ---
 function makeToolCard(tc){
   const card=document.createElement('div');
@@ -1861,8 +2149,8 @@ sessionSel.onchange=()=>{
   }
 };
 "##,
-// --- WEBCHAT_HTML send + slash commands ---
-r##"
+    // --- WEBCHAT_HTML send + slash commands ---
+    r##"
 // --- Send message ---
 function sendMessage(){
   const text=input.value.trim();
@@ -1904,8 +2192,8 @@ function slashNav(dir){
   items[slashIdx]?.scrollIntoView({block:'nearest'});
 }
 "##,
-// --- WEBCHAT_HTML keyboard + init ---
-r##"
+    // --- WEBCHAT_HTML keyboard + init ---
+    r##"
 // --- Keyboard shortcuts ---
 input.addEventListener('keydown',e=>{
   if(slashPopup.classList.contains('show')){
@@ -1945,11 +2233,13 @@ connect();
 
 // --- Cron REST endpoints ---
 
-pub async fn cron_list_handler(
-    State(state): State<Arc<HttpState>>,
-) -> Response {
+pub async fn cron_list_handler(State(state): State<Arc<HttpState>>) -> Response {
     let Some(ref svc) = state.cron_service else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "cron not enabled"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "cron not enabled"})),
+        )
+            .into_response();
     };
     let jobs = svc.list().await;
     Json(serde_json::json!({ "jobs": jobs })).into_response()
@@ -1960,11 +2250,19 @@ pub async fn cron_create_handler(
     Json(payload): Json<oclaw_cron_core::CronJob>,
 ) -> Response {
     let Some(ref svc) = state.cron_service else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "cron not enabled"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "cron not enabled"})),
+        )
+            .into_response();
     };
     match svc.add(payload).await {
         Ok(job) => (StatusCode::CREATED, Json(serde_json::json!(job))).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -1973,11 +2271,19 @@ pub async fn cron_delete_handler(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
     let Some(ref svc) = state.cron_service else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "cron not enabled"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "cron not enabled"})),
+        )
+            .into_response();
     };
     match svc.remove(&id).await {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -1986,11 +2292,19 @@ pub async fn cron_trigger_handler(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
     let Some(ref svc) = state.cron_service else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "cron not enabled"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "cron not enabled"})),
+        )
+            .into_response();
     };
     match svc.trigger(&id).await {
         Ok(_) => Json(serde_json::json!({"triggered": true})).into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -1999,18 +2313,26 @@ pub async fn cron_logs_handler(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
     let Some(ref run_log) = state.cron_run_log else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "cron run log not available"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "cron run log not available"})),
+        )
+            .into_response();
     };
     match run_log.read(&id, 50).await {
         Ok(entries) => Json(serde_json::json!({"logs": entries})).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
-pub async fn cron_status_handler(
-    State(state): State<Arc<HttpState>>,
-) -> Response {
-    let scheduler_running = state.cron_scheduler.as_ref()
+pub async fn cron_status_handler(State(state): State<Arc<HttpState>>) -> Response {
+    let scheduler_running = state
+        .cron_scheduler
+        .as_ref()
         .map(|s| s.is_running())
         .unwrap_or(false);
     let job_count = match &state.cron_service {
@@ -2020,7 +2342,8 @@ pub async fn cron_status_handler(
     Json(serde_json::json!({
         "scheduler_running": scheduler_running,
         "job_count": job_count,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 pub async fn canvas_ui_handler() -> axum::response::Html<&'static str> {
@@ -2028,7 +2351,7 @@ pub async fn canvas_ui_handler() -> axum::response::Html<&'static str> {
 }
 
 const CANVAS_HTML: &str = concat!(
-r##"<!DOCTYPE html>
+    r##"<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OpenClaw Canvas</title>
 <style>
@@ -2049,7 +2372,7 @@ canvas{background:#1a1a2e;border:1px solid var(--border);cursor:crosshair}
 <div class="canvas-wrap"><canvas id="cv"></canvas>
 <div class="overlay" id="info">Ready</div></div>
 "##,
-r##"<script>
+    r##"<script>
 const cv=document.getElementById('cv'),ctx=cv.getContext('2d'),dot=document.getElementById('dot'),st=document.getElementById('st'),info=document.getElementById('info');
 let ws,visible=true;
 function resize(){cv.width=window.innerWidth;cv.height=window.innerHeight-44;ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,cv.width,cv.height)}
@@ -2086,17 +2409,22 @@ connect();
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{routing::{get, post, delete}, Router};
-    use axum::http::{Request, StatusCode};
-    use tower::ServiceExt;
-    use crate::http::{HttpState, health_handler};
     use crate::http::auth::AuthState;
+    use crate::http::{HttpState, health_handler};
     use crate::server::GatewayServer;
+    use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
+    use axum::{
+        Router,
+        routing::{delete, get, post},
+    };
     use oclaw_config::settings::Gateway;
     use oclaw_llm_core::providers::MockLlmProvider;
     use tokio::sync::RwLock;
+    use tower::ServiceExt;
 
-    fn test_state(provider: Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>>) -> Arc<HttpState> {
+    fn test_state(
+        provider: Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>>,
+    ) -> Arc<HttpState> {
         Arc::new(HttpState {
             auth_state: Arc::new(RwLock::new(AuthState::new(None))),
             gateway_server: Arc::new(GatewayServer::new(0)),
@@ -2105,6 +2433,8 @@ mod tests {
             hook_pipeline: None,
             channel_manager: None,
             tool_registry: None,
+            skill_registry: None,
+            approval_gate: None,
             plugin_registrations: None,
             cron_service: None,
             cron_scheduler: None,
@@ -2116,13 +2446,66 @@ mod tests {
             health_checker: Arc::new(oclaw_doctor_core::HealthChecker::new()),
             full_config: None,
             config_path: None,
-            echo_tracker: Arc::new(tokio::sync::Mutex::new(oclaw_agent_core::EchoTracker::default())),
+            echo_tracker: Arc::new(tokio::sync::Mutex::new(
+                oclaw_agent_core::EchoTracker::default(),
+            )),
             group_activation: oclaw_channel_core::group_gate::GroupActivation::default(),
             dm_scope: crate::session_key::DmScope::default(),
             identity_links: None,
             needs_hatching: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pipeline_config: Arc::new(crate::pipeline::PipelineConfig::default()),
             flush_tracker: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            session_usage_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            session_turn_counts: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            session_rate_limiter: Arc::new(oclaw_acp::SessionRateLimiter::default_session_limiter()),
+            session_queues: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            session_run_locks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            auto_capture_config: Arc::new(oclaw_memory_core::AutoCaptureConfig::default()),
+            auto_capture_counts: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            skill_overrides: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            wizard_sessions: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            tts_runtime: Arc::new(tokio::sync::RwLock::new(Default::default())),
+            exec_approvals_snapshot: Arc::new(tokio::sync::RwLock::new(Default::default())),
+            node_pairing_store: Arc::new(tokio::sync::Mutex::new(
+                oclaw_pairing::PairingStore::default(),
+            )),
+            node_pairs: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            node_pair_index: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            node_exec_approvals: Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
+            node_invocations: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            node_connected: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+            agent_runs: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            agent_idempotency: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            agent_idempotency_gates: Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            chat_runs: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            chat_abort_handles: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            chat_dedupe: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            chat_idempotency_gates: Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            send_dedupe: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            send_idempotency_gates: Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            voicewake_triggers: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            talk_mode: Arc::new(tokio::sync::RwLock::new(Default::default())),
+            heartbeats_enabled: Arc::new(tokio::sync::RwLock::new(true)),
+            last_heartbeat_event: Arc::new(tokio::sync::RwLock::new(None)),
+            usage_snapshot: Arc::new(tokio::sync::RwLock::new(
+                crate::http::GatewayUsageSnapshot::default(),
+            )),
+            event_tx: tokio::sync::broadcast::channel(16).0,
+            device_pair_pending: Arc::new(
+                tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            ),
+            device_pair_pending_index: Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            device_paired: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         })
     }
 
@@ -2136,18 +2519,35 @@ mod tests {
             .route("/sessions", get(sessions_list_handler))
             .route("/sessions/{key}", delete(sessions_delete_handler))
             .route("/models", get(models_list_handler))
-            .route("/webhooks/telegram", post(crate::http::webhooks::telegram_webhook))
-            .route("/webhooks/slack", post(crate::http::webhooks::slack_webhook))
-            .route("/webhooks/discord", post(crate::http::webhooks::discord_webhook))
-            .route("/webhooks/whatsapp", post(crate::http::webhooks::whatsapp_webhook))
-            .route("/webhooks/{channel}", post(crate::http::webhooks::generic_webhook))
+            .route(
+                "/webhooks/telegram",
+                post(crate::http::webhooks::telegram_webhook),
+            )
+            .route(
+                "/webhooks/slack",
+                post(crate::http::webhooks::slack_webhook),
+            )
+            .route(
+                "/webhooks/discord",
+                post(crate::http::webhooks::discord_webhook),
+            )
+            .route(
+                "/webhooks/whatsapp",
+                post(crate::http::webhooks::whatsapp_webhook),
+            )
+            .route(
+                "/webhooks/{channel}",
+                post(crate::http::webhooks::generic_webhook),
+            )
             .with_state(state)
     }
 
     #[tokio::test]
     async fn test_health_endpoint() {
         let app = test_router(test_state(None));
-        let req = Request::get("/health").body(axum::body::Body::empty()).unwrap();
+        let req = Request::get("/health")
+            .body(axum::body::Body::empty())
+            .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
@@ -2157,12 +2557,21 @@ mod tests {
         let mock = MockLlmProvider::new();
         let state = test_state(Some(Arc::new(mock)));
         let app = test_router(state);
-        let req = Request::get("/models").body(axum::body::Body::empty()).unwrap();
+        let req = Request::get("/models")
+            .body(axum::body::Body::empty())
+            .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(json["models"].as_array().unwrap().contains(&serde_json::json!("mock-model")));
+        assert!(
+            json["models"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("mock-model"))
+        );
     }
 
     #[tokio::test]
@@ -2196,9 +2605,92 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["choices"][0]["message"]["content"], "Hello from mock!");
+    }
+
+    #[test]
+    fn test_chat_completions_session_id_from_user() {
+        let headers = HeaderMap::new();
+        let sid = resolve_chat_completions_session_id(&headers, "openclaw:main", Some("Alice-01"))
+            .unwrap();
+        assert!(sid.contains("agent-main-openai-user-alice-01"));
+    }
+
+    #[test]
+    fn test_chat_completions_session_id_header_overrides_user() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-openclaw-session-key",
+            HeaderValue::from_static("my_custom_session"),
+        );
+        let sid = resolve_chat_completions_session_id(&headers, "openclaw:main", Some("Alice-01"))
+            .unwrap();
+        assert!(sid.contains("my_custom_session"));
+        assert!(!sid.contains("openai-user"));
+    }
+
+    #[tokio::test]
+    async fn test_chat_completions_replays_transcript_with_stable_session() {
+        let mock = Arc::new(MockLlmProvider::new());
+        mock.queue_text("first-answer");
+        mock.queue_text("second-answer");
+
+        let provider: Arc<dyn oclaw_llm_core::providers::LlmProvider> = mock.clone();
+        let state = test_state(Some(provider));
+        let app = test_router(state);
+
+        let mut headers = HeaderMap::new();
+        let raw_session = format!("test-openai-{}", uuid::Uuid::new_v4().simple());
+        headers.insert(
+            "x-openclaw-session-key",
+            HeaderValue::from_str(&raw_session).unwrap(),
+        );
+        let session_id = resolve_chat_completions_session_id(&headers, "openclaw", None).unwrap();
+        let transcript = oclaw_agent_core::Transcript::new(&session_id);
+        let _ = transcript.clear().await;
+
+        let body1 = serde_json::json!({
+            "model": "openclaw",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let req1 = Request::post("/v1/chat/completions")
+            .header("content-type", "application/json")
+            .header("x-openclaw-session-key", raw_session.clone())
+            .body(axum::body::Body::from(serde_json::to_vec(&body1).unwrap()))
+            .unwrap();
+        let resp1 = app.clone().oneshot(req1).await.unwrap();
+        assert_eq!(resp1.status(), StatusCode::OK);
+
+        let body2 = serde_json::json!({
+            "model": "openclaw",
+            "messages": [{"role": "user", "content": "what next?"}]
+        });
+        let req2 = Request::post("/v1/chat/completions")
+            .header("content-type", "application/json")
+            .header("x-openclaw-session-key", raw_session)
+            .body(axum::body::Body::from(serde_json::to_vec(&body2).unwrap()))
+            .unwrap();
+        let resp2 = app.oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::OK);
+
+        let calls = mock.recorded_calls();
+        assert!(calls.len() >= 2);
+        let second = &calls[1];
+        assert!(second.messages.iter().any(|m| {
+            m.role == oclaw_llm_core::chat::MessageRole::Assistant && m.content == "first-answer"
+        }));
+        assert!(
+            second
+                .messages
+                .iter()
+                .any(|m| m.role == oclaw_llm_core::chat::MessageRole::User && m.content == "hi")
+        );
+
+        let _ = transcript.clear().await;
     }
 
     #[tokio::test]
@@ -2217,7 +2709,9 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["output"][0]["content"][0]["text"], "Response text");
     }
@@ -2226,10 +2720,14 @@ mod tests {
     async fn test_agent_status() {
         let state = test_state(Some(Arc::new(MockLlmProvider::new())));
         let app = test_router(state);
-        let req = Request::get("/agent/status").body(axum::body::Body::empty()).unwrap();
+        let req = Request::get("/agent/status")
+            .body(axum::body::Body::empty())
+            .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["status"], "ready");
     }
@@ -2237,7 +2735,9 @@ mod tests {
     #[tokio::test]
     async fn test_sessions_list_empty() {
         let app = test_router(test_state(None));
-        let req = Request::get("/sessions").body(axum::body::Body::empty()).unwrap();
+        let req = Request::get("/sessions")
+            .body(axum::body::Body::empty())
+            .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
@@ -2245,7 +2745,9 @@ mod tests {
     #[tokio::test]
     async fn test_session_delete_not_found() {
         let app = test_router(test_state(None));
-        let req = Request::delete("/sessions/nonexistent").body(axum::body::Body::empty()).unwrap();
+        let req = Request::delete("/sessions/nonexistent")
+            .body(axum::body::Body::empty())
+            .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
@@ -2265,14 +2767,17 @@ mod tests {
     #[tokio::test]
     async fn test_slack_webhook_url_verification() {
         let app = test_router(test_state(None));
-        let body = serde_json::json!({"type": "url_verification", "challenge": "test_challenge_123"});
+        let body =
+            serde_json::json!({"type": "url_verification", "challenge": "test_challenge_123"});
         let req = Request::post("/webhooks/slack")
             .header("content-type", "application/json")
             .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["challenge"], "test_challenge_123");
     }
@@ -2281,7 +2786,9 @@ mod tests {
     async fn test_generic_webhook_unknown_channel() {
         let state = {
             let mut s = (*test_state(None)).clone();
-            s.channel_manager = Some(Arc::new(RwLock::new(oclaw_channel_core::ChannelManager::new())));
+            s.channel_manager = Some(Arc::new(RwLock::new(
+                oclaw_channel_core::ChannelManager::new(),
+            )));
             Arc::new(s)
         };
         let app = test_router(state);

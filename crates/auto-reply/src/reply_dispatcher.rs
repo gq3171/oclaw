@@ -1,7 +1,7 @@
 //! Auto-reply level dispatcher — routes tool/block/final payloads.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::mpsc;
 
 use crate::types::ReplyPayload;
@@ -37,32 +37,59 @@ impl AutoReplyDispatcher {
         let (final_tx, final_rx) = mpsc::channel(buffer);
         let pending = Arc::new(AtomicUsize::new(1)); // reservation
         (
-            Self { tool_tx, block_tx, final_tx, pending },
-            AutoReplyReceiver { tool_rx, block_rx, final_rx },
+            Self {
+                tool_tx,
+                block_tx,
+                final_tx,
+                pending,
+            },
+            AutoReplyReceiver {
+                tool_rx,
+                block_rx,
+                final_rx,
+            },
         )
     }
 
     pub fn send_tool_result(&self, payload: ReplyPayload) -> bool {
         self.pending.fetch_add(1, Ordering::Relaxed);
         match self.tool_tx.try_send(payload) {
-            Ok(()) => { self.pending.fetch_sub(1, Ordering::Relaxed); true }
-            Err(_) => { self.pending.fetch_sub(1, Ordering::Relaxed); false }
+            Ok(()) => {
+                self.pending.fetch_sub(1, Ordering::Relaxed);
+                true
+            }
+            Err(_) => {
+                self.pending.fetch_sub(1, Ordering::Relaxed);
+                false
+            }
         }
     }
 
     pub fn send_block_reply(&self, payload: ReplyPayload) -> bool {
         self.pending.fetch_add(1, Ordering::Relaxed);
         match self.block_tx.try_send(payload) {
-            Ok(()) => { self.pending.fetch_sub(1, Ordering::Relaxed); true }
-            Err(_) => { self.pending.fetch_sub(1, Ordering::Relaxed); false }
+            Ok(()) => {
+                self.pending.fetch_sub(1, Ordering::Relaxed);
+                true
+            }
+            Err(_) => {
+                self.pending.fetch_sub(1, Ordering::Relaxed);
+                false
+            }
         }
     }
 
     pub fn send_final_reply(&self, payload: ReplyPayload) -> bool {
         self.pending.fetch_add(1, Ordering::Relaxed);
         match self.final_tx.try_send(payload) {
-            Ok(()) => { self.pending.fetch_sub(1, Ordering::Relaxed); true }
-            Err(_) => { self.pending.fetch_sub(1, Ordering::Relaxed); false }
+            Ok(()) => {
+                self.pending.fetch_sub(1, Ordering::Relaxed);
+                true
+            }
+            Err(_) => {
+                self.pending.fetch_sub(1, Ordering::Relaxed);
+                false
+            }
         }
     }
 

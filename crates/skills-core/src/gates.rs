@@ -12,10 +12,7 @@ pub struct GateResult {
 }
 
 /// Check all requirement gates for a skill manifest.
-pub fn check_gates(
-    manifest: &SkillManifest,
-    config_lookup: &dyn Fn(&str) -> bool,
-) -> GateResult {
+pub fn check_gates(manifest: &SkillManifest, config_lookup: &dyn Fn(&str) -> bool) -> GateResult {
     let mut result = GateResult {
         passed: true,
         missing_bins: Vec::new(),
@@ -32,7 +29,8 @@ pub fn check_gates(
         let current = std::env::consts::OS; // "windows", "linux", "macos"
         let matches = oc.os.iter().any(|o| {
             let o = o.to_lowercase();
-            o == current || (o == "macos" && current == "macos")
+            o == current
+                || (o == "macos" && current == "macos")
                 || (o == "darwin" && current == "macos")
         });
         if !matches {
@@ -41,7 +39,9 @@ pub fn check_gates(
         }
     }
 
-    let requires = manifest.metadata.as_ref()
+    let requires = manifest
+        .metadata
+        .as_ref()
         .and_then(|m| m.openclaw.as_ref())
         .and_then(|oc| oc.requires.as_ref());
 
@@ -58,6 +58,15 @@ fn check_bins(req: &RequiresSpec, result: &mut GateResult) {
     for bin in &req.bins {
         if which(bin).is_none() {
             result.missing_bins.push(bin.clone());
+            result.passed = false;
+        }
+    }
+    if !req.any_bins.is_empty() {
+        let has_any = req.any_bins.iter().any(|bin| which(bin).is_some());
+        if !has_any {
+            for bin in &req.any_bins {
+                result.missing_bins.push(bin.clone());
+            }
             result.passed = false;
         }
     }

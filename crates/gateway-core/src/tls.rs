@@ -1,5 +1,5 @@
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use rustls::ServerConfig;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
@@ -13,7 +13,9 @@ pub fn load_certificates(path: &Path) -> GatewayResult<Vec<CertificateDer<'stati
         .collect();
 
     if certs.is_empty() {
-        return Err(GatewayError::ConfigError("No certificates found".to_string()));
+        return Err(GatewayError::ConfigError(
+            "No certificates found".to_string(),
+        ));
     }
 
     Ok(certs)
@@ -58,31 +60,32 @@ pub use crate::http::HttpServer;
 
 pub async fn create_http_server(
     port: u16,
-    gateway: oclaws_config::settings::Gateway,
+    gateway: oclaw_config::settings::Gateway,
     gateway_server: Arc<crate::server::GatewayServer>,
 ) -> GatewayResult<HttpServer> {
     let addr = format!("0.0.0.0:{}", port);
-    let addr: SocketAddr = addr.parse().map_err(|e| {
-        GatewayError::ConfigError(format!("Invalid address: {}", e))
-    })?;
+    let addr: SocketAddr = addr
+        .parse()
+        .map_err(|e| GatewayError::ConfigError(format!("Invalid address: {}", e)))?;
 
     let gateway = Arc::new(gateway);
 
     let http_server = HttpServer::new(addr, gateway.clone(), gateway_server);
 
     if let Some(tls) = &gateway.tls
-        && tls.enabled.unwrap_or(false) {
-            let cert_path = tls.cert_path.as_ref().ok_or_else(|| {
-                GatewayError::ConfigError("TLS enabled but cert_path not set".to_string())
-            })?;
-            let key_path = tls.key_path.as_ref().ok_or_else(|| {
-                GatewayError::ConfigError("TLS enabled but key_path not set".to_string())
-            })?;
+        && tls.enabled.unwrap_or(false)
+    {
+        let cert_path = tls.cert_path.as_ref().ok_or_else(|| {
+            GatewayError::ConfigError("TLS enabled but cert_path not set".to_string())
+        })?;
+        let key_path = tls.key_path.as_ref().ok_or_else(|| {
+            GatewayError::ConfigError("TLS enabled but key_path not set".to_string())
+        })?;
 
-            let config = build_server_config(cert_path, key_path, tls.ca_path.as_deref())?;
-            info!("TLS enabled with certificate: {}", cert_path);
-            return Ok(http_server.with_tls(config));
-        }
+        let config = build_server_config(cert_path, key_path, tls.ca_path.as_deref())?;
+        info!("TLS enabled with certificate: {}", cert_path);
+        return Ok(http_server.with_tls(config));
+    }
 
     Ok(http_server)
 }

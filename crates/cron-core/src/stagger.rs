@@ -3,7 +3,7 @@
 //! Uses SHA-256 of the job ID to produce a stable offset within a window,
 //! preventing all jobs from firing at the exact same instant.
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 /// Compute a deterministic stagger offset in `0..window_ms` for a given job ID.
 pub fn stagger_offset(job_id: &str, window_ms: u64) -> u64 {

@@ -35,7 +35,9 @@ impl BlueBubblesChannel {
 }
 
 impl Default for BlueBubblesChannel {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Clone for BlueBubblesChannel {
@@ -51,26 +53,38 @@ impl Clone for BlueBubblesChannel {
 
 #[async_trait]
 impl Channel for BlueBubblesChannel {
-    fn channel_type(&self) -> &str { "bluebubbles" }
+    fn channel_type(&self) -> &str {
+        "bluebubbles"
+    }
 
     async fn connect(&mut self) -> ChannelResult<()> {
         self.status = ChannelStatus::Connecting;
-        let url = self.server_url.as_ref()
+        let url = self
+            .server_url
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Server URL not set".into()))?;
-        let password = self.password.as_ref()
+        let password = self
+            .password
+            .as_ref()
             .ok_or_else(|| ChannelError::AuthenticationError("Password not set".into()))?;
 
         let client = reqwest::Client::new();
 
         // Ping BlueBubbles server to verify connectivity
-        let ping_url = format!("{}/api/v1/ping?password={}", url.trim_end_matches('/'), password);
-        let resp = client.get(&ping_url).send().await
-            .map_err(|e| ChannelError::ConnectionError(format!("BlueBubbles ping failed: {}", e)))?;
+        let ping_url = format!(
+            "{}/api/v1/ping?password={}",
+            url.trim_end_matches('/'),
+            password
+        );
+        let resp = client.get(&ping_url).send().await.map_err(|e| {
+            ChannelError::ConnectionError(format!("BlueBubbles ping failed: {}", e))
+        })?;
 
         if !resp.status().is_success() {
-            return Err(ChannelError::ConnectionError(
-                format!("BlueBubbles server returned {}", resp.status()),
-            ));
+            return Err(ChannelError::ConnectionError(format!(
+                "BlueBubbles server returned {}",
+                resp.status()
+            )));
         }
 
         self.client = Some(client);
@@ -86,21 +100,31 @@ impl Channel for BlueBubblesChannel {
         Ok(())
     }
 
-    fn status(&self) -> ChannelStatus { self.status }
+    fn status(&self) -> ChannelStatus {
+        self.status
+    }
 
     async fn send_message(&self, message: &ChannelMessage) -> ChannelResult<String> {
         if self.status != ChannelStatus::Connected {
             return Err(ChannelError::ConnectionError("Not connected".into()));
         }
-        let base_url = self.server_url.as_ref()
+        let base_url = self
+            .server_url
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Server URL not set".into()))?;
-        let password = self.password.as_ref()
+        let password = self
+            .password
+            .as_ref()
             .ok_or_else(|| ChannelError::AuthenticationError("Password not set".into()))?;
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".into()))?;
 
         // Determine chat GUID from metadata or use channel field
-        let chat_guid = message.metadata.get("chat_guid")
+        let chat_guid = message
+            .metadata
+            .get("chat_guid")
             .or_else(|| message.metadata.get("chatGuid"))
             .cloned()
             .unwrap_or_else(|| message.channel.clone());
@@ -108,7 +132,8 @@ impl Channel for BlueBubblesChannel {
         // BlueBubbles send text API
         let url = format!(
             "{}/api/v1/message/text?password={}",
-            base_url.trim_end_matches('/'), password
+            base_url.trim_end_matches('/'),
+            password
         );
 
         // Chunk long messages (iMessage limit ~4000 chars)
@@ -122,21 +147,25 @@ impl Channel for BlueBubblesChannel {
                 "method": "private-api"
             });
 
-            let resp = client.post(&url)
+            let resp = client
+                .post(&url)
                 .json(&body)
-                .send().await
+                .send()
+                .await
                 .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
             if !resp.status().is_success() {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
-                return Err(ChannelError::MessageError(
-                    format!("BlueBubbles API error ({}): {}", status, text),
-                ));
+                return Err(ChannelError::MessageError(format!(
+                    "BlueBubbles API error ({}): {}",
+                    status, text
+                )));
             }
 
             let json: serde_json::Value = resp.json().await.unwrap_or_default();
-            last_id = json["data"]["guid"].as_str()
+            last_id = json["data"]["guid"]
+                .as_str()
                 .unwrap_or("unknown")
                 .to_string();
         }
@@ -161,10 +190,12 @@ impl Channel for BlueBubblesChannel {
 
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // BlueBubbles: /data/0/text or /message/text
-        let text = payload.pointer("/data/0/text")
+        let text = payload
+            .pointer("/data/0/text")
             .or_else(|| payload.pointer("/message/text"))
             .and_then(|v| v.as_str())?;
-        let chat_id = payload.pointer("/data/0/handle/address")
+        let chat_id = payload
+            .pointer("/data/0/handle/address")
             .or_else(|| payload.pointer("/message/handle/address"))
             .and_then(|v| v.as_str())
             .unwrap_or("default");

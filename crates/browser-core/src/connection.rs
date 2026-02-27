@@ -3,7 +3,7 @@ use crate::error::{BrowserError, BrowserResult};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio_tungstenite::connect_async;
 use tracing::{debug, error, info};
 
@@ -36,9 +36,9 @@ impl CdpConnection {
         let (event_tx, event_rx) = broadcast::channel::<CdpEvent>(100);
 
         let next_id = Arc::new(RwLock::new(1i32));
-        let pending_commands: Arc<RwLock<HashMap<i32, mpsc::Sender<BrowserResult<CdpResponse>>>>> = 
+        let pending_commands: Arc<RwLock<HashMap<i32, mpsc::Sender<BrowserResult<CdpResponse>>>>> =
             Arc::new(RwLock::new(HashMap::new()));
-        
+
         let _next_id_clone = Arc::clone(&next_id);
         let pending_clone = Arc::clone(&pending_commands);
         let event_tx_clone = event_tx.clone();
@@ -108,7 +108,11 @@ impl CdpConnection {
         })
     }
 
-    pub async fn send_command(&self, method: &str, params: Option<serde_json::Value>) -> BrowserResult<CdpResponse> {
+    pub async fn send_command(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> BrowserResult<CdpResponse> {
         let id = {
             let mut id = self.next_id.write().await;
             let current = *id;
@@ -117,7 +121,7 @@ impl CdpConnection {
         };
 
         let (tx, mut rx) = mpsc::channel(1);
-        
+
         {
             let mut pending = self.pending_commands.write().await;
             pending.insert(id, tx);
@@ -129,13 +133,14 @@ impl CdpConnection {
             params,
         };
 
-        self.sender.send(cmd).await.map_err(|e| {
-            BrowserError::ConnectionError(format!("Failed to send command: {}", e))
-        })?;
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|e| BrowserError::ConnectionError(format!("Failed to send command: {}", e)))?;
 
-        rx.recv().await.ok_or_else(|| {
-            BrowserError::ConnectionError("Connection closed".to_string())
-        })?
+        rx.recv()
+            .await
+            .ok_or_else(|| BrowserError::ConnectionError("Connection closed".to_string()))?
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<CdpEvent> {

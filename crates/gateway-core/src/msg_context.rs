@@ -19,11 +19,7 @@ pub struct MsgContext {
 }
 
 impl MsgContext {
-    pub fn new(
-        session_key: SessionKey,
-        sender_id: &str,
-        content: &str,
-    ) -> Self {
+    pub fn new(session_key: SessionKey, sender_id: &str, content: &str) -> Self {
         let is_dm = session_key.is_dm();
         let channel_type = session_key.channel.clone();
         Self {

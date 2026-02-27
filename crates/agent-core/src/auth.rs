@@ -49,11 +49,14 @@ impl ProviderCredentials {
 #[async_trait::async_trait]
 pub trait AuthProvider: Send + Sync {
     fn provider_name(&self) -> &str;
-    
+
     async fn authenticate(&self, credentials: &ProviderCredentials) -> Result<String, String>;
-    
-    async fn refresh(&self, credentials: &ProviderCredentials) -> Result<ProviderCredentials, String>;
-    
+
+    async fn refresh(
+        &self,
+        credentials: &ProviderCredentials,
+    ) -> Result<ProviderCredentials, String>;
+
     async fn validate(&self, credentials: &ProviderCredentials) -> bool;
 }
 
@@ -106,7 +109,12 @@ impl AuthManager {
     }
 
     pub async fn authenticate(&self, provider: &str) -> Result<String, String> {
-        let creds = self.credentials.read().await.get(provider).cloned()
+        let creds = self
+            .credentials
+            .read()
+            .await
+            .get(provider)
+            .cloned()
             .ok_or_else(|| format!("No credentials for provider: {}", provider))?;
 
         if !creds.is_valid() {
@@ -117,8 +125,15 @@ impl AuthManager {
             && let Some(provider_impl) = self.providers.read().await.get(provider)
         {
             let new_creds = provider_impl.refresh(&creds).await?;
-            let token = new_creds.api_key.clone().or(new_creds.access_token.clone()).unwrap_or_default();
-            self.credentials.write().await.insert(provider.to_string(), new_creds);
+            let token = new_creds
+                .api_key
+                .clone()
+                .or(new_creds.access_token.clone())
+                .unwrap_or_default();
+            self.credentials
+                .write()
+                .await
+                .insert(provider.to_string(), new_creds);
             return Ok(token);
         }
 
@@ -199,11 +214,17 @@ struct KeySlot {
 
 impl KeyRotator {
     pub fn new(keys: Vec<String>) -> Self {
-        let slots = keys.into_iter().map(|k| KeySlot {
-            key: k,
-            cooldown_until: Arc::new(RwLock::new(None)),
-        }).collect();
-        Self { keys: slots, current: Arc::new(RwLock::new(0)) }
+        let slots = keys
+            .into_iter()
+            .map(|k| KeySlot {
+                key: k,
+                cooldown_until: Arc::new(RwLock::new(None)),
+            })
+            .collect();
+        Self {
+            keys: slots,
+            current: Arc::new(RwLock::new(0)),
+        }
     }
 
     /// Get the next available key, skipping those in cooldown.

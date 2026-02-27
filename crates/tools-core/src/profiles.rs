@@ -23,12 +23,19 @@ impl ToolProfile {
         match self {
             Self::Minimal => vec!["session_status"],
             Self::Coding => vec![
-                "group:fs", "group:runtime", "group:sessions",
-                "group:memory", "group:web", "media_describe",
+                "group:fs",
+                "group:runtime",
+                "group:sessions",
+                "group:memory",
+                "group:web",
+                "media_describe",
             ],
             Self::Messaging => vec![
-                "group:messaging", "sessions_list",
-                "sessions_history", "sessions_send", "session_status",
+                "group:messaging",
+                "sessions_list",
+                "sessions_history",
+                "sessions_send",
+                "session_status",
             ],
             Self::Full => vec!["*"],
         }

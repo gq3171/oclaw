@@ -64,12 +64,12 @@ pub fn finalize_inbound_context(ctx: MsgContext) -> FinalizedMsgContext {
     // Normalize CRLF → LF
     let body_normalized = ctx.body.replace("\r\n", "\n");
 
-    let body_for_commands = ctx.raw_body.clone().unwrap_or_else(|| body_normalized.clone());
-
-    let sender_label = ctx
-        .from_name
+    let body_for_commands = ctx
+        .raw_body
         .clone()
-        .unwrap_or_else(|| ctx.from.clone());
+        .unwrap_or_else(|| body_normalized.clone());
+
+    let sender_label = ctx.from_name.clone().unwrap_or_else(|| ctx.from.clone());
 
     let conversation_label = match ctx.chat_type {
         ChatType::Direct => format!("DM with {}", sender_label),
@@ -77,7 +77,11 @@ pub fn finalize_inbound_context(ctx: MsgContext) -> FinalizedMsgContext {
             format!("Group {} ({})", ctx.to, sender_label)
         }
         ChatType::Thread => {
-            format!("Thread {} ({})", ctx.thread_id.as_deref().unwrap_or(&ctx.to), sender_label)
+            format!(
+                "Thread {} ({})",
+                ctx.thread_id.as_deref().unwrap_or(&ctx.to),
+                sender_label
+            )
         }
     };
 

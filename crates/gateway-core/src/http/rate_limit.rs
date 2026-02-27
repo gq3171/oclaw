@@ -4,14 +4,14 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Instant;
 use tokio::sync::Mutex;
 use tower::{Layer, Service};
-use std::task::{Context, Poll};
-use std::future::Future;
-use std::pin::Pin;
 
 #[derive(Clone)]
 pub struct RateLimitLayer {
@@ -72,7 +72,8 @@ where
     }
 
     fn call(&mut self, req: Request<B>) -> Self::Future {
-        let ip = req.extensions()
+        let ip = req
+            .extensions()
             .get::<ConnectInfo<SocketAddr>>()
             .map(|ci| ci.0.ip());
 
@@ -92,7 +93,9 @@ where
                 let entries = s.windows.entry(ip).or_default();
                 entries.retain(|t| *t > cutoff);
                 if entries.len() >= max as usize {
-                    return Ok((StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response());
+                    return Ok(
+                        (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response()
+                    );
                 }
                 entries.push(now);
                 // Periodically prune IPs with no recent requests

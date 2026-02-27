@@ -65,6 +65,8 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugins: Option<PluginsConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub memory: Option<MemoryConfig>,
 }
 
@@ -113,57 +115,122 @@ impl Config {
             self.gateway.get_or_insert_with(Gateway::default).bind = Some(bind);
         }
         if let Ok(level) = std::env::var("OCLAWS_LOG_LEVEL") {
-            self.logging.get_or_insert(Logging {
-                level: None, file: None, console_level: None,
-                console_style: None, redact_sensitive: None, redact_patterns: None,
-            }).level = Some(level);
+            self.logging
+                .get_or_insert(Logging {
+                    level: None,
+                    file: None,
+                    console_level: None,
+                    console_style: None,
+                    redact_sensitive: None,
+                    redact_patterns: None,
+                })
+                .level = Some(level);
         }
 
         // Gateway auth secrets
         if let Ok(token) = std::env::var("OCLAWS_GATEWAY_AUTH_TOKEN") {
-            self.gateway.get_or_insert_with(Gateway::default)
-                .auth.get_or_insert(GatewayAuth {
-                    mode: None, token: None, password: None, allow_tailscale: None,
-                    rate_limit: None, trusted_proxy: None,
-                }).token = Some(token);
+            self.gateway
+                .get_or_insert_with(Gateway::default)
+                .auth
+                .get_or_insert(GatewayAuth {
+                    mode: None,
+                    token: None,
+                    password: None,
+                    allow_tailscale: None,
+                    rate_limit: None,
+                    trusted_proxy: None,
+                })
+                .token = Some(token);
         }
         if let Ok(password) = std::env::var("OCLAWS_GATEWAY_AUTH_PASSWORD") {
-            self.gateway.get_or_insert_with(Gateway::default)
-                .auth.get_or_insert(GatewayAuth {
-                    mode: None, token: None, password: None, allow_tailscale: None,
-                    rate_limit: None, trusted_proxy: None,
-                }).password = Some(password);
+            self.gateway
+                .get_or_insert_with(Gateway::default)
+                .auth
+                .get_or_insert(GatewayAuth {
+                    mode: None,
+                    token: None,
+                    password: None,
+                    allow_tailscale: None,
+                    rate_limit: None,
+                    trusted_proxy: None,
+                })
+                .password = Some(password);
         }
 
         // Channel bot tokens
         if let Ok(v) = std::env::var("OCLAWS_TELEGRAM_BOT_TOKEN") {
-            self.channels.get_or_insert_with(Channels::default)
-                .telegram.get_or_insert(TelegramChannel { enabled: None, bot_token: None, api_url: None })
+            self.channels
+                .get_or_insert_with(Channels::default)
+                .telegram
+                .get_or_insert(TelegramChannel {
+                    enabled: None,
+                    bot_token: None,
+                    api_url: None,
+                })
                 .bot_token = Some(v);
         }
         if let Ok(v) = std::env::var("OCLAWS_DISCORD_BOT_TOKEN") {
-            self.channels.get_or_insert_with(Channels::default)
-                .discord.get_or_insert(DiscordChannel { enabled: None, bot_token: None, guild_id: None, channel_ids: None })
+            self.channels
+                .get_or_insert_with(Channels::default)
+                .discord
+                .get_or_insert(DiscordChannel {
+                    enabled: None,
+                    bot_token: None,
+                    guild_id: None,
+                    channel_ids: None,
+                })
                 .bot_token = Some(v);
         }
         if let Ok(v) = std::env::var("OCLAWS_SLACK_BOT_TOKEN") {
-            self.channels.get_or_insert_with(Channels::default)
-                .slack.get_or_insert(SlackChannel { enabled: None, bot_token: None, signing_secret: None, channel_ids: None, webhook_url: None })
+            self.channels
+                .get_or_insert_with(Channels::default)
+                .slack
+                .get_or_insert(SlackChannel {
+                    enabled: None,
+                    bot_token: None,
+                    signing_secret: None,
+                    channel_ids: None,
+                    webhook_url: None,
+                })
                 .bot_token = Some(v);
         }
         if let Ok(v) = std::env::var("OCLAWS_SLACK_SIGNING_SECRET") {
-            self.channels.get_or_insert_with(Channels::default)
-                .slack.get_or_insert(SlackChannel { enabled: None, bot_token: None, signing_secret: None, channel_ids: None, webhook_url: None })
+            self.channels
+                .get_or_insert_with(Channels::default)
+                .slack
+                .get_or_insert(SlackChannel {
+                    enabled: None,
+                    bot_token: None,
+                    signing_secret: None,
+                    channel_ids: None,
+                    webhook_url: None,
+                })
                 .signing_secret = Some(v);
         }
         if let Ok(v) = std::env::var("OCLAWS_FEISHU_APP_ID") {
-            self.channels.get_or_insert_with(Channels::default)
-                .feishu.get_or_insert(FeishuChannel { enabled: None, app_id: None, app_secret: None, verification_token: None, encrypt_key: None })
+            self.channels
+                .get_or_insert_with(Channels::default)
+                .feishu
+                .get_or_insert(FeishuChannel {
+                    enabled: None,
+                    app_id: None,
+                    app_secret: None,
+                    verification_token: None,
+                    encrypt_key: None,
+                })
                 .app_id = Some(v);
         }
         if let Ok(v) = std::env::var("OCLAWS_FEISHU_APP_SECRET") {
-            self.channels.get_or_insert_with(Channels::default)
-                .feishu.get_or_insert(FeishuChannel { enabled: None, app_id: None, app_secret: None, verification_token: None, encrypt_key: None })
+            self.channels
+                .get_or_insert_with(Channels::default)
+                .feishu
+                .get_or_insert(FeishuChannel {
+                    enabled: None,
+                    app_id: None,
+                    app_secret: None,
+                    verification_token: None,
+                    encrypt_key: None,
+                })
                 .app_secret = Some(v);
         }
 
@@ -175,11 +242,18 @@ impl Config {
                 let name = name.to_lowercase();
                 let models = self.models.get_or_insert_with(ModelsConfig::default);
                 let providers = models.providers.get_or_insert_with(HashMap::new);
-                providers.entry(name.clone())
+                providers
+                    .entry(name.clone())
                     .or_insert(ModelProvider {
-                        provider: name, api_key: None, base_url: None,
-                        model: None, max_tokens: None, temperature: None,
-                        max_concurrency: None, headers: None, fallback: None,
+                        provider: name,
+                        api_key: None,
+                        base_url: None,
+                        model: None,
+                        max_tokens: None,
+                        temperature: None,
+                        max_concurrency: None,
+                        headers: None,
+                        fallback: None,
                     })
                     .api_key = Some(value);
             }
@@ -902,6 +976,8 @@ pub struct Gateway {
     pub tls: Option<GatewayTls>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub http: Option<GatewayHttp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nodes: Option<GatewayNodes>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1030,6 +1106,26 @@ pub struct GatewayHttp {
     pub endpoints: Option<HttpEndpoints>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayNodes {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser: Option<GatewayNodesBrowser>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_commands: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deny_commands: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayNodesBrowser {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HttpEndpoints {
@@ -1067,6 +1163,8 @@ pub struct SessionConfig {
     /// Allows the same person on different channels to share a session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity_links: Option<HashMap<String, Vec<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_to_agent: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1251,26 +1349,26 @@ impl AgentBinding {
     /// The agent ID this binding routes to.
     pub fn agent_id(&self) -> &str {
         match self {
-            Self::Peer       { agent_id, .. } => agent_id,
+            Self::Peer { agent_id, .. } => agent_id,
             Self::GuildRoles { agent_id, .. } => agent_id,
-            Self::Guild      { agent_id, .. } => agent_id,
-            Self::Team       { agent_id, .. } => agent_id,
-            Self::Account    { agent_id, .. } => agent_id,
-            Self::Channel    { agent_id, .. } => agent_id,
-            Self::Default    { agent_id }     => agent_id,
+            Self::Guild { agent_id, .. } => agent_id,
+            Self::Team { agent_id, .. } => agent_id,
+            Self::Account { agent_id, .. } => agent_id,
+            Self::Channel { agent_id, .. } => agent_id,
+            Self::Default { agent_id } => agent_id,
         }
     }
 
     /// Numeric priority tier (lower = evaluated first).
     pub fn priority(&self) -> u8 {
         match self {
-            Self::Peer       { .. } => 1,
+            Self::Peer { .. } => 1,
             Self::GuildRoles { .. } => 2,
-            Self::Guild      { .. } => 3,
-            Self::Team       { .. } => 4,
-            Self::Account    { .. } => 5,
-            Self::Channel    { .. } => 6,
-            Self::Default    { .. } => 7,
+            Self::Guild { .. } => 3,
+            Self::Team { .. } => 4,
+            Self::Account { .. } => 5,
+            Self::Channel { .. } => 6,
+            Self::Default { .. } => 7,
         }
     }
 }

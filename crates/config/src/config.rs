@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn test_config_manager_default() {
         let manager = ConfigManager::default();
-        assert!(manager.config_path.to_string_lossy().contains("oclaws"));
+        assert!(manager.config_path.to_string_lossy().contains("oclaw"));
     }
 
     #[test]
@@ -120,7 +120,7 @@ mod tests {
         let data_dir = ConfigManager::data_dir();
         assert!(data_dir.is_ok());
         let path = data_dir.unwrap();
-        assert!(path.to_string_lossy().contains("oclaws"));
+        assert!(path.to_string_lossy().contains("oclaw"));
         assert!(path.to_string_lossy().contains("data.db"));
     }
 
@@ -129,7 +129,7 @@ mod tests {
         let config_path = ConfigManager::default_config_path();
         assert!(config_path.is_ok());
         let path = config_path.unwrap();
-        assert!(path.to_string_lossy().contains("oclaws"));
+        assert!(path.to_string_lossy().contains("oclaw"));
         assert!(path.to_string_lossy().contains("config.json"));
     }
 

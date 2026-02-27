@@ -42,7 +42,9 @@ impl ZaloChannel {
 }
 
 impl Default for ZaloChannel {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Clone for ZaloChannel {
@@ -59,11 +61,15 @@ impl Clone for ZaloChannel {
 
 #[async_trait]
 impl Channel for ZaloChannel {
-    fn channel_type(&self) -> &str { "zalo" }
+    fn channel_type(&self) -> &str {
+        "zalo"
+    }
 
     async fn connect(&mut self) -> ChannelResult<()> {
         self.status = ChannelStatus::Connecting;
-        let _token = self.access_token.as_ref()
+        let _token = self
+            .access_token
+            .as_ref()
             .ok_or_else(|| ChannelError::AuthenticationError("Access token not set".into()))?;
         self.client = Some(reqwest::Client::new());
         tracing::info!("Zalo channel connected");
@@ -78,19 +84,26 @@ impl Channel for ZaloChannel {
         Ok(())
     }
 
-    fn status(&self) -> ChannelStatus { self.status }
+    fn status(&self) -> ChannelStatus {
+        self.status
+    }
 
     async fn send_message(&self, message: &ChannelMessage) -> ChannelResult<String> {
         if self.status != ChannelStatus::Connected {
             return Err(ChannelError::ConnectionError("Not connected".into()));
         }
-        let token = self.access_token.as_ref()
+        let token = self
+            .access_token
+            .as_ref()
             .ok_or_else(|| ChannelError::AuthenticationError("No token".into()))?;
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".into()))?;
 
-        let recipient_id = message.metadata.get("recipient_id")
-            .ok_or_else(|| ChannelError::MessageError("recipient_id required in metadata".into()))?;
+        let recipient_id = message.metadata.get("recipient_id").ok_or_else(|| {
+            ChannelError::MessageError("recipient_id required in metadata".into())
+        })?;
 
         // Zalo OA Send Message API
         let body = serde_json::json!({
@@ -98,16 +111,23 @@ impl Channel for ZaloChannel {
             "message": { "text": message.content }
         });
 
-        let resp = client.post("https://openapi.zalo.me/v3.0/oa/message/cs")
+        let resp = client
+            .post("https://openapi.zalo.me/v3.0/oa/message/cs")
             .header("access_token", token)
             .json(&body)
-            .send().await
+            .send()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
-        let json: serde_json::Value = resp.json().await
+        let json: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
-        Ok(json["data"]["message_id"].as_str().unwrap_or("sent").to_string())
+        Ok(json["data"]["message_id"]
+            .as_str()
+            .unwrap_or("sent")
+            .to_string())
     }
 
     async fn list_accounts(&self) -> ChannelResult<Vec<ChannelAccount>> {
@@ -120,14 +140,16 @@ impl Channel for ZaloChannel {
     }
 
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
-        Ok(Box::new(ZaloSender { channel: Arc::new(RwLock::new(self.clone())) }))
+        Ok(Box::new(ZaloSender {
+            channel: Arc::new(RwLock::new(self.clone())),
+        }))
     }
 
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // Zalo OA: /message/text, /sender/id
-        let text = payload.pointer("/message/text")
-            .and_then(|v| v.as_str())?;
-        let chat_id = payload.pointer("/sender/id")
+        let text = payload.pointer("/message/text").and_then(|v| v.as_str())?;
+        let chat_id = payload
+            .pointer("/sender/id")
             .and_then(|v| v.as_str())
             .unwrap_or("default");
         Some(WebhookMessage {
@@ -145,7 +167,11 @@ struct ZaloSender {
 }
 
 impl MessageSender for ZaloSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
         let channel = self.channel.clone();
         let content = content.to_string();
         Box::pin(async move {

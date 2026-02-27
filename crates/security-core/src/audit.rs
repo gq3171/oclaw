@@ -1,7 +1,7 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,7 +103,8 @@ impl AuditLog {
 
     pub async fn query(&self, kind: Option<AuditEventKind>, limit: usize) -> Vec<AuditEvent> {
         let events = self.events.read().await;
-        events.iter()
+        events
+            .iter()
             .rev()
             .filter(|e| kind.is_none_or(|k| e.kind == k))
             .take(limit)
@@ -146,8 +147,10 @@ mod tests {
     #[tokio::test]
     async fn test_audit_log_record_and_query() {
         let log = AuditLog::new(100);
-        log.record(AuditEvent::new(AuditEventKind::ToolCall).detail("bash")).await;
-        log.record(AuditEvent::new(AuditEventKind::AuthSuccess)).await;
+        log.record(AuditEvent::new(AuditEventKind::ToolCall).detail("bash"))
+            .await;
+        log.record(AuditEvent::new(AuditEventKind::AuthSuccess))
+            .await;
 
         assert_eq!(log.count().await, 2);
 
@@ -162,7 +165,8 @@ mod tests {
     async fn test_audit_log_capacity() {
         let log = AuditLog::new(3);
         for i in 0..5 {
-            log.record(AuditEvent::new(AuditEventKind::MessageSend).detail(&i.to_string())).await;
+            log.record(AuditEvent::new(AuditEventKind::MessageSend).detail(&i.to_string()))
+                .await;
         }
         assert_eq!(log.count().await, 3);
     }
@@ -170,7 +174,8 @@ mod tests {
     #[tokio::test]
     async fn test_audit_log_clear() {
         let log = AuditLog::new(100);
-        log.record(AuditEvent::new(AuditEventKind::ConfigChange)).await;
+        log.record(AuditEvent::new(AuditEventKind::ConfigChange))
+            .await;
         assert_eq!(log.count().await, 1);
         log.clear().await;
         assert_eq!(log.count().await, 0);

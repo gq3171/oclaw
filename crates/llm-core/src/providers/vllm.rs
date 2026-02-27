@@ -1,10 +1,10 @@
 //! vLLM provider - OpenAI-compatible local inference server
 
-use async_trait::async_trait;
-use crate::chat::{ChatRequest, ChatCompletion, StreamChunk};
+use super::{LlmProvider, ProviderType, openai::OpenAiProvider};
+use crate::chat::{ChatCompletion, ChatRequest, StreamChunk};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::LlmResult;
-use super::{LlmProvider, ProviderType, openai::OpenAiProvider};
+use async_trait::async_trait;
 
 pub struct VllmProvider {
     inner: OpenAiProvider,
@@ -23,13 +23,18 @@ impl VllmProvider {
 
 #[async_trait]
 impl LlmProvider for VllmProvider {
-    fn provider_type(&self) -> ProviderType { ProviderType::Vllm }
+    fn provider_type(&self) -> ProviderType {
+        ProviderType::Vllm
+    }
 
     async fn chat(&self, request: ChatRequest) -> LlmResult<ChatCompletion> {
         self.inner.chat(request).await
     }
 
-    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
+    async fn chat_stream(
+        &self,
+        request: ChatRequest,
+    ) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
         self.inner.chat_stream(request).await
     }
 
@@ -41,5 +46,7 @@ impl LlmProvider for VllmProvider {
         vec!["default".into()]
     }
 
-    fn default_model(&self) -> &str { "default" }
+    fn default_model(&self) -> &str {
+        "default"
+    }
 }

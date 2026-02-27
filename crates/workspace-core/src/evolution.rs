@@ -4,8 +4,8 @@
 //! where it can read and update SOUL.md, USER.md, and the daily memory log.
 //! This mirrors the Node OpenClaw "evolution" pipeline step.
 
-use serde::{Deserialize, Serialize};
 use crate::files::Workspace;
+use serde::{Deserialize, Serialize};
 
 /// Token returned when the agent decides no evolution occurred.
 pub const EVOLUTION_OK_TOKEN: &str = "EVOLUTION_OK";
@@ -95,8 +95,7 @@ impl EvolutionState {
 pub fn should_run_evolution(state: &EvolutionState, config: &EvolutionConfig) -> bool {
     config.enabled
         && state.message_count > 0
-        && (state.message_count - state.last_evolved_at_message)
-            >= config.trigger_every_n_messages
+        && (state.message_count - state.last_evolved_at_message) >= config.trigger_every_n_messages
 }
 
 #[cfg(test)]

@@ -32,7 +32,10 @@ fn main() {
         .unwrap();
     for r in rows {
         let (id, content, source, ts) = r.unwrap();
-        println!("---\nID: {}\nContent: {}\nSource: {}\nTS: {}", id, content, source, ts);
+        println!(
+            "---\nID: {}\nContent: {}\nSource: {}\nTS: {}",
+            id, content, source, ts
+        );
     }
 
     // Check FTS
@@ -63,8 +66,14 @@ fn main() {
 
         println!(
             "Search '{}': FTS={} hits, LIKE={} hits {}",
-            q, fts_hits, like_hits,
-            if fts_hits == 0 && like_hits > 0 { "<-- LIKE fallback needed" } else { "" }
+            q,
+            fts_hits,
+            like_hits,
+            if fts_hits == 0 && like_hits > 0 {
+                "<-- LIKE fallback needed"
+            } else {
+                ""
+            }
         );
     }
 }

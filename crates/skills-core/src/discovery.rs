@@ -1,5 +1,5 @@
 /// Multi-directory skill discovery — workspace > user > bundled precedence.
-use crate::manifest::{load_skill_md, SkillManifest};
+use crate::manifest::{SkillManifest, load_skill_md};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -38,7 +38,9 @@ pub fn skill_dirs(workspace: Option<&Path>) -> Vec<(PathBuf, SkillTier)> {
 /// Scan a single directory for SKILL.md files (one level of subdirs).
 async fn scan_dir(dir: &Path) -> Vec<SkillManifest> {
     let mut results = Vec::new();
-    let Ok(mut entries) = tokio::fs::read_dir(dir).await else { return results };
+    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+        return results;
+    };
     while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
         if path.is_dir() {
@@ -59,7 +61,8 @@ pub async fn discover_skills(workspace: Option<&Path>) -> Vec<DiscoveredSkill> {
         for manifest in scan_dir(&dir).await {
             let name = manifest.name.clone();
             // First seen wins (higher priority tier)
-            seen.entry(name).or_insert(DiscoveredSkill { manifest, tier });
+            seen.entry(name)
+                .or_insert(DiscoveredSkill { manifest, tier });
         }
     }
     seen.into_values().collect()

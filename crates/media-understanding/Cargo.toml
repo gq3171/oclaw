@@ -1,5 +1,5 @@
 [package]
-name = "oclaws-media-understanding"
+name = "oclaw-media-understanding"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -1,7 +1,7 @@
 //! Inbound message deduplication.
 
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use sha2::{Sha256, Digest};
 
 /// Deduplicates inbound messages within a TTL window.
 pub struct InboundDebounce {
@@ -30,7 +30,8 @@ impl InboundDebounce {
 
     /// Remove entries older than TTL.
     pub fn cleanup_stale(&mut self, now_ms: u64) {
-        self.seen.retain(|_, ts| now_ms.saturating_sub(*ts) < self.ttl_ms);
+        self.seen
+            .retain(|_, ts| now_ms.saturating_sub(*ts) < self.ttl_ms);
     }
 
     fn hash_key(body: &str, from: &str) -> String {

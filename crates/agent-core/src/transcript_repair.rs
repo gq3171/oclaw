@@ -1,5 +1,5 @@
+use oclaw_llm_core::chat::{ChatMessage, MessageRole, ToolCall};
 use std::collections::HashSet;
-use oclaws_llm_core::chat::{ChatMessage, MessageRole, ToolCall};
 
 pub struct RepairReport {
     pub added_synthetic: usize,
@@ -14,7 +14,9 @@ inserted synthetic error result for transcript repair.";
 /// Repair tool use/result pairing in a message history.
 /// Ensures every assistant tool call is followed by a matching tool result,
 /// drops duplicates and orphans, inserts synthetic errors for missing results.
-pub fn repair_tool_use_result_pairing(messages: Vec<ChatMessage>) -> (Vec<ChatMessage>, RepairReport) {
+pub fn repair_tool_use_result_pairing(
+    messages: Vec<ChatMessage>,
+) -> (Vec<ChatMessage>, RepairReport) {
     let mut result: Vec<ChatMessage> = Vec::new();
     let mut report = RepairReport {
         added_synthetic: 0,
@@ -101,14 +103,24 @@ fn make_synthetic_result(tool_call_id: &str, tool_name: &str) -> ChatMessage {
 }
 
 fn check_results_moved(original: &[ChatMessage], repaired: &[ChatMessage]) -> bool {
-    let orig_order: Vec<&str> = original.iter()
+    let orig_order: Vec<&str> = original
+        .iter()
         .filter_map(|m| {
-            if m.role == MessageRole::Tool { m.tool_call_id.as_deref() } else { None }
+            if m.role == MessageRole::Tool {
+                m.tool_call_id.as_deref()
+            } else {
+                None
+            }
         })
         .collect();
-    let new_order: Vec<&str> = repaired.iter()
+    let new_order: Vec<&str> = repaired
+        .iter()
         .filter_map(|m| {
-            if m.role == MessageRole::Tool { m.tool_call_id.as_deref() } else { None }
+            if m.role == MessageRole::Tool {
+                m.tool_call_id.as_deref()
+            } else {
+                None
+            }
         })
         .collect();
     orig_order != new_order
@@ -120,34 +132,44 @@ pub fn sanitize_tool_call_inputs(
     messages: Vec<ChatMessage>,
     allowed_tools: Option<&HashSet<String>>,
 ) -> Vec<ChatMessage> {
-    messages.into_iter().filter_map(|mut msg| {
-        if msg.role != MessageRole::Assistant || msg.tool_calls.is_none() {
-            return Some(msg);
-        }
-        let tool_calls: Vec<ToolCall> = msg.tool_calls.take().unwrap()
-            .into_iter()
-            .filter(|tc| {
-                if tc.id.is_empty() || tc.function.name.is_empty() {
-                    return false;
-                }
-                if tc.function.name.len() > 64 {
-                    return false;
-                }
-                if let Some(allowed) = allowed_tools
-                    && !allowed.contains(&tc.function.name)
-                {
-                    return false;
-                }
-                true
-            })
-            .collect();
+    messages
+        .into_iter()
+        .filter_map(|mut msg| {
+            if msg.role != MessageRole::Assistant || msg.tool_calls.is_none() {
+                return Some(msg);
+            }
+            let tool_calls: Vec<ToolCall> = msg
+                .tool_calls
+                .take()
+                .unwrap()
+                .into_iter()
+                .filter(|tc| {
+                    if tc.id.is_empty() || tc.function.name.is_empty() {
+                        return false;
+                    }
+                    if tc.function.name.len() > 64 {
+                        return false;
+                    }
+                    if let Some(allowed) = allowed_tools
+                        && !allowed.contains(&tc.function.name)
+                    {
+                        return false;
+                    }
+                    true
+                })
+                .collect();
 
-        if tool_calls.is_empty() && msg.content.is_empty() {
-            return None; // drop empty assistant message
-        }
-        msg.tool_calls = if tool_calls.is_empty() { None } else { Some(tool_calls) };
-        Some(msg)
-    }).collect()
+            if tool_calls.is_empty() && msg.content.is_empty() {
+                return None; // drop empty assistant message
+            }
+            msg.tool_calls = if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            };
+            Some(msg)
+        })
+        .collect()
 }
 
 /// Repair a JSONL session file: drop unparseable lines, return cleaned messages.

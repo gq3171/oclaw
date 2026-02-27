@@ -1,36 +1,36 @@
-pub mod traits;
-pub mod types;
+pub mod bluebubbles;
+pub mod discord;
+pub mod draft_stream;
+pub mod feishu;
+pub mod google_chat;
+pub mod group_gate;
+pub mod irc;
+pub mod line;
+pub mod manager;
+pub mod matrix;
+pub mod mattermost;
+pub mod msteams;
+pub mod nextcloud;
+pub mod nostr;
 pub mod policy;
 pub mod router;
+pub mod signal;
+pub mod slack;
+pub mod streaming;
+pub mod synology;
+pub mod telegram;
+pub mod traits;
+pub mod twitch;
+pub mod types;
 pub mod webchat;
 pub mod whatsapp;
-pub mod telegram;
-pub mod discord;
-pub mod slack;
-pub mod signal;
-pub mod line;
-pub mod matrix;
-pub mod nostr;
-pub mod irc;
-pub mod google_chat;
-pub mod mattermost;
-pub mod feishu;
-pub mod msteams;
-pub mod twitch;
 pub mod zalo;
-pub mod nextcloud;
-pub mod synology;
-pub mod bluebubbles;
-pub mod manager;
-pub mod group_gate;
-pub mod draft_stream;
-pub mod streaming;
 
-pub use traits::*;
-pub use draft_stream::{DraftStreamLoop, DraftStreamHandle};
+pub use draft_stream::{DraftStreamHandle, DraftStreamLoop};
+pub use manager::{ChannelFactory, ChannelInfo, ChannelManager, ChannelRegistry};
 pub use router::{
-    MessageType, Attachment, MessageContent, Message,
-    MessageSender as RouterMessageSender, MessageRecipient, MessageReaction,
-    MessageQueue, QueueError, MessageRouter, normalize_message,
+    Attachment, Message, MessageContent, MessageQueue, MessageReaction, MessageRecipient,
+    MessageRouter, MessageSender as RouterMessageSender, MessageType, QueueError,
+    normalize_message,
 };
-pub use manager::{ChannelManager, ChannelFactory, ChannelRegistry, ChannelInfo};
+pub use traits::*;

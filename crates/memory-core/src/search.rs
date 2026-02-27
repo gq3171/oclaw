@@ -159,7 +159,11 @@ pub async fn hybrid_search(
             updated_at_ms: c.updated_at_ms,
         })
         .collect();
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(results)
 }
@@ -179,11 +183,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
         norm_b += y * y;
     }
     let denom = norm_a.sqrt() * norm_b.sqrt();
-    if denom < 1e-10 {
-        0.0
-    } else {
-        dot / denom
-    }
+    if denom < 1e-10 { 0.0 } else { dot / denom }
 }
 
 fn truncate_snippet(content: &str, max_chars: usize) -> String {
@@ -248,7 +248,11 @@ pub fn apply_temporal_decay(
         r.score *= (0.5 + 0.5 * decay) as f64;
     }
     // Re-sort after score adjustment
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results
 }
 

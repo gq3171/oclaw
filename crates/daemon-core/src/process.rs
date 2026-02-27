@@ -1,7 +1,7 @@
 //! Process Management - Real implementation using sysinfo
 
 use serde::{Deserialize, Serialize};
-use sysinfo::{System, Pid};
+use sysinfo::{Pid, System};
 
 use crate::DaemonResult;
 
@@ -35,7 +35,8 @@ impl ProcessManager {
     }
 
     pub fn refresh(&mut self) {
-        self.sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        self.sys
+            .refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     }
 
     pub fn get(&self, pid: u32) -> Option<ProcessInfo> {
@@ -59,19 +60,23 @@ impl ProcessManager {
     }
 
     pub fn list(&self) -> Vec<ProcessInfo> {
-        self.sys.processes().iter().map(|(pid, p)| ProcessInfo {
-            pid: pid.as_u32(),
-            name: p.name().to_string_lossy().into_owned(),
-            status: match p.status() {
-                sysinfo::ProcessStatus::Run => ProcessStatus::Running,
-                sysinfo::ProcessStatus::Sleep => ProcessStatus::Sleeping,
-                sysinfo::ProcessStatus::Stop => ProcessStatus::Stopped,
-                sysinfo::ProcessStatus::Zombie => ProcessStatus::Zombie,
-                _ => ProcessStatus::Unknown,
-            },
-            cpu_usage: p.cpu_usage(),
-            memory_bytes: p.memory(),
-        }).collect()
+        self.sys
+            .processes()
+            .iter()
+            .map(|(pid, p)| ProcessInfo {
+                pid: pid.as_u32(),
+                name: p.name().to_string_lossy().into_owned(),
+                status: match p.status() {
+                    sysinfo::ProcessStatus::Run => ProcessStatus::Running,
+                    sysinfo::ProcessStatus::Sleep => ProcessStatus::Sleeping,
+                    sysinfo::ProcessStatus::Stop => ProcessStatus::Stopped,
+                    sysinfo::ProcessStatus::Zombie => ProcessStatus::Zombie,
+                    _ => ProcessStatus::Unknown,
+                },
+                cpu_usage: p.cpu_usage(),
+                memory_bytes: p.memory(),
+            })
+            .collect()
     }
 
     pub fn kill(&self, pid: u32) -> DaemonResult<bool> {
@@ -83,5 +88,7 @@ impl ProcessManager {
 }
 
 impl Default for ProcessManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

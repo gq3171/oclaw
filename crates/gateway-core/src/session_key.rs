@@ -1,4 +1,4 @@
-use oclaws_channel_core::types::ChatType;
+use oclaw_channel_core::types::ChatType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -53,12 +53,7 @@ pub struct SessionKey {
 }
 
 impl SessionKey {
-    pub fn new(
-        channel: &str,
-        chat_type: ChatType,
-        chat_id: &str,
-        user_id: Option<&str>,
-    ) -> Self {
+    pub fn new(channel: &str, chat_type: ChatType, chat_id: &str, user_id: Option<&str>) -> Self {
         Self {
             channel: channel.to_string(),
             chat_type,
@@ -184,7 +179,14 @@ mod tests {
 
     #[test]
     fn dm_scope_per_channel_peer() {
-        let id = build_session_id("telegram", "123", false, DmScope::PerChannelPeer, None, None);
+        let id = build_session_id(
+            "telegram",
+            "123",
+            false,
+            DmScope::PerChannelPeer,
+            None,
+            None,
+        );
         assert_eq!(id, "telegram_123");
     }
 
@@ -197,10 +199,10 @@ mod tests {
     #[test]
     fn identity_links_resolve() {
         let mut links = IdentityLinks::default();
-        links.links.insert("alice".to_string(), vec![
-            "telegram:123".to_string(),
-            "slack:U0ABC".to_string(),
-        ]);
+        links.links.insert(
+            "alice".to_string(),
+            vec!["telegram:123".to_string(), "slack:U0ABC".to_string()],
+        );
         assert_eq!(links.resolve("telegram", "123"), Some("alice"));
         assert_eq!(links.resolve("slack", "U0ABC"), Some("alice"));
         assert_eq!(links.resolve("discord", "999"), None);
@@ -209,12 +211,26 @@ mod tests {
     #[test]
     fn cross_channel_session_via_links() {
         let mut links = IdentityLinks::default();
-        links.links.insert("alice".to_string(), vec![
-            "telegram:123".to_string(),
-            "whatsapp:456".to_string(),
-        ]);
-        let id1 = build_session_id("telegram", "123", false, DmScope::PerPeer, Some(&links), None);
-        let id2 = build_session_id("whatsapp", "456", false, DmScope::PerPeer, Some(&links), None);
+        links.links.insert(
+            "alice".to_string(),
+            vec!["telegram:123".to_string(), "whatsapp:456".to_string()],
+        );
+        let id1 = build_session_id(
+            "telegram",
+            "123",
+            false,
+            DmScope::PerPeer,
+            Some(&links),
+            None,
+        );
+        let id2 = build_session_id(
+            "whatsapp",
+            "456",
+            false,
+            DmScope::PerPeer,
+            Some(&links),
+            None,
+        );
         assert_eq!(id1, "alice");
         assert_eq!(id2, "alice");
         assert_eq!(id1, id2); // same session!

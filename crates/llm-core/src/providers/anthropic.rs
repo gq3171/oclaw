@@ -1,10 +1,12 @@
 use async_trait::async_trait;
 use reqwest::Client;
-use serde::Serialize;
 
-use crate::chat::{ChatMessage, ChatRequest, ChatCompletion, MessageRole};
+use crate::chat::{ChatCompletion, ChatMessage, ChatRequest, MessageRole};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::{LlmError, LlmResult};
+use crate::providers::media_markdown::{
+    ParsedMarkdownSegment, markdown_contains_data_url_image, parse_markdown_data_url_segments,
+};
 use crate::providers::{LlmProvider, ProviderType};
 
 pub struct AnthropicProvider {
@@ -17,12 +19,21 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
-    pub fn new(api_key: &str, base_url: Option<&str>, defaults: crate::providers::ProviderDefaults) -> LlmResult<Self> {
-        let model = defaults.model.unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string());
+    pub fn new(
+        api_key: &str,
+        base_url: Option<&str>,
+        defaults: crate::providers::ProviderDefaults,
+    ) -> LlmResult<Self> {
+        let model = defaults
+            .model
+            .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string());
         Ok(Self {
             client: Client::new(),
             api_key: api_key.to_string(),
-            base_url: base_url.unwrap_or("https://api.anthropic.com").trim_end_matches('/').to_string(),
+            base_url: base_url
+                .unwrap_or("https://api.anthropic.com")
+                .trim_end_matches('/')
+                .to_string(),
             default_max_tokens: defaults.max_tokens.unwrap_or(4096),
             default_temperature: defaults.temperature,
             default_model_name: model,
@@ -39,12 +50,16 @@ impl LlmProvider for AnthropicProvider {
     async fn chat(&self, request: ChatRequest) -> LlmResult<ChatCompletion> {
         let url = format!("{}/v1/messages", self.base_url);
 
-        let system_prompt = request.messages.iter()
+        let system_prompt = request
+            .messages
+            .iter()
             .find(|m| m.role == MessageRole::System)
             .map(|m| m.content.clone());
 
         // Build messages with tool support
-        let messages: Vec<serde_json::Value> = request.messages.iter()
+        let messages: Vec<serde_json::Value> = request
+            .messages
+            .iter()
             .filter(|m| m.role != MessageRole::System)
             .map(anthropic_message)
             .collect();
@@ -62,17 +77,21 @@ impl LlmProvider for AnthropicProvider {
         }
         // Add tools
         if let Some(ref tools) = request.tools {
-            let tools_json: Vec<serde_json::Value> = tools.iter().map(|t| {
-                serde_json::json!({
-                    "name": t.function.name,
-                    "description": t.function.description,
-                    "input_schema": t.function.parameters,
+            let tools_json: Vec<serde_json::Value> = tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.function.name,
+                        "description": t.function.description,
+                        "input_schema": t.function.parameters,
+                    })
                 })
-            }).collect();
+                .collect();
             body["tools"] = serde_json::Value::Array(tools_json);
         }
 
-        let response = self.client
+        let response = self
+            .client
             .post(url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -88,32 +107,36 @@ impl LlmProvider for AnthropicProvider {
             return Err(LlmError::ApiError(format!("HTTP {} : {}", status, text)));
         }
 
-        let resp: serde_json::Value = response.json().await
+        let resp: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| LlmError::ParseError(e.to_string()))?;
 
         parse_anthropic_response(resp)
     }
 
-    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<crate::chat::StreamChunk>>> {
+    async fn chat_stream(
+        &self,
+        request: ChatRequest,
+    ) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<crate::chat::StreamChunk>>> {
         let url = format!("{}/v1/messages", self.base_url);
 
-        #[derive(Serialize)]
-        struct AnthropicMsg { role: String, content: String }
-
-        let system_prompt = request.messages.iter()
+        let system_prompt = request
+            .messages
+            .iter()
             .find(|m| m.role == MessageRole::System)
             .map(|m| m.content.clone());
 
-        let messages: Vec<AnthropicMsg> = request.messages.iter()
+        let messages: Vec<serde_json::Value> = request
+            .messages
+            .iter()
             .filter(|m| m.role != MessageRole::System)
-            .map(|m| AnthropicMsg {
-                role: if m.role == MessageRole::User { "user" } else { "assistant" }.to_string(),
-                content: m.content.clone(),
-            }).collect();
+            .map(anthropic_message)
+            .collect();
 
         let mut body = serde_json::json!({
             "model": request.model,
-            "messages": serde_json::to_value(&messages).unwrap_or_default(),
+            "messages": messages,
             "max_tokens": request.max_tokens.unwrap_or(self.default_max_tokens),
             "stream": true,
         });
@@ -124,7 +147,8 @@ impl LlmProvider for AnthropicProvider {
             body["system"] = serde_json::Value::String(sp);
         }
 
-        let response = self.client
+        let response = self
+            .client
             .post(url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -150,7 +174,10 @@ impl LlmProvider for AnthropicProvider {
             while let Some(chunk) = stream.next().await {
                 let bytes = match chunk {
                     Ok(b) => b,
-                    Err(e) => { let _ = tx.send(Err(LlmError::NetworkError(e.to_string()))).await; break; }
+                    Err(e) => {
+                        let _ = tx.send(Err(LlmError::NetworkError(e.to_string()))).await;
+                        break;
+                    }
                 };
                 buffer.push_str(&String::from_utf8_lossy(&bytes));
 
@@ -158,11 +185,16 @@ impl LlmProvider for AnthropicProvider {
                     let line = buffer[..line_end].trim().to_string();
                     buffer = buffer[line_end + 1..].to_string();
 
-                    if line.is_empty() || !line.starts_with("data: ") { continue; }
+                    if line.is_empty() || !line.starts_with("data: ") {
+                        continue;
+                    }
                     let data = &line[6..];
                     if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-                        if event.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
-                            if let Some(text) = event.pointer("/delta/text").and_then(|t| t.as_str()) {
+                        if event.get("type").and_then(|t| t.as_str()) == Some("content_block_delta")
+                        {
+                            if let Some(text) =
+                                event.pointer("/delta/text").and_then(|t| t.as_str())
+                            {
                                 let sc = crate::chat::StreamChunk {
                                     id: id.clone(),
                                     object: "chat.completion.chunk".to_string(),
@@ -173,14 +205,19 @@ impl LlmProvider for AnthropicProvider {
                                         delta: Some(crate::chat::ChatMessage {
                                             role: crate::chat::MessageRole::Assistant,
                                             content: text.to_string(),
-                                            name: None, tool_calls: None, tool_call_id: None,
+                                            name: None,
+                                            tool_calls: None,
+                                            tool_call_id: None,
                                         }),
                                         finish_reason: None,
                                     }],
                                 };
-                                if tx.send(Ok(sc)).await.is_err() { return; }
+                                if tx.send(Ok(sc)).await.is_err() {
+                                    return;
+                                }
                             }
-                        } else if event.get("type").and_then(|t| t.as_str()) == Some("message_stop") {
+                        } else if event.get("type").and_then(|t| t.as_str()) == Some("message_stop")
+                        {
                             return;
                         }
                     }
@@ -192,11 +229,16 @@ impl LlmProvider for AnthropicProvider {
     }
 
     async fn embeddings(&self, _request: EmbeddingRequest) -> LlmResult<EmbeddingResponse> {
-        Err(LlmError::UnsupportedModel("Anthropic does not support embeddings".to_string()))
+        Err(LlmError::UnsupportedModel(
+            "Anthropic does not support embeddings".to_string(),
+        ))
     }
 
     fn supported_models(&self) -> Vec<String> {
-        let mut models = vec!["claude-3-5-sonnet-20241022".to_string(), "claude-3-opus-20240229".to_string()];
+        let mut models = vec![
+            "claude-3-5-sonnet-20241022".to_string(),
+            "claude-3-opus-20240229".to_string(),
+        ];
         if !models.contains(&self.default_model_name) {
             models.insert(0, self.default_model_name.clone());
         }
@@ -237,8 +279,8 @@ fn anthropic_message(m: &ChatMessage) -> serde_json::Value {
             content.push(serde_json::json!({"type": "text", "text": m.content}));
         }
         for tc in tcs {
-            let input: serde_json::Value = serde_json::from_str(&tc.function.arguments)
-                .unwrap_or(serde_json::json!({}));
+            let input: serde_json::Value =
+                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::json!({}));
             content.push(serde_json::json!({
                 "type": "tool_use",
                 "id": tc.id,
@@ -247,6 +289,35 @@ fn anthropic_message(m: &ChatMessage) -> serde_json::Value {
             }));
         }
         return serde_json::json!({"role": "assistant", "content": content});
+    }
+
+    if m.role == MessageRole::User && markdown_contains_data_url_image(&m.content) {
+        let mut blocks = Vec::new();
+        for seg in parse_markdown_data_url_segments(&m.content) {
+            match seg {
+                ParsedMarkdownSegment::Text(text) => {
+                    if !text.is_empty() {
+                        blocks.push(serde_json::json!({
+                            "type": "text",
+                            "text": text,
+                        }));
+                    }
+                }
+                ParsedMarkdownSegment::Image(image) => {
+                    blocks.push(serde_json::json!({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": image.mime_type,
+                            "data": image.base64_data,
+                        }
+                    }));
+                }
+            }
+        }
+        if !blocks.is_empty() {
+            return serde_json::json!({"role": role, "content": blocks});
+        }
     }
 
     serde_json::json!({"role": role, "content": m.content})
@@ -260,7 +331,8 @@ fn parse_anthropic_response(resp: serde_json::Value) -> LlmResult<ChatCompletion
     let model = resp["model"].as_str().unwrap_or("").to_string();
     let stop_reason = resp["stop_reason"].as_str().unwrap_or("stop");
 
-    let content_blocks = resp["content"].as_array()
+    let content_blocks = resp["content"]
+        .as_array()
         .ok_or_else(|| LlmError::ParseError("missing content".into()))?;
 
     let mut text_parts = Vec::new();
@@ -290,7 +362,11 @@ fn parse_anthropic_response(resp: serde_json::Value) -> LlmResult<ChatCompletion
         }
     }
 
-    let finish = if stop_reason == "tool_use" { "tool_calls" } else { "stop" };
+    let finish = if stop_reason == "tool_use" {
+        "tool_calls"
+    } else {
+        "stop"
+    };
 
     Ok(ChatCompletion {
         id,
@@ -303,7 +379,11 @@ fn parse_anthropic_response(resp: serde_json::Value) -> LlmResult<ChatCompletion
                 role: MessageRole::Assistant,
                 content: text_parts.join(""),
                 name: None,
-                tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+                tool_calls: if tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(tool_calls)
+                },
                 tool_call_id: None,
             },
             finish_reason: Some(finish.to_string()),

@@ -96,7 +96,7 @@ impl OAuthConfig {
         let client_id = urlencoding::encode(&self.client_id);
         let redirect_uri = urlencoding::encode(&self.redirect_uri);
         let state_encoded = urlencoding::encode(state);
-        
+
         format!(
             "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
             self.auth_url, client_id, redirect_uri, scopes, state_encoded
@@ -268,7 +268,9 @@ impl OAuthClient {
 
         Ok(OAuthToken {
             access_token: token_response.access_token,
-            refresh_token: token_response.refresh_token.or(Some(refresh_token.to_string())),
+            refresh_token: token_response
+                .refresh_token
+                .or(Some(refresh_token.to_string())),
             token_type: token_response.token_type,
             expires_in: token_response.expires_in.unwrap_or(3600),
             scope: token_response.scope,
@@ -323,9 +325,9 @@ impl OAuthClient {
                     .await
                     .map_err(|e| OAuthError::Parse(e.to_string()))?;
 
-                let avatar_url = user.avatar.map(|av| {
-                    format!("https://cdn.discordapp.com/avatars/{}/{}.png", user.id, av)
-                });
+                let avatar_url = user
+                    .avatar
+                    .map(|av| format!("https://cdn.discordapp.com/avatars/{}/{}.png", user.id, av));
 
                 Ok(OAuthUser {
                     id: user.id,

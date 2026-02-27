@@ -90,22 +90,34 @@ impl Tool {
             Tool::ListDir(_) => "List contents of a directory",
             Tool::WebFetch(_) => "Fetch content from a URL via HTTP GET",
             Tool::Memory(_) => "Store and retrieve key-value memory entries",
-            Tool::MemorySearch(_) => "Mandatory recall step: semantically search memory before answering questions about prior work, decisions, dates, people, preferences, or todos",
+            Tool::MemorySearch(_) => {
+                "Mandatory recall step: semantically search memory before answering questions about prior work, decisions, dates, people, preferences, or todos"
+            }
             Tool::MemoryGet(_) => "Read a specific memory entry by ID after memory_search",
-            Tool::Browse(_) => "Browser automation: navigate, click, type, screenshot, evaluate JS, get DOM snapshot, console logs, and network requests",
-            Tool::WebSearch(_) => "Search the web and return a list of results with titles, URLs, and snippets",
+            Tool::Browse(_) => {
+                "Browser automation: navigate, click, type, screenshot, evaluate JS, get DOM snapshot, console logs, and network requests"
+            }
+            Tool::WebSearch(_) => {
+                "Search the web and return a list of results with titles, URLs, and snippets"
+            }
             Tool::LinkReader(_) => "Fetch a URL and extract its main text content",
             Tool::MediaDescribe(_) => "Describe an image from a URL using vision capabilities",
             Tool::Cron(_) => "Manage scheduled cron jobs: list, add, update, remove, run, status",
-            Tool::Message(_) => "Send a message to a channel target",
+            Tool::Message(_) => {
+                "Send/manage channel messages: send/reply, react/unreact/reactions, read/search, edit/delete/unsend, pin/unpin/list pins, permissions, attachments, thread create/reply, polls, member/group listing, broadcast"
+            }
             Tool::SessionsList(_) => "List active sessions with optional filters",
             Tool::SessionsHistory(_) => "Retrieve message history for a session",
             Tool::SessionsSend(_) => "Send a message into an existing session",
             Tool::SessionsSpawn(_) => "Spawn a new sub-session with an agent",
-            Tool::Subagents(_) => "Manage running subagents: list, kill, steer",
+            Tool::Subagents(_) => {
+                "Manage subagents: help, agents, list, info, log, send, kill, steer, spawn, focus, unfocus"
+            }
             Tool::SessionStatus(_) => "Get current session status and metadata",
             Tool::Tts(_) => "Convert text to speech audio",
-            Tool::Workspace(_) => "Read, write, append, or list files in the agent workspace (SOUL.md, IDENTITY.md, HEARTBEAT.md, memory/). Use this to evolve your personality and store durable memories.",
+            Tool::Workspace(_) => {
+                "Read, write, append, or list files in the agent workspace (SOUL.md, IDENTITY.md, HEARTBEAT.md, memory/). Use this to evolve your personality and store durable memories."
+            }
         }
     }
 
@@ -224,12 +236,97 @@ impl Tool {
             Tool::Message(_) => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "channel": { "type": "string", "description": "Channel type (telegram, discord, etc.)" },
-                    "target": { "type": "string", "description": "Target chat/user ID" },
+                    "action": { "type": "string", "description": "Message action: send/reply/send_with_effect/react/unreact/reactions/read/search/edit/delete/unsend/pin/unpin/list_pins/permissions/send_attachment/sticker/sticker_search/sticker_upload/thread_create/thread_list/thread_reply/poll/channel_list/channel_info/channel_create/channel_edit/channel_delete/channel_move/channel_permission_set/channel_permission_remove/category_create/category_edit/category_delete/topic_create/member_info/add_participant/remove_participant/leave_group/role_info/role_add/role_remove/kick_member/ban_member/timeout_member/event_list/event_create/emoji_list/emoji_upload/voice_status/rename_group/set_group_icon/set_presence/broadcast (default: send)" },
+                    "channel": { "type": "string", "description": "Delivery channel (telegram/feishu/slack/...) ; optional when current session has delivery context" },
+                    "provider": { "type": "string", "description": "Alias for channel (Node-style)" },
+                    "channels": { "type": "array", "items": { "type": "string" }, "description": "Target channels for broadcast (Node-style)" },
+                    "target": { "type": "string", "description": "Target chat/user ID (preferred)" },
+                    "to": { "type": "string", "description": "Alias for target (Node-style)" },
+                    "targets": { "type": "array", "items": { "type": "string" }, "description": "Target list for broadcast" },
                     "text": { "type": "string", "description": "Message text to send" },
-                    "reply_to": { "type": "string", "description": "Message ID to reply to" }
+                    "message": { "type": "string", "description": "Alias for text (Node-style)" },
+                    "content": { "type": "string", "description": "Alias for text" },
+                    "reply_to": { "type": "string", "description": "Message ID to reply to" },
+                    "replyTo": { "type": "string", "description": "Alias for reply_to (Node-style)" },
+                    "thread_id": { "type": "string", "description": "Thread id for thread-style channels (or send reply anchor)" },
+                    "threadId": { "type": "string", "description": "Alias for thread_id (Node-style)" },
+                    "message_id": { "type": "string", "description": "Message id for reaction/edit/delete actions" },
+                    "messageId": { "type": "string", "description": "Alias for message_id (Node-style)" },
+                    "emoji": { "type": "string", "description": "Emoji for reaction actions" },
+                    "remove": { "type": "boolean", "description": "When action=react and remove=true, convert to remove_reaction (Node-style)" },
+                    "query": { "type": "string", "description": "Search query for action=search" },
+                    "before": { "type": "string", "description": "Cursor/message id before for action=read" },
+                    "after": { "type": "string", "description": "Cursor/message id after for action=read" },
+                    "around": { "type": "string", "description": "Cursor/message id around for action=read" },
+                    "name": { "type": "string", "description": "Generic name/title field for create/edit operations" },
+                    "description": { "type": "string", "description": "Generic description field for create/upload operations" },
+                    "user_id": { "type": "string", "description": "User/member id for moderation/role/participant operations" },
+                    "userId": { "type": "string", "description": "Alias for user_id" },
+                    "role_id": { "type": "string", "description": "Role id for role operations" },
+                    "roleId": { "type": "string", "description": "Alias for role_id" },
+                    "target_id": { "type": "string", "description": "Overwrite target id for channel_permission_set/remove" },
+                    "targetId": { "type": "string", "description": "Alias for target_id" },
+                    "target_type": { "type": "string", "description": "Overwrite target type: role/member for channel_permission_set" },
+                    "targetType": { "type": "string", "description": "Alias for target_type" },
+                    "allow": { "type": "string", "description": "Permission bitset allow mask for channel_permission_set" },
+                    "deny": { "type": "string", "description": "Permission bitset deny mask for channel_permission_set" },
+                    "parent_id": { "type": "string", "description": "Parent channel/category id" },
+                    "parentId": { "type": "string", "description": "Alias for parent_id" },
+                    "position": { "type": "integer", "description": "Position/order hint for move/edit operations" },
+                    "topic": { "type": "string", "description": "Topic text for topic/channel edits" },
+                    "channel_type": { "type": "string", "description": "Channel type hint for channel_create/category_create" },
+                    "channelType": { "type": "string", "description": "Alias for channel_type" },
+                    "start_time": { "type": "string", "description": "Event start time (RFC3339)" },
+                    "startTime": { "type": "string", "description": "Alias for start_time" },
+                    "end_time": { "type": "string", "description": "Event end time (RFC3339)" },
+                    "endTime": { "type": "string", "description": "Alias for end_time" },
+                    "duration_minutes": { "type": "integer", "description": "Timeout duration in minutes" },
+                    "durationMinutes": { "type": "integer", "description": "Alias for duration_minutes" },
+                    "delete_message_seconds": { "type": "integer", "description": "Ban cleanup window in seconds" },
+                    "deleteMessageSeconds": { "type": "integer", "description": "Alias for delete_message_seconds" },
+                    "tags": { "type": "string", "description": "Tags for sticker upload" },
+                    "image": { "type": "string", "description": "Emoji/group icon payload (data URL / URL / file path)" },
+                    "icon": { "type": "string", "description": "Group icon payload (data URL / URL / file path)" },
+                    "effect": { "type": "string", "description": "Message effect name/id for sendWithEffect" },
+                    "thread_name": { "type": "string", "description": "Thread title/name for thread_create" },
+                    "threadName": { "type": "string", "description": "Alias for thread_name" },
+                    "auto_archive_minutes": { "type": "integer", "description": "Thread auto-archive minutes for thread_create" },
+                    "autoArchiveMinutes": { "type": "integer", "description": "Alias for auto_archive_minutes" },
+                    "autoArchiveMin": { "type": "integer", "description": "Alias for auto_archive_minutes (Node-style)" },
+                    "thread_type": { "type": "string", "description": "Optional thread type hint (e.g. thread_public/thread_private)" },
+                    "threadType": { "type": "string", "description": "Alias for thread_type" },
+                    "group_id": { "type": "string", "description": "Optional group/channel scope for member_info fallback/list_members" },
+                    "groupId": { "type": "string", "description": "Alias for group_id" },
+                    "guild_id": { "type": "string", "description": "Alias for group_id in guild-based channels" },
+                    "guildId": { "type": "string", "description": "Alias for group_id in guild-based channels (Node-style)" },
+                    "limit": { "type": "integer", "description": "Optional result limit for list actions" },
+                    "include_archived": { "type": "boolean", "description": "Thread list: include archived threads for target channel" },
+                    "includeArchived": { "type": "boolean", "description": "Alias for include_archived" },
+                    "media": { "type": "string", "description": "Attachment source: URL, local path, data URL, or file id" },
+                    "path": { "type": "string", "description": "Alias for media local path" },
+                    "filePath": { "type": "string", "description": "Alias for media local path (Node-style)" },
+                    "file_id": { "type": "string", "description": "Platform file id for attachment reuse" },
+                    "fileId": { "type": "string", "description": "Alias for file_id (Node-style)" },
+                    "buffer": { "type": "string", "description": "Attachment base64 or data URL payload" },
+                    "filename": { "type": "string", "description": "Attachment filename hint" },
+                    "mime_type": { "type": "string", "description": "Attachment MIME type hint" },
+                    "mimeType": { "type": "string", "description": "Alias for mime_type (Node-style)" },
+                    "contentType": { "type": "string", "description": "Alias for mime_type" },
+                    "caption": { "type": "string", "description": "Attachment caption text" },
+                    "as_voice": { "type": "boolean", "description": "Force voice media type for attachment" },
+                    "asVoice": { "type": "boolean", "description": "Alias for as_voice" },
+                    "poll_question": { "type": "string", "description": "Poll question text" },
+                    "pollQuestion": { "type": "string", "description": "Alias for poll_question (Node-style)" },
+                    "poll_options": { "type": "array", "items": { "type": "string" }, "description": "Poll options list (snake_case)" },
+                    "pollOption": { "type": "array", "items": { "type": "string" }, "description": "Poll options list (Node-style alias)" },
+                    "poll_anonymous": { "type": "boolean", "description": "Whether poll is anonymous (default true)" },
+                    "pollAnonymous": { "type": "boolean", "description": "Alias for poll_anonymous" },
+                    "poll_multiple": { "type": "boolean", "description": "Whether poll allows multiple answers (default false)" },
+                    "pollMulti": { "type": "boolean", "description": "Alias for poll_multiple" },
+                    "account_id": { "type": "string", "description": "Optional account ID for multi-account channels" },
+                    "accountId": { "type": "string", "description": "Alias for account_id (Node-style)" }
                 },
-                "required": ["channel", "target", "text"]
+                "required": []
             }),
             Tool::SessionsList(_) => serde_json::json!({
                 "type": "object",
@@ -251,34 +348,82 @@ impl Tool {
             Tool::SessionsSend(_) => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "session_key": { "type": "string", "description": "Target session key" },
-                    "text": { "type": "string", "description": "Message text" },
-                    "role": { "type": "string", "enum": ["user", "system"], "description": "Message role (default: user)" }
+                    "session_key": { "type": "string", "description": "Target session key (snake_case alias)" },
+                    "sessionKey": { "type": "string", "description": "Target session key (Node-style alias)" },
+                    "text": { "type": "string", "description": "Message text (snake_case alias)" },
+                    "message": { "type": "string", "description": "Message text (Node-style alias)" },
+                    "label": { "type": "string", "description": "Optional target label (resolved by orchestrator)" },
+                    "agentId": { "type": "string", "description": "Optional agent scope when resolving label" },
+                    "role": { "type": "string", "enum": ["user", "system"], "description": "Message role (default: user)" },
+                    "timeoutSeconds": { "type": "number", "description": "Wait timeout in seconds (0 = async fire-and-forget)" }
                 },
-                "required": ["session_key", "text"]
+                "required": []
             }),
             Tool::SessionsSpawn(_) => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "agent_id": { "type": "string", "description": "Agent to use for the sub-session" },
-                    "prompt": { "type": "string", "description": "Initial prompt for the sub-session" },
-                    "parent_session_key": { "type": "string", "description": "Parent session key" }
+                    "task": { "type": "string", "description": "Task description for the spawned subagent" },
+                    "label": { "type": "string", "description": "Optional display label for the spawned subagent" },
+                    "agentId": { "type": "string", "description": "Requested agent id (Node-style alias)" },
+                    "agent_id": { "type": "string", "description": "Requested agent id (snake_case alias)" },
+                    "model": { "type": "string", "description": "Optional model override for this spawned run" },
+                    "thinking": { "type": "string", "description": "Optional thinking mode hint" },
+                    "runTimeoutSeconds": { "type": "number", "description": "Run timeout in seconds" },
+                    "timeoutSeconds": { "type": "number", "description": "Back-compat timeout alias" },
+                    "thread": { "type": "boolean", "description": "Request thread binding for subagent session" },
+                    "mode": { "type": "string", "enum": ["run", "session"], "description": "Run mode: one-shot run or persistent session" },
+                    "cleanup": { "type": "string", "enum": ["keep", "delete"], "description": "Cleanup policy after completion" },
+                    "prompt": { "type": "string", "description": "Back-compat initial prompt alias" },
+                    "parent_session_key": { "type": "string", "description": "Parent session key (back-compat)" }
                 },
-                "required": ["agent_id", "prompt"]
+                "required": []
             }),
             Tool::Subagents(_) => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["list", "kill", "steer"], "description": "Subagent action" },
-                    "session_key": { "type": "string", "description": "Session key of the subagent (for kill/steer)" },
-                    "message": { "type": "string", "description": "Steering message (for steer)" }
+                    "action": {
+                        "type": "string",
+                        "enum": ["help", "agents", "list", "info", "log", "send", "kill", "steer", "spawn", "focus", "unfocus"],
+                        "description": "Subagent action"
+                    },
+                    "target": { "type": "string", "description": "Target run/session/label/index ('all' supported for kill)" },
+                    "session_key": { "type": "string", "description": "Back-compat target session key alias" },
+                    "sessionKey": { "type": "string", "description": "Node-style target session key alias" },
+                    "message": { "type": "string", "description": "Message for send/steer actions" },
+                    "recentMinutes": { "type": "number", "description": "Recent window in minutes for list action" },
+                    "limit": { "type": "number", "description": "History limit for log action (default 20, max 200)" },
+                    "includeTools": { "type": "boolean", "description": "Include tool/toolresult rows in log output" },
+                    "agentId": { "type": "string", "description": "Agent id for spawn action (Node-style)" },
+                    "agent_id": { "type": "string", "description": "Agent id for spawn action (snake_case)" },
+                    "task": { "type": "string", "description": "Task for spawn action" },
+                    "prompt": { "type": "string", "description": "Back-compat task alias for spawn action" },
+                    "model": { "type": "string", "description": "Model override for spawn action" },
+                    "thinking": { "type": "string", "description": "Thinking mode hint for spawn action" },
+                    "thread": { "type": "boolean", "description": "Request thread binding for spawn session mode" },
+                    "mode": { "type": "string", "enum": ["run", "session"], "description": "Spawn mode" },
+                    "cleanup": { "type": "string", "enum": ["keep", "delete"], "description": "Spawn cleanup policy" },
+                    "runTimeoutSeconds": { "type": "number", "description": "Spawn run timeout seconds" },
+                    "timeoutSeconds": { "type": "number", "description": "Back-compat timeout alias" },
+                    "targetKind": { "type": "string", "enum": ["subagent", "acp"], "description": "Focus target kind override" },
+                    "channel": { "type": "string", "description": "Focus binding channel" },
+                    "to": { "type": "string", "description": "Focus binding destination (for example channel:123 / group:456)" },
+                    "accountId": { "type": "string", "description": "Focus binding account id (Node-style)" },
+                    "account_id": { "type": "string", "description": "Focus binding account id (snake_case)" },
+                    "threadId": { "type": "string", "description": "Focus binding thread id (Node-style)" },
+                    "thread_id": { "type": "string", "description": "Focus binding thread id (snake_case)" },
+                    "parentConversationId": { "type": "string", "description": "Focus binding parent conversation id (Node-style)" },
+                    "parent_conversation_id": { "type": "string", "description": "Focus binding parent conversation id (snake_case)" },
+                    "bindingId": { "type": "string", "description": "Specific binding id for unfocus (Node-style)" },
+                    "binding_id": { "type": "string", "description": "Specific binding id for unfocus (snake_case)" }
                 },
                 "required": ["action"]
             }),
             Tool::SessionStatus(_) => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "session_key": { "type": "string", "description": "Session key (default: current session)" }
+                    "session_key": { "type": "string", "description": "Session key (snake_case alias)" },
+                    "sessionKey": { "type": "string", "description": "Session key (Node-style alias)" },
+                    "model": { "type": "string", "description": "Optional per-session model override; 'default' resets override" }
                 }
             }),
             Tool::Tts(_) => serde_json::json!({
@@ -342,7 +487,7 @@ impl BashTool {
         use std::collections::HashMap;
         use std::process::Stdio;
         use tokio::process::Command;
-        use tokio::time::{timeout, Duration};
+        use tokio::time::{Duration, timeout};
 
         #[derive(Deserialize)]
         struct BashArguments {
@@ -378,24 +523,47 @@ impl BashTool {
         if let Some(env_vars) = args.env {
             // Block dangerous environment variables that could hijack execution
             const BLOCKED_ENV: &[&str] = &[
-                "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
-                "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
-                "PATH", "HOME", "SHELL", "USER", "LOGNAME",
-                "BASH_ENV", "ENV", "CDPATH", "GLOBIGNORE",
-                "BASH_FUNC_", "PS4", "PROMPT_COMMAND",
-                "PYTHONSTARTUP", "PERL5OPT", "RUBYOPT", "NODE_OPTIONS",
-                "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH",
-                "GIT_SSH_COMMAND", "http_proxy", "https_proxy", "CURL_CA_BUNDLE",
+                "LD_PRELOAD",
+                "LD_LIBRARY_PATH",
+                "DYLD_INSERT_LIBRARIES",
+                "DYLD_LIBRARY_PATH",
+                "DYLD_FRAMEWORK_PATH",
+                "PATH",
+                "HOME",
+                "SHELL",
+                "USER",
+                "LOGNAME",
+                "BASH_ENV",
+                "ENV",
+                "CDPATH",
+                "GLOBIGNORE",
+                "BASH_FUNC_",
+                "PS4",
+                "PROMPT_COMMAND",
+                "PYTHONSTARTUP",
+                "PERL5OPT",
+                "RUBYOPT",
+                "NODE_OPTIONS",
+                "JAVA_TOOL_OPTIONS",
+                "_JAVA_OPTIONS",
+                "CLASSPATH",
+                "GIT_SSH_COMMAND",
+                "http_proxy",
+                "https_proxy",
+                "CURL_CA_BUNDLE",
             ];
             for (key, value) in env_vars {
                 let key_upper = key.to_uppercase();
                 let is_blocked = BLOCKED_ENV.iter().any(|b| {
-                    key_upper == *b || key_upper.starts_with("LD_") || key_upper.starts_with("DYLD_")
+                    key_upper == *b
+                        || key_upper.starts_with("LD_")
+                        || key_upper.starts_with("DYLD_")
                 });
                 if is_blocked {
-                    return Err(crate::ToolError::InvalidInput(
-                        format!("Environment variable '{}' is blocked for security", key),
-                    ));
+                    return Err(crate::ToolError::InvalidInput(format!(
+                        "Environment variable '{}' is blocked for security",
+                        key
+                    )));
                 }
                 cmd.env(&key, &value);
             }
@@ -459,34 +627,82 @@ impl ToolRegistry {
         let mut tools = HashMap::new();
         tools.insert("bash".to_string(), Tool::Bash(BashTool::new()));
         tools.insert("read_file".to_string(), Tool::ReadFile(ReadFileTool::new()));
-        tools.insert("write_file".to_string(), Tool::WriteFile(WriteFileTool::new()));
+        tools.insert(
+            "write_file".to_string(),
+            Tool::WriteFile(WriteFileTool::new()),
+        );
         tools.insert("list_dir".to_string(), Tool::ListDir(ListDirTool::new()));
         tools.insert("web_fetch".to_string(), Tool::WebFetch(WebFetchTool::new()));
         tools.insert("memory".to_string(), Tool::Memory(MemoryTool::new()));
-        tools.insert("memory_search".to_string(), Tool::MemorySearch(MemorySearchTool::new()));
-        tools.insert("memory_get".to_string(), Tool::MemoryGet(MemoryGetTool::new()));
+        tools.insert(
+            "memory_search".to_string(),
+            Tool::MemorySearch(MemorySearchTool::new()),
+        );
+        tools.insert(
+            "memory_get".to_string(),
+            Tool::MemoryGet(MemoryGetTool::new()),
+        );
         tools.insert("browse".to_string(), Tool::Browse(BrowseTool::new()));
-        tools.insert("web_search".to_string(), Tool::WebSearch(WebSearchTool::new()));
-        tools.insert("link_reader".to_string(), Tool::LinkReader(LinkReaderTool::new()));
-        tools.insert("media_describe".to_string(), Tool::MediaDescribe(MediaDescribeTool::new()));
+        tools.insert(
+            "web_search".to_string(),
+            Tool::WebSearch(WebSearchTool::new()),
+        );
+        tools.insert(
+            "link_reader".to_string(),
+            Tool::LinkReader(LinkReaderTool::new()),
+        );
+        tools.insert(
+            "media_describe".to_string(),
+            Tool::MediaDescribe(MediaDescribeTool::new()),
+        );
         tools.insert("cron".to_string(), Tool::Cron(CronTool::new()));
         tools.insert("message".to_string(), Tool::Message(MessageTool::new()));
-        tools.insert("sessions_list".to_string(), Tool::SessionsList(SessionsListTool::new()));
-        tools.insert("sessions_history".to_string(), Tool::SessionsHistory(SessionsHistoryTool::new()));
-        tools.insert("sessions_send".to_string(), Tool::SessionsSend(SessionsSendTool::new()));
-        tools.insert("sessions_spawn".to_string(), Tool::SessionsSpawn(SessionsSpawnTool::new()));
-        tools.insert("subagents".to_string(), Tool::Subagents(SubagentsTool::new()));
-        tools.insert("session_status".to_string(), Tool::SessionStatus(SessionStatusTool::new()));
+        tools.insert(
+            "sessions_list".to_string(),
+            Tool::SessionsList(SessionsListTool::new()),
+        );
+        tools.insert(
+            "sessions_history".to_string(),
+            Tool::SessionsHistory(SessionsHistoryTool::new()),
+        );
+        tools.insert(
+            "sessions_send".to_string(),
+            Tool::SessionsSend(SessionsSendTool::new()),
+        );
+        tools.insert(
+            "sessions_spawn".to_string(),
+            Tool::SessionsSpawn(SessionsSpawnTool::new()),
+        );
+        tools.insert(
+            "subagents".to_string(),
+            Tool::Subagents(SubagentsTool::new()),
+        );
+        tools.insert(
+            "session_status".to_string(),
+            Tool::SessionStatus(SessionStatusTool::new()),
+        );
         tools.insert("tts".to_string(), Tool::Tts(TtsTool::new()));
         Self { tools }
     }
 
-    pub fn configure_browser(&mut self, cdp_url: Option<&str>, executable_path: Option<&str>, headless: Option<bool>) {
+    pub fn configure_browser(
+        &mut self,
+        cdp_url: Option<&str>,
+        executable_path: Option<&str>,
+        headless: Option<bool>,
+    ) {
         let mut browse = BrowseTool::new();
-        if let Some(url) = cdp_url { browse.cdp_url = Some(url.to_string()); }
-        if let Some(exe) = executable_path { browse.executable_path = Some(exe.to_string()); }
-        if let Some(h) = headless { browse.headless = Some(h); }
-        self.tools.insert("browse".to_string(), Tool::Browse(browse));
+        if let Some(url) = cdp_url {
+            browse.cdp_url = Some(url.to_string());
+        }
+        if let Some(exe) = executable_path {
+            browse.executable_path = Some(exe.to_string());
+        }
+        if let Some(h) = headless {
+            browse.headless = Some(h);
+        }
+        self.tools
+            .insert("browse".to_string(), Tool::Browse(browse));
     }
 
     pub fn configure_workspace(&mut self, workspace_root: &str) {
@@ -498,7 +714,10 @@ impl ToolRegistry {
 
     /// Inject a MemoryManager into the memory_search and memory_get tools,
     /// replacing the default no-op instances.
-    pub fn with_memory_manager(&mut self, manager: std::sync::Arc<oclaw_memory_core::MemoryManager>) {
+    pub fn with_memory_manager(
+        &mut self,
+        manager: std::sync::Arc<oclaw_memory_core::MemoryManager>,
+    ) {
         self.tools.insert(
             "memory_search".to_string(),
             Tool::MemorySearch(MemorySearchTool::with_manager(manager.clone())),
@@ -522,36 +741,56 @@ impl ToolRegistry {
     }
 
     pub fn list(&self) -> Vec<serde_json::Value> {
-        self.tools.values().map(|t| {
-            serde_json::json!({
-                "name": t.name(),
-                "description": t.description(),
-                "parameters": t.parameters(),
+        self.tools
+            .values()
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.name(),
+                    "description": t.description(),
+                    "parameters": t.parameters(),
+                })
             })
-        }).collect()
+            .collect()
     }
 
     /// Return only essential tools for LLM function calling (reduces token usage).
     pub fn list_for_llm(&self) -> Vec<serde_json::Value> {
         let essential = [
-            "bash", "web_fetch", "web_search", "browse", "memory_search", "memory_get",
-            "link_reader", "media_describe", "cron", "message",
-            "sessions_list", "sessions_history", "session_status", "tts",
+            "bash",
+            "web_fetch",
+            "web_search",
+            "browse",
+            "memory_search",
+            "memory_get",
+            "link_reader",
+            "media_describe",
+            "cron",
+            "message",
+            "sessions_list",
+            "sessions_history",
+            "sessions_send",
+            "sessions_spawn",
+            "subagents",
+            "session_status",
+            "tts",
             "workspace",
         ];
-        self.tools.values()
+        self.tools
+            .values()
             .filter(|t| essential.contains(&t.name()))
-            .map(|t| serde_json::json!({
-                "name": t.name(),
-                "description": t.description(),
-                "parameters": t.parameters(),
-            }))
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.name(),
+                    "description": t.description(),
+                    "parameters": t.parameters(),
+                })
+            })
             .collect()
     }
 
     pub async fn execute_call(&self, call: ToolCall) -> ToolResponse {
         let tool = self.get(&call.name);
-        
+
         match tool {
             Some(t) => {
                 let result: ToolResult<serde_json::Value> = t.execute(call.arguments).await;
@@ -590,7 +829,9 @@ pub struct ReadFileTool {
 
 impl ReadFileTool {
     pub fn new() -> Self {
-        Self { max_size_bytes: Some(1024 * 1024) }
+        Self {
+            max_size_bytes: Some(1024 * 1024),
+        }
     }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
@@ -602,13 +843,16 @@ impl ReadFileTool {
         let args: ReadFileArgs = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
-        let content = tokio::fs::read_to_string(&args.path).await
-            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to read file: {}", e)))?;
+        let content = tokio::fs::read_to_string(&args.path).await.map_err(|e| {
+            crate::ToolError::ExecutionFailed(format!("Failed to read file: {}", e))
+        })?;
 
         if let Some(max_size) = self.max_size_bytes
             && content.len() > max_size as usize
         {
-            return Err(crate::ToolError::ExecutionFailed("File too large".to_string()));
+            return Err(crate::ToolError::ExecutionFailed(
+                "File too large".to_string(),
+            ));
         }
 
         Ok(serde_json::json!({
@@ -632,7 +876,9 @@ pub struct WriteFileTool {
 
 impl WriteFileTool {
     pub fn new() -> Self {
-        Self { create_parents: true }
+        Self {
+            create_parents: true,
+        }
     }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
@@ -648,12 +894,16 @@ impl WriteFileTool {
         if self.create_parents
             && let Some(parent) = std::path::Path::new(&args.path).parent()
         {
-            tokio::fs::create_dir_all(parent).await
-                .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to create directory: {}", e)))?;
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!("Failed to create directory: {}", e))
+            })?;
         }
 
-        tokio::fs::write(&args.path, &args.content).await
-            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to write file: {}", e)))?;
+        tokio::fs::write(&args.path, &args.content)
+            .await
+            .map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!("Failed to write file: {}", e))
+            })?;
 
         Ok(serde_json::json!({
             "path": args.path,
@@ -675,7 +925,9 @@ pub struct ListDirTool {
 
 impl ListDirTool {
     pub fn new() -> Self {
-        Self { include_hidden: true }
+        Self {
+            include_hidden: true,
+        }
     }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
@@ -688,20 +940,22 @@ impl ListDirTool {
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
         let mut entries = Vec::new();
-        let mut dir = tokio::fs::read_dir(&args.path).await
-            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to read directory: {}", e)))?;
+        let mut dir = tokio::fs::read_dir(&args.path).await.map_err(|e| {
+            crate::ToolError::ExecutionFailed(format!("Failed to read directory: {}", e))
+        })?;
 
-        while let Some(entry) = dir.next_entry().await
-            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to read entry: {}", e)))? {
-            
+        while let Some(entry) = dir.next_entry().await.map_err(|e| {
+            crate::ToolError::ExecutionFailed(format!("Failed to read entry: {}", e))
+        })? {
             let file_name = entry.file_name().to_string_lossy().to_string();
-            
+
             if !self.include_hidden && file_name.starts_with('.') {
                 continue;
             }
 
-            let metadata = entry.metadata().await
-                .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to get metadata: {}", e)))?;
+            let metadata = entry.metadata().await.map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!("Failed to get metadata: {}", e))
+            })?;
 
             entries.push(serde_json::json!({
                 "name": file_name,
@@ -733,7 +987,10 @@ pub struct WebFetchTool {
 
 impl WebFetchTool {
     pub fn new() -> Self {
-        Self { timeout_seconds: 30, max_body_bytes: 2 * 1024 * 1024 }
+        Self {
+            timeout_seconds: 30,
+            max_body_bytes: 2 * 1024 * 1024,
+        }
     }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
@@ -789,10 +1046,7 @@ impl WebFetchTool {
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
             let is_private = match ip {
                 std::net::IpAddr::V4(v4) => {
-                    v4.is_loopback()
-                        || v4.is_private()
-                        || v4.is_link_local()
-                        || v4.is_unspecified()
+                    v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
                 }
                 std::net::IpAddr::V6(v6) => {
                     let seg = v6.segments();
@@ -835,11 +1089,15 @@ impl WebFetchTool {
             }
         }
 
-        let resp = req.send().await
+        let resp = req
+            .send()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let status = resp.status().as_u16();
-        let body = resp.text().await
+        let body = resp
+            .text()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let max_chars = 50_000;
@@ -855,11 +1113,7 @@ impl WebFetchTool {
         }))
     }
 
-    async fn fetch_firecrawl(
-        &self,
-        url: &str,
-        api_key: &str,
-    ) -> ToolResult<serde_json::Value> {
+    async fn fetch_firecrawl(&self, url: &str, api_key: &str) -> ToolResult<serde_json::Value> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
@@ -877,25 +1131,25 @@ impl WebFetchTool {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::ToolError::ExecutionFailed(
-                format!("Firecrawl request failed: {}", e),
-            ))?;
+            .map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!("Firecrawl request failed: {}", e))
+            })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(crate::ToolError::ExecutionFailed(
-                format!("Firecrawl error ({}): {}", status, text),
-            ));
+            return Err(crate::ToolError::ExecutionFailed(format!(
+                "Firecrawl error ({}): {}",
+                status, text
+            )));
         }
 
-        let json: serde_json::Value = resp.json().await
+        let json: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
-        let markdown = json["data"]["markdown"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let markdown = json["data"]["markdown"].as_str().unwrap_or("").to_string();
 
         let max_chars = 50_000;
         let truncated = markdown.len() > max_chars;
@@ -915,7 +1169,9 @@ impl WebFetchTool {
 }
 
 impl Default for WebFetchTool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -926,7 +1182,9 @@ pub struct MemoryTool {
 
 impl MemoryTool {
     pub fn new() -> Self {
-        Self { store: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())) }
+        Self {
+            store: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
     }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
@@ -943,18 +1201,24 @@ impl MemoryTool {
         let mut store = self.store.lock().unwrap();
         match args.action.as_str() {
             "get" => {
-                let key = args.key.ok_or_else(|| crate::ToolError::InvalidInput("key required".into()))?;
+                let key = args
+                    .key
+                    .ok_or_else(|| crate::ToolError::InvalidInput("key required".into()))?;
                 let val = store.get(&key).cloned();
                 Ok(serde_json::json!({ "key": key, "value": val }))
             }
             "set" => {
-                let key = args.key.ok_or_else(|| crate::ToolError::InvalidInput("key required".into()))?;
+                let key = args
+                    .key
+                    .ok_or_else(|| crate::ToolError::InvalidInput("key required".into()))?;
                 let val = args.value.unwrap_or_default();
                 store.insert(key.clone(), val.clone());
                 Ok(serde_json::json!({ "key": key, "value": val }))
             }
             "delete" => {
-                let key = args.key.ok_or_else(|| crate::ToolError::InvalidInput("key required".into()))?;
+                let key = args
+                    .key
+                    .ok_or_else(|| crate::ToolError::InvalidInput("key required".into()))?;
                 let removed = store.remove(&key);
                 Ok(serde_json::json!({ "key": key, "removed": removed.is_some() }))
             }
@@ -962,13 +1226,18 @@ impl MemoryTool {
                 let keys: Vec<&String> = store.keys().collect();
                 Ok(serde_json::json!({ "keys": keys, "count": keys.len() }))
             }
-            other => Err(crate::ToolError::InvalidInput(format!("Unknown action: {}", other))),
+            other => Err(crate::ToolError::InvalidInput(format!(
+                "Unknown action: {}",
+                other
+            ))),
         }
     }
 }
 
 impl Default for MemoryTool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Semantic memory search tool — aligned with Node's `memory_search`.
@@ -993,7 +1262,9 @@ impl MemorySearchTool {
     }
 
     pub fn with_manager(manager: std::sync::Arc<oclaw_memory_core::MemoryManager>) -> Self {
-        Self { manager: Some(manager) }
+        Self {
+            manager: Some(manager),
+        }
     }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
@@ -1008,24 +1279,31 @@ impl MemorySearchTool {
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
         let Some(ref mm) = self.manager else {
-            return Ok(serde_json::json!({ "results": [], "note": "memory manager not configured" }));
+            return Ok(
+                serde_json::json!({ "results": [], "note": "memory manager not configured" }),
+            );
         };
 
-        let results = mm.search(&args.query).await
+        let results = mm
+            .search(&args.query)
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let min_score = args.min_score.unwrap_or(0.0);
         let max_results = args.max_results.unwrap_or(5);
 
-        let filtered: Vec<serde_json::Value> = results.into_iter()
+        let filtered: Vec<serde_json::Value> = results
+            .into_iter()
             .filter(|r| r.score >= min_score)
             .take(max_results)
-            .map(|r| serde_json::json!({
-                "path": r.path,
-                "snippet": r.snippet,
-                "score": r.score,
-                "source": r.source,
-            }))
+            .map(|r| {
+                serde_json::json!({
+                    "path": r.path,
+                    "snippet": r.snippet,
+                    "score": r.score,
+                    "source": r.source,
+                })
+            })
             .collect();
 
         Ok(serde_json::json!({ "results": filtered }))
@@ -1033,7 +1311,9 @@ impl MemorySearchTool {
 }
 
 impl Default for MemorySearchTool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Retrieve a specific memory entry by ID — aligned with Node's `memory_get`.
@@ -1057,7 +1337,9 @@ impl MemoryGetTool {
     }
 
     pub fn with_manager(manager: std::sync::Arc<oclaw_memory_core::MemoryManager>) -> Self {
-        Self { manager: Some(manager) }
+        Self {
+            manager: Some(manager),
+        }
     }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
@@ -1070,7 +1352,9 @@ impl MemoryGetTool {
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
         let Some(ref mm) = self.manager else {
-            return Err(crate::ToolError::ExecutionFailed("memory manager not configured".into()));
+            return Err(crate::ToolError::ExecutionFailed(
+                "memory manager not configured".into(),
+            ));
         };
 
         match mm.get_memory(&args.id) {
@@ -1088,7 +1372,9 @@ impl MemoryGetTool {
 }
 
 impl Default for MemoryGetTool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1163,7 +1449,8 @@ impl BrowseTool {
             ]
         };
 
-        candidates.into_iter()
+        candidates
+            .into_iter()
             .find(|p| std::path::Path::new(p).exists())
             .map(|s| s.to_string())
     }
@@ -1186,7 +1473,9 @@ impl BrowseTool {
 
         tracing::info!("Auto-launching browser: {}", exe);
 
-        let port = cdp_url.split(':').next_back()
+        let port = cdp_url
+            .split(':')
+            .next_back()
             .and_then(|s| s.trim_matches('/').parse::<u16>().ok())
             .unwrap_or(9222);
 
@@ -1213,7 +1502,9 @@ impl BrowseTool {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Failed to launch browser: {}", e)))?;
+            .map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!("Failed to launch browser: {}", e))
+            })?;
 
         if let Some(pid) = child.id() {
             *self.launched_pid.lock().unwrap() = Some(pid);
@@ -1228,7 +1519,8 @@ impl BrowseTool {
         }
 
         Err(crate::ToolError::ExecutionFailed(format!(
-            "Browser launched but CDP not available at {} after 6s", cdp_url
+            "Browser launched but CDP not available at {} after 6s",
+            cdp_url
         )))
     }
 
@@ -1248,7 +1540,9 @@ impl BrowseTool {
             #[serde(default)]
             wait_ms: Option<u64>,
         }
-        fn default_action() -> String { "navigate".into() }
+        fn default_action() -> String {
+            "navigate".into()
+        }
 
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
@@ -1263,8 +1557,9 @@ impl BrowseTool {
 
         let result = match args.action.as_str() {
             "navigate" => {
-                let url = args.url.as_deref()
-                    .ok_or_else(|| crate::ToolError::InvalidInput("url required for navigate".into()))?;
+                let url = args.url.as_deref().ok_or_else(|| {
+                    crate::ToolError::InvalidInput("url required for navigate".into())
+                })?;
                 page.navigate(url).await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Navigation failed: {}", e))
                 })?;
@@ -1279,8 +1574,9 @@ impl BrowseTool {
                 serde_json::json!({ "action": "navigate", "url": url, "title": title, "content": content, "truncated": truncated })
             }
             "click" => {
-                let sel = args.selector.as_deref()
-                    .ok_or_else(|| crate::ToolError::InvalidInput("selector required for click".into()))?;
+                let sel = args.selector.as_deref().ok_or_else(|| {
+                    crate::ToolError::InvalidInput("selector required for click".into())
+                })?;
                 page.click_element(sel).await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Click failed: {}", e))
                 })?;
@@ -1288,10 +1584,12 @@ impl BrowseTool {
                 serde_json::json!({ "action": "click", "selector": sel, "ok": true })
             }
             "type" => {
-                let sel = args.selector.as_deref()
-                    .ok_or_else(|| crate::ToolError::InvalidInput("selector required for type".into()))?;
-                let text = args.text.as_deref()
-                    .ok_or_else(|| crate::ToolError::InvalidInput("text required for type".into()))?;
+                let sel = args.selector.as_deref().ok_or_else(|| {
+                    crate::ToolError::InvalidInput("selector required for type".into())
+                })?;
+                let text = args.text.as_deref().ok_or_else(|| {
+                    crate::ToolError::InvalidInput("text required for type".into())
+                })?;
                 page.type_text(sel, text).await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Type failed: {}", e))
                 })?;
@@ -1306,8 +1604,9 @@ impl BrowseTool {
                 serde_json::json!({ "action": "screenshot", "base64": b64, "size_bytes": bytes.len() })
             }
             "evaluate" => {
-                let expr = args.expression.as_deref()
-                    .ok_or_else(|| crate::ToolError::InvalidInput("expression required for evaluate".into()))?;
+                let expr = args.expression.as_deref().ok_or_else(|| {
+                    crate::ToolError::InvalidInput("expression required for evaluate".into())
+                })?;
                 let result = page.evaluate(expr).await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Evaluate failed: {}", e))
                 })?;
@@ -1352,7 +1651,10 @@ impl BrowseTool {
                 serde_json::json!({ "action": "reload", "ok": true })
             }
             other => {
-                return Err(crate::ToolError::InvalidInput(format!("Unknown action: {}", other)));
+                return Err(crate::ToolError::InvalidInput(format!(
+                    "Unknown action: {}",
+                    other
+                )));
             }
         };
 
@@ -1365,14 +1667,18 @@ impl BrowseTool {
 }
 
 async fn eval_string(page: &oclaw_browser_core::Page, expr: &str) -> String {
-    page.evaluate(expr).await.ok()
+    page.evaluate(expr)
+        .await
+        .ok()
         .and_then(|r| r.value)
         .and_then(|v| v.as_str().map(String::from))
         .unwrap_or_default()
 }
 
 impl Default for BrowseTool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // --- WebSearchTool: DuckDuckGo HTML scraping (no API key needed) ---
@@ -1383,7 +1689,11 @@ pub struct WebSearchTool {
 }
 
 impl WebSearchTool {
-    pub fn new() -> Self { Self { timeout_seconds: 15 } }
+    pub fn new() -> Self {
+        Self {
+            timeout_seconds: 15,
+        }
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
@@ -1417,15 +1727,20 @@ impl WebSearchTool {
     async fn search_ddg(&self, query: &str, max: usize) -> ToolResult<serde_json::Value> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.timeout_seconds))
-            .build().map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+            .build()
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
-        let resp = client.get("https://html.duckduckgo.com/html/")
+        let resp = client
+            .get("https://html.duckduckgo.com/html/")
             .query(&[("q", query)])
             .header("User-Agent", "Mozilla/5.0 (compatible; oclaw/1.0)")
-            .send().await
+            .send()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(format!("Search failed: {}", e)))?;
 
-        let html = resp.text().await
+        let html = resp
+            .text()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let results = parse_ddg_results(&html, max);
@@ -1438,35 +1753,48 @@ impl WebSearchTool {
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.timeout_seconds))
-            .build().map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+            .build()
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
-        let resp = client.get("https://api.search.brave.com/res/v1/web/search")
+        let resp = client
+            .get("https://api.search.brave.com/res/v1/web/search")
             .query(&[("q", query), ("count", &max.to_string())])
             .header("X-Subscription-Token", &api_key)
             .header("Accept", "application/json")
-            .send().await
-            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Brave search failed: {}", e)))?;
+            .send()
+            .await
+            .map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!("Brave search failed: {}", e))
+            })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(crate::ToolError::ExecutionFailed(
-                format!("Brave API error ({}): {}", status, body)
-            ));
+            return Err(crate::ToolError::ExecutionFailed(format!(
+                "Brave API error ({}): {}",
+                status, body
+            )));
         }
 
-        let json: serde_json::Value = resp.json().await
+        let json: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let results: Vec<serde_json::Value> = json["web"]["results"]
             .as_array()
-            .map(|arr| arr.iter().take(max).map(|r| {
-                serde_json::json!({
-                    "title": r["title"].as_str().unwrap_or(""),
-                    "url": r["url"].as_str().unwrap_or(""),
-                    "snippet": r["description"].as_str().unwrap_or(""),
-                })
-            }).collect())
+            .map(|arr| {
+                arr.iter()
+                    .take(max)
+                    .map(|r| {
+                        serde_json::json!({
+                            "title": r["title"].as_str().unwrap_or(""),
+                            "url": r["url"].as_str().unwrap_or(""),
+                            "snippet": r["description"].as_str().unwrap_or(""),
+                        })
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
         Ok(serde_json::json!({
@@ -1482,32 +1810,40 @@ impl WebSearchTool {
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
-            .build().map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+            .build()
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let body = serde_json::json!({
             "model": "sonar",
             "messages": [{"role": "user", "content": query}]
         });
 
-        let resp = client.post("https://api.perplexity.ai/chat/completions")
+        let resp = client
+            .post("https://api.perplexity.ai/chat/completions")
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
-            .send().await
+            .send()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(format!("Perplexity failed: {}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(crate::ToolError::ExecutionFailed(
-                format!("Perplexity API error ({}): {}", status, body)
-            ));
+            return Err(crate::ToolError::ExecutionFailed(format!(
+                "Perplexity API error ({}): {}",
+                status, body
+            )));
         }
 
-        let json: serde_json::Value = resp.json().await
+        let json: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let answer = json["choices"][0]["message"]["content"]
-            .as_str().unwrap_or("").to_string();
+            .as_str()
+            .unwrap_or("")
+            .to_string();
 
         Ok(serde_json::json!({
             "query": query,
@@ -1517,7 +1853,11 @@ impl WebSearchTool {
     }
 }
 
-impl Default for WebSearchTool { fn default() -> Self { Self::new() } }
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 fn parse_ddg_results(html: &str, max: usize) -> Vec<serde_json::Value> {
     let mut results = Vec::new();
@@ -1527,7 +1867,9 @@ fn parse_ddg_results(html: &str, max: usize) -> Vec<serde_json::Value> {
     while results.len() < max {
         // Find result link
         let link_marker = "class=\"result__a\"";
-        let Some(link_start) = html[pos..].find(link_marker) else { break };
+        let Some(link_start) = html[pos..].find(link_marker) else {
+            break;
+        };
         let link_start = pos + link_start;
 
         // Extract href
@@ -1543,15 +1885,20 @@ fn parse_ddg_results(html: &str, max: usize) -> Vec<serde_json::Value> {
         let snippet = if let Some(spos) = html[after_tag..].find(snippet_marker) {
             let s = after_tag + spos + snippet_marker.len();
             extract_tag_text(&html[s..]).unwrap_or_default()
-        } else { String::new() };
+        } else {
+            String::new()
+        };
 
         // Decode DuckDuckGo redirect URL
         let url = if href.contains("uddg=") {
-            href.split("uddg=").nth(1)
+            href.split("uddg=")
+                .nth(1)
                 .and_then(|u| urlencoding::decode(u.split('&').next().unwrap_or(u)).ok())
                 .map(|s| s.into_owned())
                 .unwrap_or(href)
-        } else { href };
+        } else {
+            href
+        };
 
         if !url.is_empty() && !title.is_empty() {
             results.push(serde_json::json!({
@@ -1600,11 +1947,19 @@ pub struct LinkReaderTool {
 }
 
 impl LinkReaderTool {
-    pub fn new() -> Self { Self { timeout_seconds: 20 } }
+    pub fn new() -> Self {
+        Self {
+            timeout_seconds: 20,
+        }
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
-        struct Args { url: String, #[serde(default)] max_chars: Option<usize> }
+        struct Args {
+            url: String,
+            #[serde(default)]
+            max_chars: Option<usize>,
+        }
 
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
@@ -1613,17 +1968,26 @@ impl LinkReaderTool {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.timeout_seconds))
             .redirect(reqwest::redirect::Policy::limited(5))
-            .build().map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+            .build()
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
-        let resp = client.get(&args.url)
+        let resp = client
+            .get(&args.url)
             .header("User-Agent", "Mozilla/5.0 (compatible; oclaw/1.0)")
-            .send().await
+            .send()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(format!("Fetch failed: {}", e)))?;
 
         let status = resp.status().as_u16();
-        let content_type = resp.headers().get("content-type")
-            .and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-        let body = resp.text().await
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let body = resp
+            .text()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let text = if content_type.contains("html") {
@@ -1643,7 +2007,11 @@ impl LinkReaderTool {
     }
 }
 
-impl Default for LinkReaderTool { fn default() -> Self { Self::new() } }
+impl Default for LinkReaderTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 fn html_to_text(html: &str) -> String {
     // Phase 1: strip <script> and <style> blocks from the raw HTML
@@ -1655,11 +2023,22 @@ fn html_to_text(html: &str) -> String {
     let mut last_was_space = false;
 
     for c in stripped.chars() {
-        if c == '<' { in_tag = true; continue; }
-        if c == '>' { in_tag = false; continue; }
-        if in_tag { continue; }
+        if c == '<' {
+            in_tag = true;
+            continue;
+        }
+        if c == '>' {
+            in_tag = false;
+            continue;
+        }
+        if in_tag {
+            continue;
+        }
         if c.is_whitespace() {
-            if !last_was_space { out.push(' '); last_was_space = true; }
+            if !last_was_space {
+                out.push(' ');
+                last_was_space = true;
+            }
         } else {
             out.push(c);
             last_was_space = false;
@@ -1676,7 +2055,9 @@ fn strip_script_style(html: &str) -> String {
             let lower = result.to_lowercase();
             let open = format!("<{}", tag);
             let close = format!("</{}>", tag);
-            let Some(start) = lower.find(&open) else { break };
+            let Some(start) = lower.find(&open) else {
+                break;
+            };
             let Some(end_rel) = lower[start..].find(&close) else {
                 // No closing tag — remove from open tag to end
                 result.truncate(start);
@@ -1697,7 +2078,11 @@ pub struct MediaDescribeTool {
 }
 
 impl MediaDescribeTool {
-    pub fn new() -> Self { Self { timeout_seconds: 30 } }
+    pub fn new() -> Self {
+        Self {
+            timeout_seconds: 30,
+        }
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
@@ -1712,20 +2097,30 @@ impl MediaDescribeTool {
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.timeout_seconds))
-            .build().map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
+            .build()
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
-        let resp = client.get(&args.url)
-            .send().await
-            .map_err(|e| crate::ToolError::ExecutionFailed(format!("Image fetch failed: {}", e)))?;
+        let resp =
+            client.get(&args.url).send().await.map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!("Image fetch failed: {}", e))
+            })?;
 
-        let content_type = resp.headers().get("content-type")
-            .and_then(|v| v.to_str().ok()).unwrap_or("image/jpeg").to_string();
-        let bytes = resp.bytes().await
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("image/jpeg")
+            .to_string();
+        let bytes = resp
+            .bytes()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         use base64::Engine;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        let prompt = args.prompt.unwrap_or_else(|| "Describe this image in detail.".into());
+        let prompt = args
+            .prompt
+            .unwrap_or_else(|| "Describe this image in detail.".into());
 
         Ok(serde_json::json!({
             "url": args.url,
@@ -1738,7 +2133,11 @@ impl MediaDescribeTool {
     }
 }
 
-impl Default for MediaDescribeTool { fn default() -> Self { Self::new() } }
+impl Default for MediaDescribeTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // --- CronTool: manage scheduled cron jobs ---
 
@@ -1746,7 +2145,9 @@ impl Default for MediaDescribeTool { fn default() -> Self { Self::new() } }
 pub struct CronTool;
 
 impl CronTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
@@ -1768,12 +2169,16 @@ impl CronTool {
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
         match args.action.as_str() {
-            "list" => {
-                Ok(serde_json::json!({ "action": "list", "jobs": [], "note": "Cron store not connected — use gateway RPC for persistent jobs" }))
-            }
+            "list" => Ok(
+                serde_json::json!({ "action": "list", "jobs": [], "note": "Cron store not connected — use gateway RPC for persistent jobs" }),
+            ),
             "add" => {
-                let schedule = args.schedule.ok_or_else(|| crate::ToolError::InvalidInput("schedule required".into()))?;
-                let command = args.command.ok_or_else(|| crate::ToolError::InvalidInput("command required".into()))?;
+                let schedule = args
+                    .schedule
+                    .ok_or_else(|| crate::ToolError::InvalidInput("schedule required".into()))?;
+                let command = args
+                    .command
+                    .ok_or_else(|| crate::ToolError::InvalidInput("command required".into()))?;
                 let id = uuid::Uuid::new_v4().to_string();
                 Ok(serde_json::json!({
                     "action": "add", "job_id": id,
@@ -1782,7 +2187,9 @@ impl CronTool {
                 }))
             }
             "update" => {
-                let job_id = args.job_id.ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
+                let job_id = args
+                    .job_id
+                    .ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
                 Ok(serde_json::json!({
                     "action": "update", "job_id": job_id,
                     "schedule": args.schedule, "command": args.command,
@@ -1790,23 +2197,46 @@ impl CronTool {
                 }))
             }
             "remove" => {
-                let job_id = args.job_id.ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
+                let job_id = args
+                    .job_id
+                    .ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
                 Ok(serde_json::json!({ "action": "remove", "job_id": job_id, "removed": true }))
             }
             "run" => {
-                let job_id = args.job_id.ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
+                let job_id = args
+                    .job_id
+                    .ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
                 Ok(serde_json::json!({ "action": "run", "job_id": job_id, "triggered": true }))
             }
             "status" => {
-                let job_id = args.job_id.ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
+                let job_id = args
+                    .job_id
+                    .ok_or_else(|| crate::ToolError::InvalidInput("job_id required".into()))?;
                 Ok(serde_json::json!({ "action": "status", "job_id": job_id, "status": "unknown" }))
             }
-            other => Err(crate::ToolError::InvalidInput(format!("Unknown cron action: {}", other))),
+            other => Err(crate::ToolError::InvalidInput(format!(
+                "Unknown cron action: {}",
+                other
+            ))),
         }
     }
 }
 
-impl Default for CronTool { fn default() -> Self { Self::new() } }
+impl Default for CronTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn pick_first_non_empty(values: &[Option<String>]) -> Option<String> {
+    values.iter().find_map(|value| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+    })
+}
 
 // --- MessageTool: send cross-channel messages ---
 
@@ -1814,35 +2244,1193 @@ impl Default for CronTool { fn default() -> Self { Self::new() } }
 pub struct MessageTool;
 
 impl MessageTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
         struct Args {
-            channel: String,
-            target: String,
-            text: String,
+            #[serde(default)]
+            action: Option<String>,
+            #[serde(default)]
+            channel: Option<String>,
+            #[serde(default)]
+            provider: Option<String>,
+            #[serde(default)]
+            target: Option<String>,
+            #[serde(default)]
+            to: Option<String>,
+            #[serde(default)]
+            targets: Option<Vec<String>>,
+            #[serde(default)]
+            channels: Option<Vec<String>>,
+            #[serde(default)]
+            text: Option<String>,
+            #[serde(default)]
+            message: Option<String>,
+            #[serde(default)]
+            content: Option<String>,
             #[serde(default)]
             reply_to: Option<String>,
+            #[serde(default, rename = "replyTo")]
+            reply_to_alias: Option<String>,
+            #[serde(default)]
+            thread_id: Option<String>,
+            #[serde(default, rename = "threadId")]
+            thread_id_alias: Option<String>,
+            #[serde(default)]
+            message_id: Option<String>,
+            #[serde(default, rename = "messageId")]
+            message_id_alias: Option<String>,
+            #[serde(default)]
+            emoji: Option<String>,
+            #[serde(default)]
+            remove: Option<bool>,
+            #[serde(default)]
+            query: Option<String>,
+            #[serde(default)]
+            before: Option<String>,
+            #[serde(default)]
+            after: Option<String>,
+            #[serde(default)]
+            around: Option<String>,
+            #[serde(default)]
+            name: Option<String>,
+            #[serde(default)]
+            description: Option<String>,
+            #[serde(default)]
+            user_id: Option<String>,
+            #[serde(default, rename = "userId")]
+            user_id_alias: Option<String>,
+            #[serde(default)]
+            role_id: Option<String>,
+            #[serde(default, rename = "roleId")]
+            role_id_alias: Option<String>,
+            #[serde(default)]
+            target_id: Option<String>,
+            #[serde(default, rename = "targetId")]
+            target_id_alias: Option<String>,
+            #[serde(default)]
+            target_type: Option<String>,
+            #[serde(default, rename = "targetType")]
+            target_type_alias: Option<String>,
+            #[serde(default)]
+            allow: Option<String>,
+            #[serde(default)]
+            deny: Option<String>,
+            #[serde(default)]
+            parent_id: Option<String>,
+            #[serde(default, rename = "parentId")]
+            parent_id_alias: Option<String>,
+            #[serde(default)]
+            position: Option<u64>,
+            #[serde(default)]
+            topic: Option<String>,
+            #[serde(default)]
+            channel_type: Option<String>,
+            #[serde(default, rename = "channelType")]
+            channel_type_alias: Option<String>,
+            #[serde(default)]
+            start_time: Option<String>,
+            #[serde(default, rename = "startTime")]
+            start_time_alias: Option<String>,
+            #[serde(default)]
+            end_time: Option<String>,
+            #[serde(default, rename = "endTime")]
+            end_time_alias: Option<String>,
+            #[serde(default)]
+            duration_minutes: Option<u64>,
+            #[serde(default, rename = "durationMinutes")]
+            duration_minutes_alias: Option<u64>,
+            #[serde(default)]
+            delete_message_seconds: Option<u64>,
+            #[serde(default, rename = "deleteMessageSeconds")]
+            delete_message_seconds_alias: Option<u64>,
+            #[serde(default)]
+            tags: Option<String>,
+            #[serde(default)]
+            image: Option<String>,
+            #[serde(default)]
+            icon: Option<String>,
+            #[serde(default)]
+            effect: Option<String>,
+            #[serde(default)]
+            thread_name: Option<String>,
+            #[serde(default, rename = "threadName")]
+            thread_name_alias: Option<String>,
+            #[serde(default)]
+            auto_archive_minutes: Option<u64>,
+            #[serde(default, rename = "autoArchiveMinutes")]
+            auto_archive_minutes_alias: Option<u64>,
+            #[serde(default, rename = "autoArchiveMin")]
+            auto_archive_min_alias: Option<u64>,
+            #[serde(default)]
+            thread_type: Option<String>,
+            #[serde(default, rename = "threadType")]
+            thread_type_alias: Option<String>,
+            #[serde(default)]
+            group_id: Option<String>,
+            #[serde(default, rename = "groupId")]
+            group_id_alias: Option<String>,
+            #[serde(default)]
+            guild_id: Option<String>,
+            #[serde(default, rename = "guildId")]
+            guild_id_alias: Option<String>,
+            #[serde(default)]
+            limit: Option<u64>,
+            #[serde(default)]
+            include_archived: Option<bool>,
+            #[serde(default, rename = "includeArchived")]
+            include_archived_alias: Option<bool>,
+            #[serde(default)]
+            media: Option<String>,
+            #[serde(default)]
+            path: Option<String>,
+            #[serde(default, rename = "filePath")]
+            file_path: Option<String>,
+            #[serde(default)]
+            file_id: Option<String>,
+            #[serde(default, rename = "fileId")]
+            file_id_alias: Option<String>,
+            #[serde(default)]
+            buffer: Option<String>,
+            #[serde(default)]
+            filename: Option<String>,
+            #[serde(default)]
+            mime_type: Option<String>,
+            #[serde(default, rename = "mimeType")]
+            mime_type_alias: Option<String>,
+            #[serde(default, rename = "contentType")]
+            content_type_alias: Option<String>,
+            #[serde(default)]
+            caption: Option<String>,
+            #[serde(default)]
+            as_voice: Option<bool>,
+            #[serde(default, rename = "asVoice")]
+            as_voice_alias: Option<bool>,
+            #[serde(default)]
+            poll_question: Option<String>,
+            #[serde(default, rename = "pollQuestion")]
+            poll_question_alias: Option<String>,
+            #[serde(default)]
+            poll_options: Option<Vec<String>>,
+            #[serde(default, rename = "pollOption")]
+            poll_options_alias: Option<Vec<String>>,
+            #[serde(default)]
+            poll_anonymous: Option<bool>,
+            #[serde(default, rename = "pollAnonymous")]
+            poll_anonymous_alias: Option<bool>,
+            #[serde(default)]
+            poll_multiple: Option<bool>,
+            #[serde(default, rename = "pollMulti")]
+            poll_multiple_alias: Option<bool>,
+            #[serde(default)]
+            account_id: Option<String>,
+            #[serde(default, rename = "accountId")]
+            account_id_alias: Option<String>,
         }
 
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
+        let action = args
+            .action
+            .as_deref()
+            .unwrap_or("send")
+            .trim()
+            .to_ascii_lowercase();
+        let channel = pick_first_non_empty(&[args.channel, args.provider]);
+        let target = pick_first_non_empty(&[args.target, args.to]);
+        let text = pick_first_non_empty(&[args.text, args.message, args.content]);
+        let reply_to = pick_first_non_empty(&[args.reply_to, args.reply_to_alias]);
+        let thread_id = pick_first_non_empty(&[args.thread_id, args.thread_id_alias]);
+        let reply_anchor = pick_first_non_empty(&[reply_to.clone(), thread_id.clone()]);
+        let message_id = pick_first_non_empty(&[args.message_id, args.message_id_alias]);
+        let poll_question = pick_first_non_empty(&[args.poll_question, args.poll_question_alias]);
+        let poll_options = args
+            .poll_options
+            .or(args.poll_options_alias)
+            .unwrap_or_default();
+        let poll_anonymous = args
+            .poll_anonymous
+            .or(args.poll_anonymous_alias)
+            .unwrap_or(true);
+        let poll_multiple = args
+            .poll_multiple
+            .or(args.poll_multiple_alias)
+            .unwrap_or(false);
+        let emoji = args
+            .emoji
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let account_id = pick_first_non_empty(&[args.account_id, args.account_id_alias]);
+        let thread_name = pick_first_non_empty(&[args.thread_name, args.thread_name_alias]);
+        let auto_archive_minutes = args
+            .auto_archive_minutes
+            .or(args.auto_archive_minutes_alias)
+            .or(args.auto_archive_min_alias);
+        let thread_type = pick_first_non_empty(&[args.thread_type, args.thread_type_alias]);
+        let group_id = pick_first_non_empty(&[
+            args.group_id,
+            args.group_id_alias,
+            args.guild_id,
+            args.guild_id_alias,
+        ]);
+        let include_archived = args
+            .include_archived
+            .or(args.include_archived_alias)
+            .unwrap_or(false);
+        let media = pick_first_non_empty(&[args.media, args.path, args.file_path]);
+        let file_id = pick_first_non_empty(&[args.file_id, args.file_id_alias]);
+        let mime_type = pick_first_non_empty(&[
+            args.mime_type,
+            args.mime_type_alias,
+            args.content_type_alias,
+        ]);
+        let caption = args
+            .caption
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let as_voice = args.as_voice.or(args.as_voice_alias).unwrap_or(false);
+        let query = args
+            .query
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let before = args
+            .before
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let after = args
+            .after
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let around = args
+            .around
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let name = args
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let description = args
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let user_id = pick_first_non_empty(&[args.user_id, args.user_id_alias]);
+        let role_id = pick_first_non_empty(&[args.role_id, args.role_id_alias]);
+        let target_id = pick_first_non_empty(&[args.target_id, args.target_id_alias]);
+        let target_type = pick_first_non_empty(&[args.target_type, args.target_type_alias]);
+        let permission_allow = args
+            .allow
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let permission_deny = args
+            .deny
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let parent_id = pick_first_non_empty(&[args.parent_id, args.parent_id_alias]);
+        let topic = args
+            .topic
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let channel_type = pick_first_non_empty(&[args.channel_type, args.channel_type_alias]);
+        let start_time = pick_first_non_empty(&[args.start_time, args.start_time_alias]);
+        let end_time = pick_first_non_empty(&[args.end_time, args.end_time_alias]);
+        let duration_minutes = args.duration_minutes.or(args.duration_minutes_alias);
+        let delete_message_seconds = args
+            .delete_message_seconds
+            .or(args.delete_message_seconds_alias);
+        let tags = args
+            .tags
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let image = args
+            .image
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let icon = args
+            .icon
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let effect = args
+            .effect
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let mut targets = args.targets.unwrap_or_default();
+        if targets.is_empty()
+            && let Some(single_target) = target.as_deref()
+        {
+            targets.push(single_target.to_string());
+        }
+        targets = targets
+            .into_iter()
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty())
+            .collect();
+        let channels = args
+            .channels
+            .unwrap_or_default()
+            .into_iter()
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty())
+            .collect::<Vec<String>>();
+
         // Message delivery is delegated to the channel adapter at runtime.
         // This tool returns a structured intent that the orchestrator fulfills.
-        Ok(serde_json::json!({
-            "action": "send_message",
-            "channel": args.channel,
-            "target": args.target,
-            "text": args.text,
-            "reply_to": args.reply_to,
-            "status": "queued"
-        }))
+        let intent = match action.as_str() {
+            "send" | "send_message" | "message.send" | "reply" | "message.reply" => {
+                let text = text.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("text/message/content required".into())
+                })?;
+                serde_json::json!({
+                    "action": "send_message",
+                    "channel": channel,
+                    "target": target,
+                    "text": text,
+                    "reply_to": reply_anchor,
+                    "account_id": account_id,
+                    "status": "queued"
+                })
+            }
+            "react" | "reaction" | "send_reaction" | "message.react" => {
+                let message_id = message_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("message_id/messageId required".into())
+                })?;
+                let emoji =
+                    emoji.ok_or_else(|| crate::ToolError::InvalidInput("emoji required".into()))?;
+                let reaction_action = if args.remove.unwrap_or(false) {
+                    "remove_reaction"
+                } else {
+                    "send_reaction"
+                };
+                serde_json::json!({
+                    "action": reaction_action,
+                    "channel": channel,
+                    "target": target,
+                    "message_id": message_id,
+                    "emoji": emoji,
+                    "account_id": account_id,
+                    "status": "queued"
+                })
+            }
+            "unreact" | "remove_reaction" | "message.unreact" => {
+                let message_id = message_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("message_id/messageId required".into())
+                })?;
+                let emoji =
+                    emoji.ok_or_else(|| crate::ToolError::InvalidInput("emoji required".into()))?;
+                serde_json::json!({
+                    "action": "remove_reaction",
+                    "channel": channel,
+                    "target": target,
+                    "message_id": message_id,
+                    "emoji": emoji,
+                    "account_id": account_id,
+                    "status": "queued"
+                })
+            }
+            "reactions" | "list_reactions" | "message.reactions" => {
+                let message_id = message_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("message_id/messageId required".into())
+                })?;
+                serde_json::json!({
+                    "action": "list_reactions",
+                    "channel": channel,
+                    "target": target,
+                    "message_id": message_id,
+                    "limit": args.limit,
+                    "status": "queued"
+                })
+            }
+            "read" | "read_messages" | "message.read" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for read".into())
+                })?;
+                serde_json::json!({
+                    "action": "read_messages",
+                    "channel": channel,
+                    "target": target,
+                    "limit": args.limit,
+                    "before": before,
+                    "after": after,
+                    "around": around,
+                    "status": "queued"
+                })
+            }
+            "search" | "search_messages" | "message.search" => {
+                let query = query.or_else(|| text.clone()).ok_or_else(|| {
+                    crate::ToolError::InvalidInput("query required for search".into())
+                })?;
+                serde_json::json!({
+                    "action": "search_messages",
+                    "channel": channel,
+                    "target": target,
+                    "query": query,
+                    "limit": args.limit,
+                    "status": "queued"
+                })
+            }
+            "edit" | "edit_message" | "message.edit" => {
+                let message_id = message_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("message_id/messageId required".into())
+                })?;
+                let text = text.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("text/message/content required".into())
+                })?;
+                serde_json::json!({
+                    "action": "edit_message",
+                    "channel": channel,
+                    "target": target,
+                    "message_id": message_id,
+                    "text": text,
+                    "account_id": account_id,
+                    "status": "queued"
+                })
+            }
+            "delete" | "delete_message" | "message.delete" | "unsend" | "message.unsend" => {
+                let message_id = message_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("message_id/messageId required".into())
+                })?;
+                serde_json::json!({
+                    "action": "delete_message",
+                    "channel": channel,
+                    "target": target,
+                    "message_id": message_id,
+                    "account_id": account_id,
+                    "status": "queued"
+                })
+            }
+            "pin" | "pin_message" | "message.pin" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for pin".into())
+                })?;
+                let message_id = message_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("message_id/messageId required".into())
+                })?;
+                serde_json::json!({
+                    "action": "pin_message",
+                    "channel": channel,
+                    "target": target,
+                    "message_id": message_id,
+                    "status": "queued"
+                })
+            }
+            "unpin" | "unpin_message" | "message.unpin" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for unpin".into())
+                })?;
+                let message_id = message_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("message_id/messageId required".into())
+                })?;
+                serde_json::json!({
+                    "action": "unpin_message",
+                    "channel": channel,
+                    "target": target,
+                    "message_id": message_id,
+                    "status": "queued"
+                })
+            }
+            "list_pins" | "list-pins" | "message.list_pins" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for list_pins".into())
+                })?;
+                serde_json::json!({
+                    "action": "list_pins",
+                    "channel": channel,
+                    "target": target,
+                    "limit": args.limit,
+                    "status": "queued"
+                })
+            }
+            "permissions" | "get_permissions" | "message.permissions" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for permissions".into())
+                })?;
+                serde_json::json!({
+                    "action": "get_permissions",
+                    "channel": channel,
+                    "target": target,
+                    "status": "queued"
+                })
+            }
+            "channel_info" | "channel-info" | "message.channel_info" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for channel_info".into())
+                })?;
+                serde_json::json!({
+                    "action": "channel_info",
+                    "channel": channel,
+                    "target": target,
+                    "status": "queued"
+                })
+            }
+            "channel_create" | "channel-create" | "message.channel_create" => {
+                let name = name.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("name required for channel_create".into())
+                })?;
+                serde_json::json!({
+                    "action": "channel_create",
+                    "channel": channel,
+                    "name": name,
+                    "channel_type": channel_type,
+                    "parent_id": parent_id,
+                    "topic": topic,
+                    "position": args.position,
+                    "status": "queued"
+                })
+            }
+            "channel_edit" | "channel-edit" | "message.channel_edit" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for channel_edit".into())
+                })?;
+                serde_json::json!({
+                    "action": "channel_edit",
+                    "channel": channel,
+                    "target": target,
+                    "name": name,
+                    "topic": topic,
+                    "parent_id": parent_id,
+                    "position": args.position,
+                    "status": "queued"
+                })
+            }
+            "channel_delete" | "channel-delete" | "message.channel_delete" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for channel_delete".into())
+                })?;
+                serde_json::json!({
+                    "action": "channel_delete",
+                    "channel": channel,
+                    "target": target,
+                    "status": "queued"
+                })
+            }
+            "channel_move" | "channel-move" | "message.channel_move" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for channel_move".into())
+                })?;
+                let position = args.position.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("position required for channel_move".into())
+                })?;
+                serde_json::json!({
+                    "action": "channel_move",
+                    "channel": channel,
+                    "target": target,
+                    "position": position,
+                    "parent_id": parent_id,
+                    "status": "queued"
+                })
+            }
+            "channel_permission_set"
+            | "channel-permission-set"
+            | "channelpermissionset"
+            | "message.channel_permission_set" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput(
+                        "target/to required for channel_permission_set".into(),
+                    )
+                })?;
+                let overwrite_target_id = target_id
+                    .or_else(|| role_id.clone())
+                    .or_else(|| user_id.clone())
+                    .ok_or_else(|| {
+                        crate::ToolError::InvalidInput(
+                            "target_id/targetId (or role_id/user_id) required for channel_permission_set"
+                                .into(),
+                        )
+                    })?;
+                serde_json::json!({
+                    "action": "channel_permission_set",
+                    "channel": channel,
+                    "target": target,
+                    "target_id": overwrite_target_id,
+                    "target_type": target_type.unwrap_or_else(|| "role".to_string()),
+                    "allow": permission_allow,
+                    "deny": permission_deny,
+                    "status": "queued"
+                })
+            }
+            "channel_permission_remove"
+            | "channel-permission-remove"
+            | "channelpermissionremove"
+            | "message.channel_permission_remove" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput(
+                        "target/to required for channel_permission_remove".into(),
+                    )
+                })?;
+                let overwrite_target_id = target_id
+                    .or_else(|| role_id.clone())
+                    .or_else(|| user_id.clone())
+                    .ok_or_else(|| {
+                        crate::ToolError::InvalidInput(
+                            "target_id/targetId (or role_id/user_id) required for channel_permission_remove"
+                                .into(),
+                        )
+                    })?;
+                serde_json::json!({
+                    "action": "channel_permission_remove",
+                    "channel": channel,
+                    "target": target,
+                    "target_id": overwrite_target_id,
+                    "status": "queued"
+                })
+            }
+            "category_create" | "category-create" | "message.category_create" => {
+                let name = name.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("name required for category_create".into())
+                })?;
+                serde_json::json!({
+                    "action": "category_create",
+                    "channel": channel,
+                    "name": name,
+                    "position": args.position,
+                    "status": "queued"
+                })
+            }
+            "category_edit" | "category-edit" | "message.category_edit" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for category_edit".into())
+                })?;
+                let name = name.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("name required for category_edit".into())
+                })?;
+                serde_json::json!({
+                    "action": "category_edit",
+                    "channel": channel,
+                    "target": target,
+                    "name": name,
+                    "position": args.position,
+                    "status": "queued"
+                })
+            }
+            "category_delete" | "category-delete" | "message.category_delete" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for category_delete".into())
+                })?;
+                serde_json::json!({
+                    "action": "category_delete",
+                    "channel": channel,
+                    "target": target,
+                    "status": "queued"
+                })
+            }
+            "topic_create" | "topic-create" | "message.topic_create" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for topic_create".into())
+                })?;
+                let topic = topic.or_else(|| text.clone()).ok_or_else(|| {
+                    crate::ToolError::InvalidInput("topic/text required for topic_create".into())
+                })?;
+                serde_json::json!({
+                    "action": "topic_create",
+                    "channel": channel,
+                    "target": target,
+                    "topic": topic,
+                    "status": "queued"
+                })
+            }
+            "thread_list" | "thread-list" | "message.thread_list" => serde_json::json!({
+                "action": "thread_list",
+                "channel": channel,
+                "target": target,
+                "guild_id": group_id.clone(),
+                "group_id": group_id.clone(),
+                "include_archived": include_archived,
+                "before": before,
+                "limit": args.limit,
+                "status": "queued"
+            }),
+            "add_participant" | "addparticipant" | "message.add_participant" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for add_participant".into())
+                })?;
+                let user_id = user_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput(
+                        "user_id/userId required for add_participant".into(),
+                    )
+                })?;
+                serde_json::json!({
+                    "action": "add_participant",
+                    "channel": channel,
+                    "target": target,
+                    "user_id": user_id,
+                    "status": "queued"
+                })
+            }
+            "remove_participant" | "removeparticipant" | "message.remove_participant" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput(
+                        "target/to required for remove_participant".into(),
+                    )
+                })?;
+                let user_id = user_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput(
+                        "user_id/userId required for remove_participant".into(),
+                    )
+                })?;
+                serde_json::json!({
+                    "action": "remove_participant",
+                    "channel": channel,
+                    "target": target,
+                    "user_id": user_id,
+                    "status": "queued"
+                })
+            }
+            "leave_group" | "leavegroup" | "message.leave_group" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for leave_group".into())
+                })?;
+                serde_json::json!({
+                    "action": "leave_group",
+                    "channel": channel,
+                    "target": target,
+                    "status": "queued"
+                })
+            }
+            "role_info" | "role-info" | "message.role_info" => serde_json::json!({
+                "action": "role_info",
+                "channel": channel,
+                "guild_id": group_id.clone(),
+                "role_id": role_id,
+                "status": "queued"
+            }),
+            "role_add" | "role-add" | "message.role_add" => {
+                let user_id = user_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("user_id/userId required for role_add".into())
+                })?;
+                let role_id = role_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("role_id/roleId required for role_add".into())
+                })?;
+                serde_json::json!({
+                    "action": "role_add",
+                    "channel": channel,
+                    "guild_id": group_id.clone(),
+                    "user_id": user_id,
+                    "role_id": role_id,
+                    "status": "queued"
+                })
+            }
+            "role_remove" | "role-remove" | "message.role_remove" => {
+                let user_id = user_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("user_id/userId required for role_remove".into())
+                })?;
+                let role_id = role_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("role_id/roleId required for role_remove".into())
+                })?;
+                serde_json::json!({
+                    "action": "role_remove",
+                    "channel": channel,
+                    "guild_id": group_id.clone(),
+                    "user_id": user_id,
+                    "role_id": role_id,
+                    "status": "queued"
+                })
+            }
+            "kick_member" | "kick" | "message.kick" => {
+                let user_id = user_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("user_id/userId required for kick".into())
+                })?;
+                serde_json::json!({
+                    "action": "kick_member",
+                    "channel": channel,
+                    "guild_id": group_id.clone(),
+                    "user_id": user_id,
+                    "status": "queued"
+                })
+            }
+            "ban_member" | "ban" | "message.ban" => {
+                let user_id = user_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("user_id/userId required for ban".into())
+                })?;
+                serde_json::json!({
+                    "action": "ban_member",
+                    "channel": channel,
+                    "guild_id": group_id.clone(),
+                    "user_id": user_id,
+                    "delete_message_seconds": delete_message_seconds,
+                    "status": "queued"
+                })
+            }
+            "timeout_member" | "timeout" | "message.timeout" => {
+                let user_id = user_id.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("user_id/userId required for timeout".into())
+                })?;
+                serde_json::json!({
+                    "action": "timeout_member",
+                    "channel": channel,
+                    "guild_id": group_id.clone(),
+                    "user_id": user_id,
+                    "duration_minutes": duration_minutes.unwrap_or(10),
+                    "status": "queued"
+                })
+            }
+            "event_list" | "event-list" | "message.event_list" => serde_json::json!({
+                "action": "event_list",
+                "channel": channel,
+                "guild_id": group_id.clone(),
+                "limit": args.limit,
+                "status": "queued"
+            }),
+            "event_create" | "event-create" | "message.event_create" => {
+                let name = name.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("name required for event_create".into())
+                })?;
+                serde_json::json!({
+                    "action": "event_create",
+                    "channel": channel,
+                    "guild_id": group_id.clone(),
+                    "target": target,
+                    "name": name,
+                    "description": description,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "status": "queued"
+                })
+            }
+            "emoji_list" | "emoji-list" | "message.emoji_list" => serde_json::json!({
+                "action": "emoji_list",
+                "channel": channel,
+                "guild_id": group_id.clone(),
+                "status": "queued"
+            }),
+            "emoji_upload" | "emoji-upload" | "message.emoji_upload" => {
+                let name = name.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("name required for emoji_upload".into())
+                })?;
+                let image = image
+                    .or_else(|| media.clone())
+                    .or_else(|| args.buffer.clone())
+                    .ok_or_else(|| {
+                        crate::ToolError::InvalidInput(
+                            "image/media/buffer required for emoji_upload".into(),
+                        )
+                    })?;
+                serde_json::json!({
+                    "action": "emoji_upload",
+                    "channel": channel,
+                    "guild_id": group_id.clone(),
+                    "name": name,
+                    "image": image,
+                    "filename": args.filename,
+                    "mime_type": mime_type,
+                    "status": "queued"
+                })
+            }
+            "sticker_search" | "sticker-search" | "message.sticker_search" => {
+                let query = query
+                    .or_else(|| name.clone())
+                    .or_else(|| text.clone())
+                    .ok_or_else(|| {
+                        crate::ToolError::InvalidInput("query required for sticker_search".into())
+                    })?;
+                serde_json::json!({
+                    "action": "sticker_search",
+                    "channel": channel,
+                    "guild_id": group_id.clone(),
+                    "query": query,
+                    "limit": args.limit,
+                    "status": "queued"
+                })
+            }
+            "sticker_upload" | "sticker-upload" | "message.sticker_upload" => {
+                let name = name.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("name required for sticker_upload".into())
+                })?;
+                let media = media.or_else(|| args.buffer.clone()).ok_or_else(|| {
+                    crate::ToolError::InvalidInput(
+                        "media/path/filePath/buffer required for sticker_upload".into(),
+                    )
+                })?;
+                serde_json::json!({
+                    "action": "sticker_upload",
+                    "channel": channel,
+                    "guild_id": group_id.clone(),
+                    "name": name,
+                    "description": description,
+                    "tags": tags,
+                    "media": media,
+                    "filename": args.filename,
+                    "mime_type": mime_type,
+                    "status": "queued"
+                })
+            }
+            "sticker" | "send_sticker" | "message.sticker" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for sticker".into())
+                })?;
+                let sticker_id =
+                    pick_first_non_empty(&[file_id.clone(), message_id]).ok_or_else(|| {
+                        crate::ToolError::InvalidInput(
+                            "sticker_id/file_id/message_id required for sticker".into(),
+                        )
+                    })?;
+                serde_json::json!({
+                    "action": "send_sticker",
+                    "channel": channel,
+                    "target": target,
+                    "sticker_id": sticker_id,
+                    "text": text,
+                    "status": "queued"
+                })
+            }
+            "voice_status" | "voice-status" | "message.voice_status" => serde_json::json!({
+                "action": "voice_status",
+                "channel": channel,
+                "guild_id": group_id.clone(),
+                "target": target,
+                "user_id": user_id,
+                "status": "queued"
+            }),
+            "rename_group" | "renamegroup" | "message.rename_group" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for rename_group".into())
+                })?;
+                let name = name.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("name required for rename_group".into())
+                })?;
+                serde_json::json!({
+                    "action": "rename_group",
+                    "channel": channel,
+                    "target": target,
+                    "name": name,
+                    "status": "queued"
+                })
+            }
+            "set_group_icon" | "setgroupicon" | "message.set_group_icon" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for set_group_icon".into())
+                })?;
+                let icon = icon
+                    .or_else(|| image.clone())
+                    .or_else(|| media.clone())
+                    .ok_or_else(|| {
+                        crate::ToolError::InvalidInput(
+                            "icon/image/media required for set_group_icon".into(),
+                        )
+                    })?;
+                serde_json::json!({
+                    "action": "set_group_icon",
+                    "channel": channel,
+                    "target": target,
+                    "icon": icon,
+                    "filename": args.filename,
+                    "mime_type": mime_type,
+                    "status": "queued"
+                })
+            }
+            "set_presence" | "set-presence" | "message.set_presence" => serde_json::json!({
+                "action": "set_presence",
+                "channel": channel,
+                "status_text": text.or(name),
+                "status": "queued"
+            }),
+            "send_with_effect"
+            | "sendwitheffect"
+            | "sendWithEffect"
+            | "message.send_with_effect" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for send_with_effect".into())
+                })?;
+                let text = text.ok_or_else(|| {
+                    crate::ToolError::InvalidInput(
+                        "text/message/content required for send_with_effect".into(),
+                    )
+                })?;
+                serde_json::json!({
+                    "action": "send_with_effect",
+                    "channel": channel,
+                    "target": target,
+                    "text": text,
+                    "effect": effect,
+                    "status": "queued"
+                })
+            }
+            "broadcast" | "broadcast_message" | "message.broadcast" => {
+                let text = text.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("text/message/content required".into())
+                })?;
+                if targets.is_empty() {
+                    return Err(crate::ToolError::InvalidInput(
+                        "targets (or target/to) required for broadcast".into(),
+                    ));
+                }
+                serde_json::json!({
+                    "action": "broadcast_message",
+                    "channel": channel,
+                    "channels": channels,
+                    "targets": targets,
+                    "text": text,
+                    "reply_to": reply_anchor,
+                    "account_id": account_id,
+                    "status": "queued"
+                })
+            }
+            "send_attachment" | "sendattachment" | "message.send_attachment" => {
+                let media = media.or(file_id.clone()).ok_or_else(|| {
+                    crate::ToolError::InvalidInput(
+                        "media/path/filePath/file_id/fileId required for send_attachment".into(),
+                    )
+                })?;
+                serde_json::json!({
+                    "action": "send_attachment",
+                    "channel": channel,
+                    "target": target,
+                    "media": media,
+                    "file_id": file_id,
+                    "buffer": args.buffer,
+                    "filename": args.filename,
+                    "mime_type": mime_type,
+                    "caption": caption.or(text),
+                    "as_voice": as_voice,
+                    "account_id": account_id,
+                    "status": "queued"
+                })
+            }
+            "thread_create" | "thread-create" | "threadcreate" | "message.thread_create" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for thread_create".into())
+                })?;
+                let thread_name = thread_name.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("thread_name/threadName required".into())
+                })?;
+                serde_json::json!({
+                    "action": "thread_create",
+                    "channel": channel,
+                    "target": target,
+                    "thread_name": thread_name,
+                    "message_id": message_id,
+                    "text": text,
+                    "auto_archive_minutes": auto_archive_minutes,
+                    "thread_type": thread_type,
+                    "account_id": account_id,
+                    "status": "queued"
+                })
+            }
+            "thread_reply" | "thread-reply" | "message.thread_reply" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for thread_reply".into())
+                })?;
+                let text = text.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("text/message/content required".into())
+                })?;
+                let thread_id = thread_id.unwrap_or_else(|| target.clone());
+                serde_json::json!({
+                    "action": "send_thread_reply",
+                    "channel": channel,
+                    "target": target,
+                    "thread_id": thread_id,
+                    "reply_to": reply_to,
+                    "text": text,
+                    "account_id": account_id,
+                    "status": "queued"
+                })
+            }
+            "channel_list" | "channel-list" | "channellist" | "message.channel_list" => {
+                serde_json::json!({
+                    "action": "list_groups",
+                    "channel": channel,
+                    "limit": args.limit,
+                    "status": "queued"
+                })
+            }
+            "member_info" | "member-info" | "memberinfo" | "message.member_info" => {
+                if let Some(uid) = user_id {
+                    serde_json::json!({
+                        "action": "member_info",
+                        "channel": channel,
+                        "target": target,
+                        "user_id": uid,
+                        "group_id": group_id.clone(),
+                        "guild_id": group_id.clone(),
+                        "status": "queued"
+                    })
+                } else {
+                    let resolved_group_id = group_id.or_else(|| target.clone());
+                    serde_json::json!({
+                        "action": "list_members",
+                        "channel": channel,
+                        "target": target,
+                        "group_id": resolved_group_id,
+                        "limit": args.limit,
+                        "status": "queued"
+                    })
+                }
+            }
+            "poll" | "send_poll" | "message.poll" => {
+                let target = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/to required for poll".into())
+                })?;
+                let question = poll_question.ok_or_else(|| {
+                    crate::ToolError::InvalidInput(
+                        "poll_question/pollQuestion required for poll".into(),
+                    )
+                })?;
+                if poll_options.is_empty() {
+                    return Err(crate::ToolError::InvalidInput(
+                        "poll_options/pollOption required for poll".into(),
+                    ));
+                }
+                serde_json::json!({
+                    "action": "send_poll",
+                    "channel": channel,
+                    "target": target,
+                    "question": question,
+                    "options": poll_options,
+                    "is_anonymous": poll_anonymous,
+                    "allows_multiple": poll_multiple,
+                    "account_id": account_id,
+                    "status": "queued"
+                })
+            }
+            other => {
+                return Err(crate::ToolError::InvalidInput(format!(
+                    "unsupported message action: {}",
+                    other
+                )));
+            }
+        };
+
+        Ok(intent)
     }
 }
 
-impl Default for MessageTool { fn default() -> Self { Self::new() } }
+impl Default for MessageTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // --- SessionsListTool: list active sessions ---
 
@@ -1850,7 +3438,9 @@ impl Default for MessageTool { fn default() -> Self { Self::new() } }
 pub struct SessionsListTool;
 
 impl SessionsListTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
@@ -1877,7 +3467,11 @@ impl SessionsListTool {
     }
 }
 
-impl Default for SessionsListTool { fn default() -> Self { Self::new() } }
+impl Default for SessionsListTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // --- SessionsHistoryTool: retrieve session message history ---
 
@@ -1885,7 +3479,9 @@ impl Default for SessionsListTool { fn default() -> Self { Self::new() } }
 pub struct SessionsHistoryTool;
 
 impl SessionsHistoryTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
@@ -1911,7 +3507,11 @@ impl SessionsHistoryTool {
     }
 }
 
-impl Default for SessionsHistoryTool { fn default() -> Self { Self::new() } }
+impl Default for SessionsHistoryTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // --- SessionsSendTool: send message into a session ---
 
@@ -1919,32 +3519,78 @@ impl Default for SessionsHistoryTool { fn default() -> Self { Self::new() } }
 pub struct SessionsSendTool;
 
 impl SessionsSendTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
         struct Args {
-            session_key: String,
-            text: String,
+            #[serde(default)]
+            session_key: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "sessionKey")]
+            session_key_alias: Option<String>,
+            #[serde(default)]
+            text: Option<String>,
+            #[serde(default)]
+            message: Option<String>,
+            #[serde(default)]
+            label: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "agentId")]
+            agent_id: Option<String>,
             #[serde(default)]
             role: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "timeoutSeconds")]
+            timeout_seconds: Option<f64>,
         }
 
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
+        let session_key = args
+            .session_key
+            .or(args.session_key_alias)
+            .unwrap_or_default();
+        if !session_key.trim().is_empty() && !args.label.as_deref().unwrap_or("").trim().is_empty()
+        {
+            return Err(crate::ToolError::InvalidInput(
+                "Provide either session_key/sessionKey or label (not both)".into(),
+            ));
+        }
+        let text = args.text.or(args.message).unwrap_or_default();
+        if session_key.trim().is_empty() && args.label.as_deref().unwrap_or("").trim().is_empty() {
+            return Err(crate::ToolError::InvalidInput(
+                "Either session_key/sessionKey or label is required".into(),
+            ));
+        }
+        if text.trim().is_empty() {
+            return Err(crate::ToolError::InvalidInput(
+                "text/message is required".into(),
+            ));
+        }
         let role = args.role.unwrap_or_else(|| "user".to_string());
+        let timeout_seconds = args.timeout_seconds.map(|v| v.max(0.0).floor() as u64);
         Ok(serde_json::json!({
             "action": "sessions_send",
-            "session_key": args.session_key,
-            "text": args.text,
+            "session_key": session_key,
+            "text": text,
+            "label": args.label,
+            "agent_id": args.agent_id,
             "role": role,
+            "timeout_seconds": timeout_seconds,
             "status": "queued"
         }))
     }
 }
 
-impl Default for SessionsSendTool { fn default() -> Self { Self::new() } }
+impl Default for SessionsSendTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // --- SessionsSpawnTool: spawn a sub-session ---
 
@@ -1952,13 +3598,40 @@ impl Default for SessionsSendTool { fn default() -> Self { Self::new() } }
 pub struct SessionsSpawnTool;
 
 impl SessionsSpawnTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
         struct Args {
-            agent_id: String,
-            prompt: String,
+            #[serde(default)]
+            task: Option<String>,
+            #[serde(default)]
+            label: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "agentId")]
+            agent_id_alias: Option<String>,
+            #[serde(default)]
+            agent_id: Option<String>,
+            #[serde(default)]
+            model: Option<String>,
+            #[serde(default)]
+            thinking: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "runTimeoutSeconds")]
+            run_timeout_seconds: Option<f64>,
+            #[serde(default)]
+            #[serde(rename = "timeoutSeconds")]
+            timeout_seconds: Option<f64>,
+            #[serde(default)]
+            thread: Option<bool>,
+            #[serde(default)]
+            mode: Option<String>,
+            #[serde(default)]
+            cleanup: Option<String>,
+            #[serde(default)]
+            prompt: Option<String>,
             #[serde(default)]
             parent_session_key: Option<String>,
         }
@@ -1966,19 +3639,44 @@ impl SessionsSpawnTool {
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
 
+        let agent_id = args
+            .agent_id_alias
+            .or(args.agent_id)
+            .unwrap_or_else(|| "default".to_string());
+        let task = args.task.or(args.prompt).unwrap_or_default();
+        if task.trim().is_empty() {
+            return Err(crate::ToolError::InvalidInput(
+                "task/prompt is required".into(),
+            ));
+        }
+        let run_timeout_seconds = args
+            .run_timeout_seconds
+            .or(args.timeout_seconds)
+            .map(|v| v.max(0.0).floor() as u64);
         let session_id = uuid::Uuid::new_v4().to_string();
         Ok(serde_json::json!({
             "action": "sessions_spawn",
             "session_id": session_id,
-            "agent_id": args.agent_id,
-            "prompt": args.prompt,
+            "agent_id": agent_id,
+            "task": task,
+            "label": args.label,
+            "model": args.model,
+            "thinking": args.thinking,
+            "run_timeout_seconds": run_timeout_seconds,
+            "thread": args.thread.unwrap_or(false),
+            "mode": args.mode,
+            "cleanup": args.cleanup,
             "parent_session_key": args.parent_session_key,
             "status": "spawned"
         }))
     }
 }
 
-impl Default for SessionsSpawnTool { fn default() -> Self { Self::new() } }
+impl Default for SessionsSpawnTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // --- SubagentsTool: manage running subagents ---
 
@@ -1986,61 +3684,257 @@ impl Default for SessionsSpawnTool { fn default() -> Self { Self::new() } }
 pub struct SubagentsTool;
 
 impl SubagentsTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
         struct Args {
             action: String,
             #[serde(default)]
+            target: Option<String>,
+            #[serde(default)]
             session_key: Option<String>,
             #[serde(default)]
+            #[serde(rename = "sessionKey")]
+            session_key_alias: Option<String>,
+            #[serde(default)]
             message: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "recentMinutes")]
+            recent_minutes: Option<f64>,
+            #[serde(default)]
+            limit: Option<f64>,
+            #[serde(default)]
+            #[serde(rename = "includeTools")]
+            include_tools: Option<bool>,
+            #[serde(default)]
+            #[serde(rename = "agentId")]
+            agent_id_alias: Option<String>,
+            #[serde(default)]
+            agent_id: Option<String>,
+            #[serde(default)]
+            task: Option<String>,
+            #[serde(default)]
+            prompt: Option<String>,
+            #[serde(default)]
+            model: Option<String>,
+            #[serde(default)]
+            thinking: Option<String>,
+            #[serde(default)]
+            thread: Option<bool>,
+            #[serde(default)]
+            mode: Option<String>,
+            #[serde(default)]
+            cleanup: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "runTimeoutSeconds")]
+            run_timeout_seconds: Option<f64>,
+            #[serde(default)]
+            #[serde(rename = "timeoutSeconds")]
+            timeout_seconds: Option<f64>,
+            #[serde(default)]
+            #[serde(rename = "targetKind")]
+            target_kind: Option<String>,
+            #[serde(default)]
+            channel: Option<String>,
+            #[serde(default)]
+            to: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "accountId")]
+            account_id_alias: Option<String>,
+            #[serde(default)]
+            account_id: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "threadId")]
+            thread_id_alias: Option<String>,
+            #[serde(default)]
+            thread_id: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "parentConversationId")]
+            parent_conversation_id_alias: Option<String>,
+            #[serde(default)]
+            parent_conversation_id: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "bindingId")]
+            binding_id_alias: Option<String>,
+            #[serde(default)]
+            binding_id: Option<String>,
         }
 
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+        let target = args
+            .target
+            .or(args.session_key)
+            .or(args.session_key_alias)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let recent_minutes = args.recent_minutes.map(|v| v.max(1.0).floor() as u64);
+        let log_limit = args.limit.map(|v| v.max(1.0).min(200.0).floor() as u64);
+        let account_id = args
+            .account_id_alias
+            .or(args.account_id)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let thread_id = args
+            .thread_id_alias
+            .or(args.thread_id)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let parent_conversation_id = args
+            .parent_conversation_id_alias
+            .or(args.parent_conversation_id)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let binding_id = args
+            .binding_id_alias
+            .or(args.binding_id)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
 
         match args.action.as_str() {
-            "list" => {
+            "help" => Ok(serde_json::json!({
+                "action": "subagents_help"
+            })),
+            "agents" => Ok(serde_json::json!({
+                "action": "subagents_agents"
+            })),
+            "list" => Ok(serde_json::json!({
+                "action": "subagents_list",
+                "subagents": [],
+                "recent_minutes": recent_minutes,
+                "note": "Populated by orchestrator at runtime"
+            })),
+            "info" => {
+                let key = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/session_key required for info".into())
+                })?;
                 Ok(serde_json::json!({
-                    "action": "subagents_list",
-                    "subagents": [],
-                    "note": "Populated by orchestrator at runtime"
+                    "action": "subagents_info",
+                    "target": key
+                }))
+            }
+            "log" => {
+                let key = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/session_key required for log".into())
+                })?;
+                Ok(serde_json::json!({
+                    "action": "subagents_log",
+                    "target": key,
+                    "limit": log_limit.unwrap_or(20),
+                    "include_tools": args.include_tools.unwrap_or(false)
+                }))
+            }
+            "send" => {
+                let key = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/session_key required for send".into())
+                })?;
+                let msg = args.message.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("message required for send".into())
+                })?;
+                Ok(serde_json::json!({
+                    "action": "subagents_send",
+                    "target": key,
+                    "message": msg
                 }))
             }
             "kill" => {
-                let key = args.session_key.ok_or_else(|| {
-                    crate::ToolError::InvalidInput("session_key required for kill".into())
+                let key = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/session_key required for kill".into())
                 })?;
                 Ok(serde_json::json!({
                     "action": "subagents_kill",
-                    "session_key": key,
+                    "target": key,
+                    "recent_minutes": recent_minutes,
                     "status": "killed"
                 }))
             }
             "steer" => {
-                let key = args.session_key.ok_or_else(|| {
-                    crate::ToolError::InvalidInput("session_key required for steer".into())
+                let key = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/session_key required for steer".into())
                 })?;
                 let msg = args.message.ok_or_else(|| {
                     crate::ToolError::InvalidInput("message required for steer".into())
                 })?;
                 Ok(serde_json::json!({
                     "action": "subagents_steer",
-                    "session_key": key,
+                    "target": key,
                     "message": msg,
+                    "recent_minutes": recent_minutes,
                     "status": "steered"
                 }))
             }
-            other => Err(crate::ToolError::InvalidInput(
-                format!("Unknown subagents action: {}", other),
-            )),
+            "spawn" => {
+                let agent_id = args
+                    .agent_id_alias
+                    .or(args.agent_id)
+                    .or_else(|| target.clone())
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| {
+                        crate::ToolError::InvalidInput(
+                            "agentId/agent_id (or target) required for spawn".into(),
+                        )
+                    })?;
+                let task = args
+                    .task
+                    .or(args.prompt)
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| {
+                        crate::ToolError::InvalidInput("task/prompt required for spawn".into())
+                    })?;
+                let run_timeout_seconds = args
+                    .run_timeout_seconds
+                    .or(args.timeout_seconds)
+                    .map(|v| v.max(0.0).floor() as u64);
+                Ok(serde_json::json!({
+                    "action": "subagents_spawn",
+                    "agent_id": agent_id,
+                    "task": task,
+                    "model": args.model,
+                    "thinking": args.thinking,
+                    "thread": args.thread.unwrap_or(false),
+                    "mode": args.mode,
+                    "cleanup": args.cleanup,
+                    "run_timeout_seconds": run_timeout_seconds
+                }))
+            }
+            "focus" => {
+                let key = target.ok_or_else(|| {
+                    crate::ToolError::InvalidInput("target/session_key required for focus".into())
+                })?;
+                Ok(serde_json::json!({
+                    "action": "subagents_focus",
+                    "target": key,
+                    "target_kind": args.target_kind,
+                    "channel": args.channel,
+                    "to": args.to,
+                    "account_id": account_id,
+                    "thread_id": thread_id,
+                    "parent_conversation_id": parent_conversation_id
+                }))
+            }
+            "unfocus" => Ok(serde_json::json!({
+                "action": "subagents_unfocus",
+                "target": target,
+                "binding_id": binding_id
+            })),
+            other => Err(crate::ToolError::InvalidInput(format!(
+                "Unknown subagents action: {}",
+                other
+            ))),
         }
     }
 }
 
-impl Default for SubagentsTool { fn default() -> Self { Self::new() } }
+impl Default for SubagentsTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // --- SessionStatusTool: get session status ---
 
@@ -2048,28 +3942,41 @@ impl Default for SubagentsTool { fn default() -> Self { Self::new() } }
 pub struct SessionStatusTool;
 
 impl SessionStatusTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
         struct Args {
             #[serde(default)]
             session_key: Option<String>,
+            #[serde(default)]
+            #[serde(rename = "sessionKey")]
+            session_key_alias: Option<String>,
+            #[serde(default)]
+            model: Option<String>,
         }
 
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+        let session_key = args.session_key.or(args.session_key_alias);
 
         Ok(serde_json::json!({
             "action": "session_status",
-            "session_key": args.session_key,
+            "session_key": session_key,
+            "model": args.model,
             "status": "unknown",
             "note": "Populated by orchestrator at runtime"
         }))
     }
 }
 
-impl Default for SessionStatusTool { fn default() -> Self { Self::new() } }
+impl Default for SessionStatusTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // --- TtsTool: text-to-speech conversion ---
 
@@ -2080,7 +3987,9 @@ pub struct TtsTool {
 
 impl TtsTool {
     pub fn new() -> Self {
-        Self { default_provider: "openai".to_string() }
+        Self {
+            default_provider: "openai".to_string(),
+        }
     }
 
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
@@ -2104,20 +4013,32 @@ impl TtsTool {
             ));
         }
 
-        let provider = args.provider.unwrap_or_else(|| self.default_provider.clone());
+        let provider = args
+            .provider
+            .unwrap_or_else(|| self.default_provider.clone());
 
         match provider.as_str() {
-            "openai" => self.tts_openai(&args.text, args.voice.as_deref(), args.model.as_deref()).await,
-            "elevenlabs" => self.tts_elevenlabs(&args.text, args.voice.as_deref(), args.model.as_deref()).await,
+            "openai" => {
+                self.tts_openai(&args.text, args.voice.as_deref(), args.model.as_deref())
+                    .await
+            }
+            "elevenlabs" => {
+                self.tts_elevenlabs(&args.text, args.voice.as_deref(), args.model.as_deref())
+                    .await
+            }
             "edge" => self.tts_edge(&args.text, args.voice.as_deref()).await,
-            other => Err(crate::ToolError::InvalidInput(
-                format!("Unknown TTS provider: {}", other),
-            )),
+            other => Err(crate::ToolError::InvalidInput(format!(
+                "Unknown TTS provider: {}",
+                other
+            ))),
         }
     }
 
     async fn tts_openai(
-        &self, text: &str, voice: Option<&str>, model: Option<&str>,
+        &self,
+        text: &str,
+        voice: Option<&str>,
+        model: Option<&str>,
     ) -> ToolResult<serde_json::Value> {
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| crate::ToolError::ExecutionFailed("OPENAI_API_KEY not set".into()))?;
@@ -2143,26 +4064,28 @@ impl TtsTool {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::ToolError::ExecutionFailed(
-                format!("OpenAI TTS request failed: {}", e),
-            ))?;
+            .map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!("OpenAI TTS request failed: {}", e))
+            })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(crate::ToolError::ExecutionFailed(
-                format!("OpenAI TTS error ({}): {}", status, text),
-            ));
+            return Err(crate::ToolError::ExecutionFailed(format!(
+                "OpenAI TTS error ({}): {}",
+                status, text
+            )));
         }
 
-        let bytes = resp.bytes().await
+        let bytes = resp
+            .bytes()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let tmp = std::env::temp_dir().join(format!("oclaw-tts-{}.mp3", uuid::Uuid::new_v4()));
-        tokio::fs::write(&tmp, &bytes).await
-            .map_err(|e| crate::ToolError::ExecutionFailed(
-                format!("Failed to write audio: {}", e),
-            ))?;
+        tokio::fs::write(&tmp, &bytes).await.map_err(|e| {
+            crate::ToolError::ExecutionFailed(format!("Failed to write audio: {}", e))
+        })?;
 
         Ok(serde_json::json!({
             "provider": "openai",
@@ -2175,7 +4098,10 @@ impl TtsTool {
     }
 
     async fn tts_elevenlabs(
-        &self, text: &str, voice: Option<&str>, model: Option<&str>,
+        &self,
+        text: &str,
+        voice: Option<&str>,
+        model: Option<&str>,
     ) -> ToolResult<serde_json::Value> {
         let api_key = std::env::var("ELEVENLABS_API_KEY")
             .map_err(|_| crate::ToolError::ExecutionFailed("ELEVENLABS_API_KEY not set".into()))?;
@@ -2194,10 +4120,7 @@ impl TtsTool {
             "voice_settings": { "stability": 0.5, "similarity_boost": 0.75 }
         });
 
-        let url = format!(
-            "https://api.elevenlabs.io/v1/text-to-speech/{}",
-            voice_id
-        );
+        let url = format!("https://api.elevenlabs.io/v1/text-to-speech/{}", voice_id);
 
         let resp = client
             .post(&url)
@@ -2206,26 +4129,28 @@ impl TtsTool {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::ToolError::ExecutionFailed(
-                format!("ElevenLabs TTS request failed: {}", e),
-            ))?;
+            .map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!("ElevenLabs TTS request failed: {}", e))
+            })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(crate::ToolError::ExecutionFailed(
-                format!("ElevenLabs TTS error ({}): {}", status, text),
-            ));
+            return Err(crate::ToolError::ExecutionFailed(format!(
+                "ElevenLabs TTS error ({}): {}",
+                status, text
+            )));
         }
 
-        let bytes = resp.bytes().await
+        let bytes = resp
+            .bytes()
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?;
 
         let tmp = std::env::temp_dir().join(format!("oclaw-tts-{}.mp3", uuid::Uuid::new_v4()));
-        tokio::fs::write(&tmp, &bytes).await
-            .map_err(|e| crate::ToolError::ExecutionFailed(
-                format!("Failed to write audio: {}", e),
-            ))?;
+        tokio::fs::write(&tmp, &bytes).await.map_err(|e| {
+            crate::ToolError::ExecutionFailed(format!("Failed to write audio: {}", e))
+        })?;
 
         Ok(serde_json::json!({
             "provider": "elevenlabs",
@@ -2237,29 +4162,39 @@ impl TtsTool {
         }))
     }
 
-    async fn tts_edge(
-        &self, text: &str, voice: Option<&str>,
-    ) -> ToolResult<serde_json::Value> {
+    async fn tts_edge(&self, text: &str, voice: Option<&str>) -> ToolResult<serde_json::Value> {
         let voice = voice.unwrap_or("en-US-AriaNeural");
         // Edge TTS uses a local CLI tool (edge-tts) if available
         let tmp = std::env::temp_dir().join(format!("oclaw-tts-{}.mp3", uuid::Uuid::new_v4()));
 
         let output = tokio::process::Command::new("edge-tts")
-            .args(["--voice", voice, "--text", text, "--write-media", &tmp.to_string_lossy()])
+            .args([
+                "--voice",
+                voice,
+                "--text",
+                text,
+                "--write-media",
+                &tmp.to_string_lossy(),
+            ])
             .output()
             .await
-            .map_err(|e| crate::ToolError::ExecutionFailed(
-                format!("edge-tts not found or failed: {}. Install with: pip install edge-tts", e),
-            ))?;
+            .map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!(
+                    "edge-tts not found or failed: {}. Install with: pip install edge-tts",
+                    e
+                ))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(crate::ToolError::ExecutionFailed(
-                format!("edge-tts failed: {}", stderr),
-            ));
+            return Err(crate::ToolError::ExecutionFailed(format!(
+                "edge-tts failed: {}",
+                stderr
+            )));
         }
 
-        let size = tokio::fs::metadata(&tmp).await
+        let size = tokio::fs::metadata(&tmp)
+            .await
             .map(|m| m.len())
             .unwrap_or(0);
 
@@ -2273,7 +4208,11 @@ impl TtsTool {
     }
 }
 
-impl Default for TtsTool { fn default() -> Self { Self::new() } }
+impl Default for TtsTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // --- WorkspaceTool: agent self-modification via workspace files ---
 
@@ -2285,7 +4224,9 @@ pub struct WorkspaceTool {
 
 impl WorkspaceTool {
     pub fn new(workspace_root: impl Into<String>) -> Self {
-        Self { workspace_root: workspace_root.into() }
+        Self {
+            workspace_root: workspace_root.into(),
+        }
     }
 
     /// Resolve and validate a relative path within the workspace.
@@ -2299,7 +4240,9 @@ impl WorkspaceTool {
         let check_path = if target.exists() {
             target.canonicalize().unwrap_or_else(|_| target.clone())
         } else if let Some(parent) = target.parent() {
-            let p = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+            let p = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
             p.join(target.file_name().unwrap_or_default())
         } else {
             target.clone()
@@ -2313,7 +4256,10 @@ impl WorkspaceTool {
         Ok(target)
     }
 
-    pub async fn execute(&self, arguments: serde_json::Value) -> crate::error::ToolResult<serde_json::Value> {
+    pub async fn execute(
+        &self,
+        arguments: serde_json::Value,
+    ) -> crate::error::ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
         struct Args {
             action: String,
@@ -2331,16 +4277,22 @@ impl WorkspaceTool {
             "write" => self.action_write(args.path, args.content).await,
             "append" => self.action_append(args.path, args.content).await,
             "list" => self.action_list(args.path).await,
-            other => Err(crate::ToolError::InvalidInput(
-                format!("Unknown workspace action: {}", other),
-            )),
+            other => Err(crate::ToolError::InvalidInput(format!(
+                "Unknown workspace action: {}",
+                other
+            ))),
         }
     }
 
-    async fn action_read(&self, path: Option<String>) -> crate::error::ToolResult<serde_json::Value> {
-        let rel = path.ok_or_else(|| crate::ToolError::InvalidInput("path required for read".into()))?;
+    async fn action_read(
+        &self,
+        path: Option<String>,
+    ) -> crate::error::ToolResult<serde_json::Value> {
+        let rel =
+            path.ok_or_else(|| crate::ToolError::InvalidInput("path required for read".into()))?;
         let full = self.resolve_path(&rel)?;
-        let content = tokio::fs::read_to_string(&full).await
+        let content = tokio::fs::read_to_string(&full)
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(format!("Read failed: {}", e)))?;
         Ok(serde_json::json!({
             "action": "read", "path": rel,
@@ -2348,15 +4300,23 @@ impl WorkspaceTool {
         }))
     }
 
-    async fn action_write(&self, path: Option<String>, content: Option<String>) -> crate::error::ToolResult<serde_json::Value> {
-        let rel = path.ok_or_else(|| crate::ToolError::InvalidInput("path required for write".into()))?;
-        let content = content.ok_or_else(|| crate::ToolError::InvalidInput("content required for write".into()))?;
+    async fn action_write(
+        &self,
+        path: Option<String>,
+        content: Option<String>,
+    ) -> crate::error::ToolResult<serde_json::Value> {
+        let rel =
+            path.ok_or_else(|| crate::ToolError::InvalidInput("path required for write".into()))?;
+        let content = content
+            .ok_or_else(|| crate::ToolError::InvalidInput("content required for write".into()))?;
         let full = self.resolve_path(&rel)?;
         if let Some(parent) = full.parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .map_err(|e| crate::ToolError::ExecutionFailed(format!("mkdir failed: {}", e)))?;
         }
-        tokio::fs::write(&full, &content).await
+        tokio::fs::write(&full, &content)
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(format!("Write failed: {}", e)))?;
         Ok(serde_json::json!({
             "action": "write", "path": rel,
@@ -2364,19 +4324,30 @@ impl WorkspaceTool {
         }))
     }
 
-    async fn action_append(&self, path: Option<String>, content: Option<String>) -> crate::error::ToolResult<serde_json::Value> {
-        let rel = path.ok_or_else(|| crate::ToolError::InvalidInput("path required for append".into()))?;
-        let content = content.ok_or_else(|| crate::ToolError::InvalidInput("content required for append".into()))?;
+    async fn action_append(
+        &self,
+        path: Option<String>,
+        content: Option<String>,
+    ) -> crate::error::ToolResult<serde_json::Value> {
+        let rel =
+            path.ok_or_else(|| crate::ToolError::InvalidInput("path required for append".into()))?;
+        let content = content
+            .ok_or_else(|| crate::ToolError::InvalidInput("content required for append".into()))?;
         let full = self.resolve_path(&rel)?;
         if let Some(parent) = full.parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .map_err(|e| crate::ToolError::ExecutionFailed(format!("mkdir failed: {}", e)))?;
         }
         use tokio::io::AsyncWriteExt;
         let mut file = tokio::fs::OpenOptions::new()
-            .create(true).append(true).open(&full).await
+            .create(true)
+            .append(true)
+            .open(&full)
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(format!("Open failed: {}", e)))?;
-        file.write_all(content.as_bytes()).await
+        file.write_all(content.as_bytes())
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(format!("Append failed: {}", e)))?;
         Ok(serde_json::json!({
             "action": "append", "path": rel,
@@ -2384,7 +4355,10 @@ impl WorkspaceTool {
         }))
     }
 
-    async fn action_list(&self, path: Option<String>) -> crate::error::ToolResult<serde_json::Value> {
+    async fn action_list(
+        &self,
+        path: Option<String>,
+    ) -> crate::error::ToolResult<serde_json::Value> {
         let rel = path.unwrap_or_default();
         let full = if rel.is_empty() {
             std::path::PathBuf::from(&self.workspace_root)
@@ -2392,10 +4366,14 @@ impl WorkspaceTool {
             self.resolve_path(&rel)?
         };
         let mut entries = Vec::new();
-        let mut dir = tokio::fs::read_dir(&full).await
+        let mut dir = tokio::fs::read_dir(&full)
+            .await
             .map_err(|e| crate::ToolError::ExecutionFailed(format!("List failed: {}", e)))?;
-        while let Some(entry) = dir.next_entry().await
-            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))? {
+        while let Some(entry) = dir
+            .next_entry()
+            .await
+            .map_err(|e| crate::ToolError::ExecutionFailed(e.to_string()))?
+        {
             let name = entry.file_name().to_string_lossy().to_string();
             let meta = entry.metadata().await.ok();
             entries.push(serde_json::json!({
@@ -2409,5 +4387,62 @@ impl WorkspaceTool {
             "path": if rel.is_empty() { "." } else { &rel },
             "entries": entries, "count": entries.len(),
         }))
+    }
+}
+
+#[cfg(test)]
+mod message_tool_tests {
+    use super::MessageTool;
+
+    #[tokio::test]
+    async fn thread_reply_uses_target_as_thread_and_preserves_reply_to() {
+        let tool = MessageTool::new();
+        let result = tool
+            .execute(serde_json::json!({
+                "action": "thread_reply",
+                "channel": "discord",
+                "target": "thread-123",
+                "replyTo": "msg-9",
+                "text": "hello"
+            }))
+            .await
+            .expect("thread_reply intent should be built");
+
+        assert_eq!(
+            result.get("action").and_then(|v| v.as_str()),
+            Some("send_thread_reply")
+        );
+        assert_eq!(
+            result.get("thread_id").and_then(|v| v.as_str()),
+            Some("thread-123")
+        );
+        assert_eq!(
+            result.get("reply_to").and_then(|v| v.as_str()),
+            Some("msg-9")
+        );
+    }
+
+    #[tokio::test]
+    async fn send_uses_thread_id_as_reply_anchor_when_reply_to_missing() {
+        let tool = MessageTool::new();
+        let result = tool
+            .execute(serde_json::json!({
+                "action": "send",
+                "channel": "discord",
+                "target": "chan-1",
+                "threadId": "thread-42",
+                "text": "hello"
+            }))
+            .await
+            .expect("send intent should be built");
+
+        assert_eq!(
+            result.get("action").and_then(|v| v.as_str()),
+            Some("send_message")
+        );
+        assert_eq!(
+            result.get("reply_to").and_then(|v| v.as_str()),
+            Some("thread-42")
+        );
     }
 }

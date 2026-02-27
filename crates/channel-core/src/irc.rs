@@ -57,13 +57,17 @@ impl IrcChannel {
     }
 
     async fn send_raw(&mut self, command: &str) -> ChannelResult<()> {
-        let stream = self.stream.as_ref()
+        let stream = self
+            .stream
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Not connected".to_string()))?;
 
         let mut guard = stream.write().await;
-        guard.write_all(format!("{}\r\n", command).as_bytes()).await
+        guard
+            .write_all(format!("{}\r\n", command).as_bytes())
+            .await
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?;
-        
+
         Ok(())
     }
 }
@@ -81,11 +85,15 @@ impl Channel for IrcChannel {
     }
 
     async fn connect(&mut self) -> ChannelResult<()> {
-        let server = self.server.as_ref()
+        let server = self
+            .server
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Server not configured".to_string()))?
             .clone();
-        
-        let nick = self.nick.as_ref()
+
+        let nick = self
+            .nick
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Nick not configured".to_string()))?
             .clone();
 
@@ -97,9 +105,10 @@ impl Channel for IrcChannel {
         self.status = ChannelStatus::Connecting;
 
         let addr = format!("{}:{}", server, self.port);
-        let stream = TcpStream::connect(&addr).await
+        let stream = TcpStream::connect(&addr)
+            .await
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?;
-        
+
         self.stream = Some(Arc::new(RwLock::new(stream)));
 
         if let Some(pass) = password {
@@ -107,7 +116,12 @@ impl Channel for IrcChannel {
         }
 
         self.send_raw(&format!("NICK {}", nick)).await?;
-        self.send_raw(&format!("USER {} 0 * :{}", username.as_deref().unwrap_or(&nick), realname.as_deref().unwrap_or(&nick))).await?;
+        self.send_raw(&format!(
+            "USER {} 0 * :{}",
+            username.as_deref().unwrap_or(&nick),
+            realname.as_deref().unwrap_or(&nick)
+        ))
+        .await?;
 
         for channel in &channels {
             self.send_raw(&format!("JOIN {}", channel)).await?;
@@ -138,18 +152,25 @@ impl Channel for IrcChannel {
             return Err(ChannelError::ConnectionError("Not connected".to_string()));
         }
 
-        let target = message.metadata.get("target")
+        let target = message
+            .metadata
+            .get("target")
             .or_else(|| message.metadata.get("channel"))
             .cloned()
-            .ok_or_else(|| ChannelError::MessageError("Target channel not specified".to_string()))?;
+            .ok_or_else(|| {
+                ChannelError::MessageError("Target channel not specified".to_string())
+            })?;
 
         let response = format!("PRIVMSG {} :{}", target, message.content);
 
-        let stream = self.stream.as_ref()
+        let stream = self
+            .stream
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Not connected".to_string()))?;
 
         let mut s = stream.write().await;
-        s.write_all(format!("{}\r\n", response).as_bytes()).await
+        s.write_all(format!("{}\r\n", response).as_bytes())
+            .await
             .map_err(|e| ChannelError::ConnectionError(e.to_string()))?;
 
         Ok(format!("{}_{}", target, uuid::Uuid::new_v4()))
@@ -173,7 +194,7 @@ impl Channel for IrcChannel {
 
     async fn handle_event(&self, event: ChannelEvent) -> ChannelResult<()> {
         tracing::debug!("Received IRC event: {:?}", event);
-        
+
         match event.event_type.as_str() {
             "PRIVMSG" => {
                 tracing::info!("Received IRC message: {:?}", event.payload);
@@ -186,7 +207,7 @@ impl Channel for IrcChannel {
             }
             _ => {}
         }
-        
+
         Ok(())
     }
 
@@ -198,9 +219,9 @@ impl Channel for IrcChannel {
 
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // IRC bridge: /message, /nick, /channel
-        let text = payload.get("message")
-            .and_then(|v| v.as_str())?;
-        let chat_id = payload.get("channel")
+        let text = payload.get("message").and_then(|v| v.as_str())?;
+        let chat_id = payload
+            .get("channel")
             .or_else(|| payload.get("nick"))
             .and_then(|v| v.as_str())
             .unwrap_or("default");
@@ -236,11 +257,16 @@ struct IrcSender {
 }
 
 impl MessageSender for IrcSender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>>
+    {
         let channel = self.channel.clone();
         let content = content.to_string();
         let metadata = metadata.clone();
-        
+
         Box::pin(async move {
             let message = ChannelMessage {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -250,7 +276,7 @@ impl MessageSender for IrcSender {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 metadata,
             };
-            
+
             channel.read().await.send_message(&message).await
         })
     }

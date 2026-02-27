@@ -11,9 +11,7 @@ pub struct TtsDirective {
 
 /// Parse TTS directives from text, returning cleaned text and directive.
 pub fn parse_tts_directives(text: &str) -> (String, Option<TtsDirective>) {
-    let re = regex::Regex::new(
-        r"(?s)\[\[tts(?::(\w+))?\]\](.*?)\[\[/tts\]\]"
-    );
+    let re = regex::Regex::new(r"(?s)\[\[tts(?::(\w+))?\]\](.*?)\[\[/tts\]\]");
 
     let Ok(re) = re else {
         return (text.to_string(), None);

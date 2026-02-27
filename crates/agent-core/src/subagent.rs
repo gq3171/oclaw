@@ -1,11 +1,11 @@
+use crate::agent::{Agent, AgentConfig, ToolExecutor};
+use chrono::{DateTime, Utc};
+use oclaw_llm_core::providers::LlmProvider;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use oclaws_llm_core::providers::LlmProvider;
-use crate::agent::{Agent, AgentConfig, ToolExecutor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -212,8 +212,16 @@ impl SubagentRegistry {
             }
 
             let inner = std::panic::AssertUnwindSafe(async {
-                let agent_config = AgentConfig::new(&config.name, &config.model, &config.provider)
-                    .with_system_prompt(&config.system_prompt);
+                let mut agent_config =
+                    AgentConfig::new(&config.name, &config.model, &config.provider)
+                        .with_system_prompt(&config.system_prompt);
+                if let Some(max_iters) = config
+                    .max_iterations
+                    .and_then(|v| usize::try_from(v).ok())
+                    .filter(|v| *v > 0)
+                {
+                    agent_config.max_iterations = Some(max_iters);
+                }
                 let mut agent = Agent::new(agent_config, provider);
                 agent.initialize().await?;
 
@@ -224,32 +232,37 @@ impl SubagentRegistry {
                     }
                 };
 
-                tokio::time::timeout(
-                    tokio::time::Duration::from_secs(timeout_secs),
-                    run_fut,
-                ).await
-                .map_err(|_| crate::AgentError::Timeout("Subagent timed out".into()))?
+                tokio::time::timeout(tokio::time::Duration::from_secs(timeout_secs), run_fut)
+                    .await
+                    .map_err(|_| crate::AgentError::Timeout("Subagent timed out".into()))?
             });
 
             match futures_util::FutureExt::catch_unwind(inner).await {
                 Ok(Ok(result)) => {
                     if let Some(sa) = agents.write().await.get_mut(&agent_id) {
-                        sa.set_completed(&result);
+                        if sa.status != SubagentStatus::Terminated {
+                            sa.set_completed(&result);
+                        }
                     }
                 }
                 Ok(Err(e)) => {
                     if let Some(sa) = agents.write().await.get_mut(&agent_id) {
-                        sa.set_failed(&e.to_string());
+                        if sa.status != SubagentStatus::Terminated {
+                            sa.set_failed(&e.to_string());
+                        }
                     }
                 }
                 Err(panic_err) => {
                     let msg = panic_err
-                        .downcast_ref::<String>().map(|s| s.as_str())
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
                         .or_else(|| panic_err.downcast_ref::<&str>().copied())
                         .unwrap_or("unknown panic");
                     tracing::error!("Subagent {} panicked: {}", agent_id, msg);
                     if let Some(sa) = agents.write().await.get_mut(&agent_id) {
-                        sa.set_failed(&format!("Panic: {}", msg));
+                        if sa.status != SubagentStatus::Terminated {
+                            sa.set_failed(&format!("Panic: {}", msg));
+                        }
                     }
                 }
             }
@@ -267,7 +280,9 @@ impl SubagentRegistry {
         parent_id: Option<&str>,
         tool_executor: Option<Arc<dyn ToolExecutor>>,
     ) -> Result<String, String> {
-        let id = self.spawn(config, provider, input, parent_id, tool_executor).await;
+        let id = self
+            .spawn(config, provider, input, parent_id, tool_executor)
+            .await;
 
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -299,5 +314,104 @@ impl SubagentRegistry {
 impl Default for SubagentRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use oclaw_llm_core::chat::{
+        ChatChoice, ChatCompletion, ChatMessage, ChatRequest, MessageRole, Usage,
+    };
+    use oclaw_llm_core::embedding::{EmbeddingRequest, EmbeddingResponse};
+    use oclaw_llm_core::error::{LlmError, LlmResult};
+    use oclaw_llm_core::providers::{LlmProvider, ProviderType};
+    use tokio::time::{Duration, sleep};
+
+    struct SlowTestProvider;
+
+    #[async_trait]
+    impl LlmProvider for SlowTestProvider {
+        fn provider_type(&self) -> ProviderType {
+            ProviderType::OpenAi
+        }
+
+        async fn chat(&self, _request: ChatRequest) -> LlmResult<ChatCompletion> {
+            sleep(Duration::from_millis(250)).await;
+            Ok(ChatCompletion {
+                id: "test".to_string(),
+                object: "chat.completion".to_string(),
+                created: 0,
+                model: "slow-test-model".to_string(),
+                choices: vec![ChatChoice {
+                    index: 0,
+                    message: ChatMessage {
+                        role: MessageRole::Assistant,
+                        content: "done".to_string(),
+                        name: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                    },
+                    finish_reason: Some("stop".to_string()),
+                }],
+                usage: Some(Usage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                }),
+                system_fingerprint: None,
+            })
+        }
+
+        async fn chat_stream(
+            &self,
+            _request: ChatRequest,
+        ) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<oclaw_llm_core::chat::StreamChunk>>>
+        {
+            Err(LlmError::ApiError(
+                "streaming not implemented in SlowTestProvider".to_string(),
+            ))
+        }
+
+        async fn embeddings(&self, _request: EmbeddingRequest) -> LlmResult<EmbeddingResponse> {
+            Err(LlmError::UnsupportedModel(
+                "embeddings not implemented in SlowTestProvider".to_string(),
+            ))
+        }
+
+        fn supported_models(&self) -> Vec<String> {
+            vec!["slow-test-model".to_string()]
+        }
+
+        fn default_model(&self) -> &str {
+            "slow-test-model"
+        }
+    }
+
+    #[tokio::test]
+    async fn terminate_persists_even_if_background_run_finishes_later() {
+        let registry = SubagentRegistry::new();
+        let provider = Arc::new(SlowTestProvider);
+        let cfg = SubagentConfig::new("slow-agent", "be helpful", "slow-test-model", "test")
+            .with_description("slow test agent");
+
+        let id = registry
+            .spawn(cfg, provider, "hello".to_string(), None, None)
+            .await;
+
+        // Let the task start, then terminate before it can complete.
+        sleep(Duration::from_millis(30)).await;
+        assert!(registry.terminate(&id).await);
+
+        // Wait long enough that the background run would have completed.
+        sleep(Duration::from_millis(400)).await;
+
+        let state = registry
+            .get(&id)
+            .await
+            .expect("subagent state should exist");
+        assert_eq!(state.status, SubagentStatus::Terminated);
+        assert!(state.result.is_none());
     }
 }

@@ -1,10 +1,10 @@
 //! Cloudflare AI Gateway provider - Anthropic-compatible proxy
 
-use async_trait::async_trait;
-use crate::chat::{ChatRequest, ChatCompletion, StreamChunk};
+use super::{LlmProvider, ProviderType, anthropic::AnthropicProvider};
+use crate::chat::{ChatCompletion, ChatRequest, StreamChunk};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::{LlmError, LlmResult};
-use super::{LlmProvider, ProviderType, anthropic::AnthropicProvider};
+use async_trait::async_trait;
 
 pub struct CloudflareProvider {
     inner: AnthropicProvider,
@@ -28,13 +28,18 @@ impl CloudflareProvider {
 
 #[async_trait]
 impl LlmProvider for CloudflareProvider {
-    fn provider_type(&self) -> ProviderType { ProviderType::Cloudflare }
+    fn provider_type(&self) -> ProviderType {
+        ProviderType::Cloudflare
+    }
 
     async fn chat(&self, request: ChatRequest) -> LlmResult<ChatCompletion> {
         self.inner.chat(request).await
     }
 
-    async fn chat_stream(&self, request: ChatRequest) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
+    async fn chat_stream(
+        &self,
+        request: ChatRequest,
+    ) -> LlmResult<tokio::sync::mpsc::Receiver<LlmResult<StreamChunk>>> {
         self.inner.chat_stream(request).await
     }
 
@@ -46,5 +51,7 @@ impl LlmProvider for CloudflareProvider {
         self.inner.supported_models()
     }
 
-    fn default_model(&self) -> &str { self.inner.default_model() }
+    fn default_model(&self) -> &str {
+        self.inner.default_model()
+    }
 }

@@ -1,6 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Duration, Instant};
 
 /// Throttled draft-streaming loop for channels that support message editing.

@@ -33,76 +33,326 @@ fn is_unicode_letter_or_digit(c: char) -> bool {
 static STOP_WORDS_EN: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         // Articles and determiners
-        "a", "an", "the", "this", "that", "these", "those",
+        "a",
+        "an",
+        "the",
+        "this",
+        "that",
+        "these",
+        "those",
         // Pronouns
-        "i", "me", "my", "we", "our", "you", "your", "he", "she", "it", "they", "them",
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "he",
+        "she",
+        "it",
+        "they",
+        "them",
         // Common verbs
-        "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did",
-        "will", "would", "could", "should", "can", "may", "might",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "can",
+        "may",
+        "might",
         // Prepositions
-        "in", "on", "at", "to", "for", "of", "with", "by", "from", "about",
-        "into", "through", "during", "before", "after", "above", "below",
-        "between", "under", "over",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "about",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "between",
+        "under",
+        "over",
         // Conjunctions
-        "and", "or", "but", "if", "then", "because", "as", "while",
-        "when", "where", "what", "which", "who", "how", "why",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "because",
+        "as",
+        "while",
+        "when",
+        "where",
+        "what",
+        "which",
+        "who",
+        "how",
+        "why",
         // Time references (vague)
-        "yesterday", "today", "tomorrow", "earlier", "later", "recently",
-        "ago", "just", "now",
+        "yesterday",
+        "today",
+        "tomorrow",
+        "earlier",
+        "later",
+        "recently",
+        "ago",
+        "just",
+        "now",
         // Vague references
-        "thing", "things", "stuff", "something", "anything", "everything", "nothing",
+        "thing",
+        "things",
+        "stuff",
+        "something",
+        "anything",
+        "everything",
+        "nothing",
         // Question/request words
-        "please", "help", "find", "show", "get", "tell", "give",
-    ].into_iter().collect()
+        "please",
+        "help",
+        "find",
+        "show",
+        "get",
+        "tell",
+        "give",
+    ]
+    .into_iter()
+    .collect()
 });
 
 static STOP_WORDS_ZH: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         // Pronouns
-        "我", "我们", "你", "你们", "他", "她", "它", "他们",
-        "这", "那", "这个", "那个", "这些", "那些",
+        "我",
+        "我们",
+        "你",
+        "你们",
+        "他",
+        "她",
+        "它",
+        "他们",
+        "这",
+        "那",
+        "这个",
+        "那个",
+        "这些",
+        "那些",
         // Auxiliary words
-        "的", "了", "着", "过", "得", "地", "吗", "呢", "吧", "啊", "呀", "嘛", "啦",
+        "的",
+        "了",
+        "着",
+        "过",
+        "得",
+        "地",
+        "吗",
+        "呢",
+        "吧",
+        "啊",
+        "呀",
+        "嘛",
+        "啦",
         // Verbs (common, vague)
-        "是", "有", "在", "被", "把", "给", "让", "用", "到", "去", "来",
-        "做", "说", "看", "找", "想", "要", "能", "会", "可以",
+        "是",
+        "有",
+        "在",
+        "被",
+        "把",
+        "给",
+        "让",
+        "用",
+        "到",
+        "去",
+        "来",
+        "做",
+        "说",
+        "看",
+        "找",
+        "想",
+        "要",
+        "能",
+        "会",
+        "可以",
         // Prepositions and conjunctions
-        "和", "与", "或", "但", "但是", "因为", "所以", "如果", "虽然",
-        "而", "也", "都", "就", "还", "又", "再", "才", "只",
+        "和",
+        "与",
+        "或",
+        "但",
+        "但是",
+        "因为",
+        "所以",
+        "如果",
+        "虽然",
+        "而",
+        "也",
+        "都",
+        "就",
+        "还",
+        "又",
+        "再",
+        "才",
+        "只",
         // Time (vague)
-        "之前", "以前", "之后", "以后", "刚才", "现在", "昨天", "今天", "明天", "最近",
+        "之前",
+        "以前",
+        "之后",
+        "以后",
+        "刚才",
+        "现在",
+        "昨天",
+        "今天",
+        "明天",
+        "最近",
         // Vague references
-        "东西", "事情", "事", "什么", "哪个", "哪些", "怎么", "为什么", "多少",
+        "东西",
+        "事情",
+        "事",
+        "什么",
+        "哪个",
+        "哪些",
+        "怎么",
+        "为什么",
+        "多少",
         // Question/request words
-        "请", "帮", "帮忙", "告诉",
-    ].into_iter().collect()
+        "请",
+        "帮",
+        "帮忙",
+        "告诉",
+    ]
+    .into_iter()
+    .collect()
 });
 
 static STOP_WORDS_KO: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         // Particles (조사)
-        "은", "는", "이", "가", "을", "를", "의", "에", "에서", "로", "으로",
-        "와", "과", "도", "만", "까지", "부터", "한테", "에게", "께",
-        "처럼", "같이", "보다", "마다", "밖에", "대로",
+        "은",
+        "는",
+        "이",
+        "가",
+        "을",
+        "를",
+        "의",
+        "에",
+        "에서",
+        "로",
+        "으로",
+        "와",
+        "과",
+        "도",
+        "만",
+        "까지",
+        "부터",
+        "한테",
+        "에게",
+        "께",
+        "처럼",
+        "같이",
+        "보다",
+        "마다",
+        "밖에",
+        "대로",
         // Pronouns (대명사)
-        "나", "나는", "내가", "나를", "너", "우리", "저", "저희",
-        "그", "그녀", "그들", "이것", "저것", "그것", "여기", "저기", "거기",
+        "나",
+        "나는",
+        "내가",
+        "나를",
+        "너",
+        "우리",
+        "저",
+        "저희",
+        "그",
+        "그녀",
+        "그들",
+        "이것",
+        "저것",
+        "그것",
+        "여기",
+        "저기",
+        "거기",
         // Common verbs / auxiliaries
-        "있다", "없다", "하다", "되다", "이다", "아니다", "보다", "주다", "오다", "가다",
+        "있다",
+        "없다",
+        "하다",
+        "되다",
+        "이다",
+        "아니다",
+        "보다",
+        "주다",
+        "오다",
+        "가다",
         // Nouns (의존 명사 / vague)
-        "것", "거", "등", "수", "때", "곳", "중", "분",
+        "것",
+        "거",
+        "등",
+        "수",
+        "때",
+        "곳",
+        "중",
+        "분",
         // Adverbs
-        "잘", "더", "또", "매우", "정말", "아주", "많이", "너무", "좀",
+        "잘",
+        "더",
+        "또",
+        "매우",
+        "정말",
+        "아주",
+        "많이",
+        "너무",
+        "좀",
         // Conjunctions
-        "그리고", "하지만", "그래서", "그런데", "그러나", "또는", "그러면",
+        "그리고",
+        "하지만",
+        "그래서",
+        "그런데",
+        "그러나",
+        "또는",
+        "그러면",
         // Question words
-        "왜", "어떻게", "뭐", "언제", "어디", "누구", "무엇", "어떤",
+        "왜",
+        "어떻게",
+        "뭐",
+        "언제",
+        "어디",
+        "누구",
+        "무엇",
+        "어떤",
         // Time (vague)
-        "어제", "오늘", "내일", "최근", "지금", "아까", "나중", "전에",
+        "어제",
+        "오늘",
+        "내일",
+        "최근",
+        "지금",
+        "아까",
+        "나중",
+        "전에",
         // Request words
-        "제발", "부탁",
-    ].into_iter().collect()
+        "제발",
+        "부탁",
+    ]
+    .into_iter()
+    .collect()
 });
 
 /// Korean trailing particles, sorted by descending length for longest-match-first.
@@ -147,7 +397,10 @@ fn is_valid_keyword(token: &str) -> bool {
         return false;
     }
     // Skip tokens that are all punctuation/symbols
-    if token.chars().all(|c| c.is_ascii_punctuation() || (!c.is_alphanumeric() && !c.is_ascii())) {
+    if token
+        .chars()
+        .all(|c| c.is_ascii_punctuation() || (!c.is_alphanumeric() && !c.is_ascii()))
+    {
         // More precise: check Unicode categories
         if !token.chars().any(is_unicode_letter_or_digit) {
             return false;
@@ -157,9 +410,7 @@ fn is_valid_keyword(token: &str) -> bool {
 }
 
 fn is_stop_word(token: &str) -> bool {
-    STOP_WORDS_EN.contains(token)
-        || STOP_WORDS_ZH.contains(token)
-        || STOP_WORDS_KO.contains(token)
+    STOP_WORDS_EN.contains(token) || STOP_WORDS_ZH.contains(token) || STOP_WORDS_KO.contains(token)
 }
 
 // ── Tokenizer ───────────────────────────────────────────────────
@@ -171,7 +422,8 @@ fn split_segments(text: &str) -> Vec<String> {
     let mut current = String::new();
 
     for c in normalized.chars() {
-        if c.is_whitespace() || (c.is_ascii_punctuation() && c != '_')
+        if c.is_whitespace()
+            || (c.is_ascii_punctuation() && c != '_')
             || matches!(c,
                 '\u{3000}'..='\u{303f}' | // CJK punctuation
                 '\u{ff00}'..='\u{ffef}' | // Fullwidth forms
@@ -209,7 +461,9 @@ fn tokenize(text: &str) -> Vec<String> {
             let mut ascii_run = String::new();
 
             let flush_cjk = |run: &mut Vec<char>, toks: &mut Vec<String>| {
-                if run.is_empty() { return; }
+                if run.is_empty() {
+                    return;
+                }
                 // Unigrams
                 for &c in run.iter() {
                     toks.push(c.to_string());
@@ -224,7 +478,9 @@ fn tokenize(text: &str) -> Vec<String> {
                 run.clear();
             };
             let flush_ascii = |run: &mut String, toks: &mut Vec<String>| {
-                if run.is_empty() { return; }
+                if run.is_empty() {
+                    return;
+                }
                 toks.push(std::mem::take(run));
             };
 
@@ -252,7 +508,8 @@ fn tokenize(text: &str) -> Vec<String> {
                 tokens.push(segment.clone());
             }
             if let Some(ref s) = stem
-                && !STOP_WORDS_KO.contains(s.as_str()) && is_useful_korean_stem(s)
+                && !STOP_WORDS_KO.contains(s.as_str())
+                && is_useful_korean_stem(s)
             {
                 tokens.push(s.clone());
             }
@@ -337,7 +594,11 @@ pub fn build_fts5_query(raw: &str) -> Option<String> {
 /// Mirrors Node's `bm25RankToScore()` from hybrid.ts:
 /// `1 / (1 + max(0, rank))`
 pub fn bm25_rank_to_score(rank: f64) -> f64 {
-    let normalized = if rank.is_finite() { rank.max(0.0) } else { 999.0 };
+    let normalized = if rank.is_finite() {
+        rank.max(0.0)
+    } else {
+        999.0
+    };
     1.0 / (1.0 + normalized)
 }
 

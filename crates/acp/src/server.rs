@@ -20,10 +20,7 @@ impl AcpServer {
         }
     }
 
-    pub async fn create_session(
-        &self,
-        cwd: std::path::PathBuf,
-    ) -> Result<String, AcpSessionError> {
+    pub async fn create_session(&self, cwd: std::path::PathBuf) -> Result<String, AcpSessionError> {
         let mut store = self.sessions.write().await;
         let session = store.create(cwd)?;
         let id = session.session_id.clone();
@@ -31,10 +28,7 @@ impl AcpServer {
         Ok(id)
     }
 
-    pub async fn get_session_info(
-        &self,
-        id: &str,
-    ) -> Option<serde_json::Value> {
+    pub async fn get_session_info(&self, id: &str) -> Option<serde_json::Value> {
         let store = self.sessions.read().await;
         store.get(id).map(|s| {
             serde_json::json!({
@@ -65,14 +59,18 @@ impl AcpServer {
 
     pub async fn list_sessions(&self) -> Vec<serde_json::Value> {
         let store = self.sessions.read().await;
-        store.list().iter().map(|s| {
-            serde_json::json!({
-                "session_id": s.session_id,
-                "session_key": s.session_key,
-                "created_at": s.created_at,
-                "message_count": s.messages.len(),
+        store
+            .list()
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "session_id": s.session_id,
+                    "session_key": s.session_key,
+                    "created_at": s.created_at,
+                    "message_count": s.messages.len(),
+                })
             })
-        }).collect()
+            .collect()
     }
 
     pub fn default_permissions(&self) -> &AcpPermissions {

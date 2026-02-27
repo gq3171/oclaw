@@ -1,25 +1,25 @@
+use oclaw_llm_core::chat::{ChatMessage, ChatRequest, MessageRole, Tool};
+use oclaw_llm_core::providers::LlmProvider;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use oclaws_llm_core::chat::{ChatMessage, ChatRequest, MessageRole, Tool};
-use oclaws_llm_core::providers::LlmProvider;
 
-use crate::{AgentError, AgentResult};
-use crate::loop_detect::{LoopDetector, LoopLevel};
-use crate::transcript::Transcript;
-use crate::compaction::{CompactionConfig, needs_compaction, compact_history};
-use crate::pruning::{PruningConfig, prune_tool_results};
-use crate::history::limit_history_turns;
-use crate::transcript_repair::repair_tool_use_result_pairing;
+use crate::compaction::{CompactionConfig, compact_history, needs_compaction};
 use crate::context_guard::{ContextGuard, ContextGuardConfig, GuardAction};
+use crate::error_classify::{ErrorClass, classify_error};
+use crate::history::limit_history_turns;
+use crate::loop_detect::{LoopDetector, LoopLevel};
+use crate::pruning::{PruningConfig, prune_tool_results};
 use crate::thinking::ThinkingConfig;
-use crate::error_classify::{classify_error, ErrorClass};
+use crate::transcript::Transcript;
+use crate::transcript_repair::repair_tool_use_result_pairing;
 use crate::usage::UsageAccumulator;
+use crate::{AgentError, AgentResult};
 
 const MAX_OVERFLOW_COMPACTION_ATTEMPTS: usize = 3;
 const TRUNCATION_SUFFIX: &str = "\n\n[Content truncated — original was too large for the model's \
 context window. If you need more, request specific sections or use offset/limit parameters.]";
-use oclaws_tools_core::{ApprovalGate, ApprovalDecision};
+use oclaw_tools_core::{ApprovalDecision, ApprovalGate};
 
 /// Trait for executing tool calls. Implement this to provide tool execution to agents.
 #[async_trait::async_trait]
@@ -211,14 +211,43 @@ impl Agent {
             let loaded = transcript.load().await;
             if !loaded.is_empty() {
                 let (repaired, report) = repair_tool_use_result_pairing(loaded);
-                if report.added_synthetic > 0 || report.dropped_duplicates > 0 || report.dropped_orphans > 0 {
+                if report.added_synthetic > 0
+                    || report.dropped_duplicates > 0
+                    || report.dropped_orphans > 0
+                {
                     tracing::info!(
                         "Transcript repair: +{} synthetic, -{} duplicates, -{} orphans",
-                        report.added_synthetic, report.dropped_duplicates, report.dropped_orphans
+                        report.added_synthetic,
+                        report.dropped_duplicates,
+                        report.dropped_orphans
                     );
                 }
                 tracing::info!("Loaded {} messages from transcript", repaired.len());
                 self.history = repaired;
+
+                // Always replace the system prompt with the current one.
+                // The transcript may contain a stale system prompt from a
+                // previous identity — the freshly-built prompt from
+                // SOUL.md / IDENTITY.md must take precedence.
+                if let Some(prompt) = &self.config.system_prompt {
+                    let fresh = ChatMessage {
+                        role: MessageRole::System,
+                        content: prompt.clone(),
+                        name: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                    };
+                    if let Some(first) = self.history.first_mut() {
+                        if first.role == MessageRole::System {
+                            *first = fresh;
+                        } else {
+                            self.history.insert(0, fresh);
+                        }
+                    } else {
+                        self.history.push(fresh);
+                    }
+                }
+
                 self.state = AgentState::Idle;
                 return Ok(());
             }
@@ -265,7 +294,9 @@ impl Agent {
         let user_msg = ChatMessage {
             role: MessageRole::User,
             content: input.to_string(),
-            name: None, tool_calls: None, tool_call_id: None,
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
         };
         self.transcript_append(&user_msg).await;
         self.history.push(user_msg);
@@ -295,13 +326,18 @@ impl Agent {
             }
             match self.provider.chat(request.clone()).await {
                 Ok(response) => {
+                    if let Some(ref u) = response.usage {
+                        self.usage.record(u);
+                    }
                     if let Some(choice) = response.choices.first() {
                         let response_content = choice.message.content.clone();
 
                         let asst_msg = ChatMessage {
                             role: MessageRole::Assistant,
                             content: response_content.clone(),
-                            name: None, tool_calls: None, tool_call_id: None,
+                            name: None,
+                            tool_calls: None,
+                            tool_call_id: None,
                         };
                         self.transcript_append(&asst_msg).await;
                         self.history.push(asst_msg);
@@ -330,9 +366,12 @@ impl Agent {
             return s.to_string();
         }
         const MIN_KEEP: usize = 2_000;
-        let keep = max_chars.saturating_sub(TRUNCATION_SUFFIX.len()).max(MIN_KEEP);
+        let keep = max_chars
+            .saturating_sub(TRUNCATION_SUFFIX.len())
+            .max(MIN_KEEP);
         let keep = crate::str_util::floor_char_boundary(s, keep);
-        let cut = s[..keep].rfind('\n')
+        let cut = s[..keep]
+            .rfind('\n')
             .filter(|&i| i > keep * 4 / 5)
             .unwrap_or(keep);
         format!("{}{}", &s[..cut], TRUNCATION_SUFFIX)
@@ -343,7 +382,7 @@ impl Agent {
     async fn chat_with_retry(
         &mut self,
         request: ChatRequest,
-    ) -> Result<oclaws_llm_core::chat::ChatCompletion, AgentError> {
+    ) -> Result<oclaw_llm_core::chat::ChatCompletion, AgentError> {
         let max_retries = self.config.max_retries.unwrap_or(3);
         let mut last_err = String::new();
         for attempt in 0..max_retries {
@@ -364,7 +403,9 @@ impl Agent {
                     let class = classify_error(&last_err);
                     tracing::warn!(
                         "Chat attempt {} failed (class={:?}): {}",
-                        attempt + 1, class, last_err
+                        attempt + 1,
+                        class,
+                        last_err
                     );
 
                     match class {
@@ -376,9 +417,8 @@ impl Agent {
                         }
                         ErrorClass::RateLimit => {
                             // Longer backoff for rate limits
-                            let delay = std::time::Duration::from_millis(
-                                2000 * 2u64.pow(attempt as u32)
-                            );
+                            let delay =
+                                std::time::Duration::from_millis(2000 * 2u64.pow(attempt as u32));
                             tokio::time::sleep(delay).await;
                         }
                         _ if !class.should_retry() => {
@@ -427,7 +467,9 @@ impl Agent {
         let user_msg = ChatMessage {
             role: MessageRole::User,
             content: input.to_string(),
-            name: None, tool_calls: None, tool_call_id: None,
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
         };
         self.transcript_append(&user_msg).await;
         self.history.push(user_msg);
@@ -461,11 +503,19 @@ impl Agent {
             if let Some(guard) = &self.context_guard {
                 match guard.check_budget(&self.history, &self.config.model) {
                     GuardAction::TruncateNeeded { used, budget } => {
-                        tracing::warn!("Context guard: {} tokens used, budget {}, truncating", used, budget);
+                        tracing::warn!(
+                            "Context guard: {} tokens used, budget {}, truncating",
+                            used,
+                            budget
+                        );
                         guard.truncate_tool_results(&mut self.history, &self.config.model);
                     }
                     GuardAction::Warning { used, budget } => {
-                        tracing::info!("Context guard: {} tokens used, approaching budget {}", used, budget);
+                        tracing::info!(
+                            "Context guard: {} tokens used, approaching budget {}",
+                            used,
+                            budget
+                        );
                     }
                     GuardAction::Ok => {}
                 }
@@ -486,11 +536,14 @@ impl Agent {
 
             let response = match self.chat_with_retry(request).await {
                 Ok(r) => r,
-                Err(AgentError::ContextOverflow(_)) if overflow_attempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS => {
+                Err(AgentError::ContextOverflow(_))
+                    if overflow_attempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS =>
+                {
                     overflow_attempts += 1;
                     tracing::warn!(
                         "Context overflow (attempt {}/{}), truncating largest tool result",
-                        overflow_attempts, MAX_OVERFLOW_COMPACTION_ATTEMPTS
+                        overflow_attempts,
+                        MAX_OVERFLOW_COMPACTION_ATTEMPTS
                     );
                     self.truncate_history_tool_results();
                     continue;
@@ -501,9 +554,10 @@ impl Agent {
                 }
             };
 
-            let choice = response.choices.first().ok_or_else(|| {
-                AgentError::ModelError("No choices in response".into())
-            })?;
+            let choice = response
+                .choices
+                .first()
+                .ok_or_else(|| AgentError::ModelError("No choices in response".into()))?;
 
             let asst_msg = ChatMessage {
                 role: MessageRole::Assistant,
@@ -523,7 +577,11 @@ impl Agent {
                 }
             };
 
-            tracing::info!("Iteration {}: executing {} tool call(s)", iteration, tool_calls.len());
+            tracing::info!(
+                "Iteration {}: executing {} tool call(s)",
+                iteration,
+                tool_calls.len()
+            );
             for tc in &tool_calls {
                 // Detect loop BEFORE recording current call, so no_progress_streak
                 // only examines completed records that already have result_hash.
@@ -533,7 +591,9 @@ impl Agent {
                     LoopLevel::Critical => {
                         self.state = AgentState::Error;
                         return Err(AgentError::ExecutionError(
-                            detection.message.unwrap_or_else(|| "Tool loop detected".into()),
+                            detection
+                                .message
+                                .unwrap_or_else(|| "Tool loop detected".into()),
                         ));
                     }
                     LoopLevel::Warning => {
@@ -553,21 +613,45 @@ impl Agent {
                 }
 
                 // Approval gate
-                if let Some(gate) = &self.approval_gate
-                    && let ApprovalDecision::Denied = gate.check(&tc.function.name)
-                {
-                    self.history.push(ChatMessage {
-                        role: MessageRole::Tool,
-                        content: format!("Tool '{}' denied by approval policy", tc.function.name),
-                        name: Some(tc.function.name.clone()),
-                        tool_calls: None,
-                        tool_call_id: Some(tc.id.clone()),
-                    });
-                    continue;
+                if let Some(gate) = &self.approval_gate {
+                    match gate.check(&tc.function.name) {
+                        ApprovalDecision::Denied => {
+                            self.history.push(ChatMessage {
+                                role: MessageRole::Tool,
+                                content: format!(
+                                    "Tool '{}' denied by approval policy",
+                                    tc.function.name
+                                ),
+                                name: Some(tc.function.name.clone()),
+                                tool_calls: None,
+                                tool_call_id: Some(tc.id.clone()),
+                            });
+                            continue;
+                        }
+                        ApprovalDecision::Pending => {
+                            let req = gate
+                                .request_approval(&tc.function.name, &tc.function.arguments)
+                                .await;
+                            self.history.push(ChatMessage {
+                                role: MessageRole::Tool,
+                                content: format!(
+                                    "Tool '{}' requires approval (request_id={})",
+                                    tc.function.name, req.id
+                                ),
+                                name: Some(tc.function.name.clone()),
+                                tool_calls: None,
+                                tool_call_id: Some(tc.id.clone()),
+                            });
+                            continue;
+                        }
+                        ApprovalDecision::Approved => {}
+                    }
                 }
 
                 // Execute tool
-                let result = executor.execute(&tc.function.name, &tc.function.arguments).await;
+                let result = executor
+                    .execute(&tc.function.name, &tc.function.arguments)
+                    .await;
                 let content = match &result {
                     Ok(output) => Self::truncate_tool_result(output, max_tool_chars),
                     Err(err) => format!("Error: {}", err),
@@ -589,14 +673,17 @@ impl Agent {
         }
 
         self.state = AgentState::Error;
-        Err(AgentError::ExecutionError(
-            format!("Max tool iterations ({}) reached without final response", max_iterations),
-        ))
+        Err(AgentError::ExecutionError(format!(
+            "Max tool iterations ({}) reached without final response",
+            max_iterations
+        )))
     }
 
     /// Run compaction if configured and token threshold exceeded.
     async fn try_compact(&mut self) {
-        let Some(cfg) = &self.compaction_config else { return };
+        let Some(cfg) = &self.compaction_config else {
+            return;
+        };
         if !needs_compaction(&self.history, &self.config.model, cfg) {
             return;
         }
@@ -606,7 +693,9 @@ impl Agent {
             &self.config.model,
             &self.history,
             cfg,
-        ).await {
+        )
+        .await
+        {
             Ok(result) => {
                 let summary_text = result.summary.content.clone();
                 let mut new_history = vec![result.summary];
@@ -666,8 +755,8 @@ impl Clone for Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oclaws_llm_core::providers::MockLlmProvider;
-    use oclaws_llm_core::chat::{Tool, ToolFunction};
+    use oclaw_llm_core::chat::{Tool, ToolFunction};
+    use oclaw_llm_core::providers::MockLlmProvider;
 
     struct MockExecutor;
 
@@ -688,7 +777,7 @@ mod tests {
         }
     }
 
-    fn make_agent(provider: Arc<dyn oclaws_llm_core::providers::LlmProvider>) -> Agent {
+    fn make_agent(provider: Arc<dyn oclaw_llm_core::providers::LlmProvider>) -> Agent {
         Agent::new(AgentConfig::new("test", "mock-model", "mock"), provider)
     }
 
@@ -696,7 +785,7 @@ mod tests {
     async fn test_run_simple() {
         let mock = MockLlmProvider::new();
         mock.queue_text("Hello!");
-        let provider: Arc<dyn oclaws_llm_core::providers::LlmProvider> = Arc::new(mock);
+        let provider: Arc<dyn oclaw_llm_core::providers::LlmProvider> = Arc::new(mock);
         let mut agent = make_agent(provider);
         let result = agent.run("hi").await.unwrap();
         assert_eq!(result, "Hello!");
@@ -707,9 +796,12 @@ mod tests {
     async fn test_run_with_tools_no_tool_calls() {
         let mock = MockLlmProvider::new();
         mock.queue_text("Direct answer");
-        let provider: Arc<dyn oclaws_llm_core::providers::LlmProvider> = Arc::new(mock);
+        let provider: Arc<dyn oclaw_llm_core::providers::LlmProvider> = Arc::new(mock);
         let mut agent = make_agent(provider);
-        let result = agent.run_with_tools("question", &MockExecutor).await.unwrap();
+        let result = agent
+            .run_with_tools("question", &MockExecutor)
+            .await
+            .unwrap();
         assert_eq!(result, "Direct answer");
     }
 
@@ -720,9 +812,12 @@ mod tests {
         mock.queue_tool_call("test_tool", r#"{"input":"x"}"#);
         // Second response: final text after tool result
         mock.queue_text("Final answer after tool");
-        let provider: Arc<dyn oclaws_llm_core::providers::LlmProvider> = Arc::new(mock);
+        let provider: Arc<dyn oclaw_llm_core::providers::LlmProvider> = Arc::new(mock);
         let mut agent = make_agent(provider);
-        let result = agent.run_with_tools("do something", &MockExecutor).await.unwrap();
+        let result = agent
+            .run_with_tools("do something", &MockExecutor)
+            .await
+            .unwrap();
         assert_eq!(result, "Final answer after tool");
         // History should contain: user, assistant(tool_call), tool(result), assistant(final)
         assert_eq!(agent.history().len(), 4);
@@ -733,12 +828,15 @@ mod tests {
         let mock = MockLlmProvider::new();
         mock.queue_tool_call("blocked_tool", "{}");
         mock.queue_text("Denied fallback");
-        let provider: Arc<dyn oclaws_llm_core::providers::LlmProvider> = Arc::new(mock);
-        let mut policy = oclaws_tools_core::ApprovalPolicy::default();
+        let provider: Arc<dyn oclaw_llm_core::providers::LlmProvider> = Arc::new(mock);
+        let mut policy = oclaw_tools_core::ApprovalPolicy::default();
         policy.deny.insert("blocked_tool".into());
         let gate = Arc::new(ApprovalGate::new(policy));
         let mut agent = make_agent(provider).with_approval_gate(gate);
-        let result = agent.run_with_tools("try blocked", &MockExecutor).await.unwrap();
+        let result = agent
+            .run_with_tools("try blocked", &MockExecutor)
+            .await
+            .unwrap();
         assert_eq!(result, "Denied fallback");
     }
 }

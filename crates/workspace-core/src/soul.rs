@@ -1,7 +1,7 @@
 //! SOUL.md — agent personality, values, and behavioral boundaries.
 
-use std::path::PathBuf;
 use crate::files::Workspace;
+use std::path::PathBuf;
 
 /// Parsed soul file content.
 #[derive(Debug, Clone, Default)]
@@ -36,7 +36,9 @@ impl Soul {
                 current_section = trimmed.trim_start_matches("## ").trim();
                 continue;
             }
-            let bullet = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* "));
+            let bullet = trimmed
+                .strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix("* "));
             match current_section.to_lowercase().as_str() {
                 s if s.contains("core") || s.contains("truth") => {
                     if let Some(b) = bullet {

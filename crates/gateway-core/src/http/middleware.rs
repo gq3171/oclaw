@@ -1,3 +1,4 @@
+use crate::http::HttpState;
 use axum::{
     extract::State,
     http::{Request, StatusCode},
@@ -5,7 +6,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
-use crate::http::HttpState;
 
 /// Auth middleware: validates Bearer token or password on protected routes.
 pub async fn auth_middleware(
@@ -20,7 +20,8 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
-    let auth_header = req.headers()
+    let auth_header = req
+        .headers()
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
@@ -60,25 +61,31 @@ pub async fn request_id_middleware(
     let request_id = uuid::Uuid::new_v4().to_string();
     let header_value = axum::http::HeaderValue::from_str(&request_id)
         .unwrap_or_else(|_| axum::http::HeaderValue::from_static("unknown"));
-    req.headers_mut().insert("x-request-id", header_value.clone());
+    req.headers_mut()
+        .insert("x-request-id", header_value.clone());
     let mut resp = next.run(req).await;
     resp.headers_mut().insert("x-request-id", header_value);
-    state.metrics.record_request(resp.status().as_u16(), start.elapsed().as_micros() as u64);
+    state
+        .metrics
+        .record_request(resp.status().as_u16(), start.elapsed().as_micros() as u64);
     resp
 }
 
 /// Security headers middleware: adds standard security headers to all responses.
-pub async fn security_headers_middleware(
-    req: Request<axum::body::Body>,
-    next: Next,
-) -> Response {
+pub async fn security_headers_middleware(req: Request<axum::body::Body>, next: Next) -> Response {
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
     h.insert("x-content-type-options", "nosniff".parse().unwrap());
     h.insert("x-frame-options", "DENY".parse().unwrap());
     h.insert("x-xss-protection", "1; mode=block".parse().unwrap());
-    h.insert("referrer-policy", "strict-origin-when-cross-origin".parse().unwrap());
-    h.insert("strict-transport-security", "max-age=63072000; includeSubDomains".parse().unwrap());
+    h.insert(
+        "referrer-policy",
+        "strict-origin-when-cross-origin".parse().unwrap(),
+    );
+    h.insert(
+        "strict-transport-security",
+        "max-age=63072000; includeSubDomains".parse().unwrap(),
+    );
     resp
 }
 

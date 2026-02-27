@@ -48,11 +48,19 @@ pub struct ApprovalRequest {
     pub arguments_summary: String,
     pub decision: ApprovalDecision,
     pub created_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_at_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_by: Option<String>,
 }
 
 impl ApprovalGate {
     pub fn new(policy: ApprovalPolicy) -> Self {
-        Self { policy, pending: Arc::new(RwLock::new(Vec::new())), auto_approve_all: false }
+        Self {
+            policy,
+            pending: Arc::new(RwLock::new(Vec::new())),
+            auto_approve_all: false,
+        }
     }
 
     pub fn auto_approve(mut self) -> Self {
@@ -84,51 +92,85 @@ impl ApprovalGate {
             arguments_summary: args.chars().take(200).collect(),
             decision: ApprovalDecision::Pending,
             created_at_ms: now,
+            resolved_at_ms: None,
+            resolved_by: None,
         };
         self.pending.write().await.push(req.clone());
         req
     }
 
     pub async fn approve(&self, id: &str) -> bool {
-        let mut pending = self.pending.write().await;
-        if let Some(req) = pending.iter_mut().find(|r| r.id == id) {
-            req.decision = ApprovalDecision::Approved;
-            true
-        } else {
-            false
-        }
+        self.resolve(id, ApprovalDecision::Approved, None).await
     }
 
     pub async fn deny(&self, id: &str) -> bool {
+        self.resolve(id, ApprovalDecision::Denied, None).await
+    }
+
+    pub async fn resolve(
+        &self,
+        id: &str,
+        decision: ApprovalDecision,
+        resolved_by: Option<String>,
+    ) -> bool {
         let mut pending = self.pending.write().await;
         if let Some(req) = pending.iter_mut().find(|r| r.id == id) {
-            req.decision = ApprovalDecision::Denied;
+            req.decision = decision;
+            if decision != ApprovalDecision::Pending {
+                req.resolved_at_ms = Some(Self::now_ms());
+                req.resolved_by = resolved_by;
+            } else {
+                req.resolved_at_ms = None;
+                req.resolved_by = None;
+            }
             true
         } else {
             false
         }
     }
 
+    pub async fn get_request(&self, id: &str) -> Option<ApprovalRequest> {
+        self.evict_expired_pending().await;
+        let pending = self.pending.read().await;
+        pending.iter().find(|r| r.id == id).cloned()
+    }
+
+    pub async fn list_requests(&self) -> Vec<ApprovalRequest> {
+        self.evict_expired_pending().await;
+        self.pending.read().await.clone()
+    }
+
     pub async fn pending_requests(&self) -> Vec<ApprovalRequest> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let mut pending = self.pending.write().await;
-        // Evict expired requests
-        pending.retain(|r| {
-            r.decision != ApprovalDecision::Pending
-                || now.saturating_sub(r.created_at_ms) < APPROVAL_TTL_MS
-        });
-        pending.iter()
+        self.evict_expired_pending().await;
+        let pending = self.pending.read().await;
+        pending
+            .iter()
             .filter(|r| r.decision == ApprovalDecision::Pending)
             .cloned()
             .collect()
     }
+
+    async fn evict_expired_pending(&self) {
+        let now = Self::now_ms();
+        let mut pending = self.pending.write().await;
+        pending.retain(|r| {
+            r.decision != ApprovalDecision::Pending
+                || now.saturating_sub(r.created_at_ms) < APPROVAL_TTL_MS
+        });
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
 }
 
 impl Default for ApprovalGate {
-    fn default() -> Self { Self::new(ApprovalPolicy::default()) }
+    fn default() -> Self {
+        Self::new(ApprovalPolicy::default())
+    }
 }
 
 impl Serialize for ApprovalDecision {

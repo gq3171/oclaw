@@ -34,7 +34,9 @@ impl SynologyChannel {
 }
 
 impl Default for SynologyChannel {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Clone for SynologyChannel {
@@ -50,11 +52,15 @@ impl Clone for SynologyChannel {
 
 #[async_trait]
 impl Channel for SynologyChannel {
-    fn channel_type(&self) -> &str { "synology" }
+    fn channel_type(&self) -> &str {
+        "synology"
+    }
 
     async fn connect(&mut self) -> ChannelResult<()> {
         self.status = ChannelStatus::Connecting;
-        let _url = self.server_url.as_ref()
+        let _url = self
+            .server_url
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Server URL not set".into()))?;
         self.client = Some(reqwest::Client::new());
         tracing::info!("Synology Chat channel connected to {}", _url);
@@ -69,38 +75,55 @@ impl Channel for SynologyChannel {
         Ok(())
     }
 
-    fn status(&self) -> ChannelStatus { self.status }
+    fn status(&self) -> ChannelStatus {
+        self.status
+    }
 
     async fn send_message(&self, message: &ChannelMessage) -> ChannelResult<String> {
         if self.status != ChannelStatus::Connected {
             return Err(ChannelError::ConnectionError("Not connected".into()));
         }
-        let base_url = self.server_url.as_ref()
+        let base_url = self
+            .server_url
+            .as_ref()
             .ok_or_else(|| ChannelError::ConfigError("Server URL not set".into()))?;
-        let token = self.token.as_ref()
+        let token = self
+            .token
+            .as_ref()
             .ok_or_else(|| ChannelError::AuthenticationError("Token not set".into()))?;
-        let client = self.client.as_ref()
+        let client = self
+            .client
+            .as_ref()
             .ok_or_else(|| ChannelError::ConnectionError("Client not initialized".into()))?;
 
         // Synology Chat incoming webhook
         let url = format!(
             "{}/webapi/entry.cgi?api=SYNO.Chat.External&method=incoming&version=2&token={}",
-            base_url.trim_end_matches('/'), token
+            base_url.trim_end_matches('/'),
+            token
         );
 
         let payload = serde_json::json!({
             "text": message.content
         });
 
-        let resp = client.post(&url)
-            .form(&[("payload", serde_json::to_string(&payload).unwrap_or_default())])
-            .send().await
+        let resp = client
+            .post(&url)
+            .form(&[(
+                "payload",
+                serde_json::to_string(&payload).unwrap_or_default(),
+            )])
+            .send()
+            .await
             .map_err(|e| ChannelError::MessageError(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(ChannelError::MessageError(format!("Synology API error ({}): {}", status, body)));
+            return Err(ChannelError::MessageError(format!(
+                "Synology API error ({}): {}",
+                status, body
+            )));
         }
 
         Ok(format!("synology_{}", uuid::Uuid::new_v4()))
@@ -116,14 +139,16 @@ impl Channel for SynologyChannel {
     }
 
     fn get_message_sender(&self) -> ChannelResult<Box<dyn MessageSender>> {
-        Ok(Box::new(SynologySender { channel: Arc::new(RwLock::new(self.clone())) }))
+        Ok(Box::new(SynologySender {
+            channel: Arc::new(RwLock::new(self.clone())),
+        }))
     }
 
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // Synology Chat: /text, /user_id or /channel_id
-        let text = payload.get("text")
-            .and_then(|v| v.as_str())?;
-        let chat_id = payload.get("user_id")
+        let text = payload.get("text").and_then(|v| v.as_str())?;
+        let chat_id = payload
+            .get("user_id")
             .or_else(|| payload.get("channel_id"))
             .and_then(|v| v.as_str())
             .unwrap_or("default");
@@ -142,7 +167,11 @@ struct SynologySender {
 }
 
 impl MessageSender for SynologySender {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>> {
         let channel = self.channel.clone();
         let content = content.to_string();
         Box::pin(async move {

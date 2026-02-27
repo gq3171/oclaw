@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::time::Duration;
 
 use crate::types::{ChannelCapabilities, ChannelMedia, ChatType, GroupInfo, PollRequest};
 
@@ -58,6 +59,7 @@ pub struct ChannelEvent {
 pub enum ChannelStatus {
     Disconnected,
     Connecting,
+    Reconnecting { attempt: u32, next_at_ms: u64 },
     Connected,
     Error,
 }
@@ -99,7 +101,10 @@ pub trait ChannelPlugin: Send + Sync {
         Ok(())
     }
 
-    async fn on_message(&self, _message: &ChannelMessage) -> Result<Option<ChannelMessage>, String> {
+    async fn on_message(
+        &self,
+        _message: &ChannelMessage,
+    ) -> Result<Option<ChannelMessage>, String> {
         Ok(None)
     }
 
@@ -112,25 +117,38 @@ pub trait ChannelPlugin: Send + Sync {
 #[async_trait]
 pub trait Channel: Send + Sync {
     fn channel_type(&self) -> &str;
-    
+
     async fn connect(&mut self) -> ChannelResult<()>;
-    
+
     async fn disconnect(&mut self) -> ChannelResult<()>;
-    
+
     fn status(&self) -> ChannelStatus;
-    
+
+    /// Optional heartbeat interval for background liveness checks.
+    fn heartbeat_interval(&self) -> Option<Duration> {
+        None
+    }
+
     async fn send_message(&self, message: &ChannelMessage) -> ChannelResult<String>;
-    
-    async fn send_message_with_attachments(&self, message: &ChannelMessageWithAttachments) -> ChannelResult<String> {
+
+    async fn send_message_with_attachments(
+        &self,
+        message: &ChannelMessageWithAttachments,
+    ) -> ChannelResult<String> {
         self.send_message(&message.message).await
     }
-    
+
     async fn send_typing_status(&self, _user_id: &str, _status: TypingStatus) -> ChannelResult<()> {
         Ok(())
     }
 
     /// Send a reaction (emoji) to a message. Default: no-op.
-    async fn send_reaction(&self, _message_id: &str, _emoji: &str, _metadata: &HashMap<String, String>) -> ChannelResult<()> {
+    async fn send_reaction(
+        &self,
+        _message_id: &str,
+        _emoji: &str,
+        _metadata: &HashMap<String, String>,
+    ) -> ChannelResult<()> {
         Ok(())
     }
 
@@ -158,7 +176,11 @@ pub trait Channel: Send + Sync {
     }
 
     /// Reply inside a thread.
-    async fn send_thread_reply(&self, _thread_id: &str, _message: &ChannelMessage) -> ChannelResult<String> {
+    async fn send_thread_reply(
+        &self,
+        _thread_id: &str,
+        _message: &ChannelMessage,
+    ) -> ChannelResult<String> {
         Err(ChannelError::UnsupportedOperation("threads".into()))
     }
 
@@ -202,13 +224,84 @@ pub trait Channel: Send + Sync {
         Err(ChannelError::UnsupportedOperation("polls".into()))
     }
 
+    /// List reactions of a message.
+    async fn list_reactions(
+        &self,
+        _target: Option<&str>,
+        _message_id: &str,
+        _limit: Option<usize>,
+    ) -> ChannelResult<serde_json::Value> {
+        Err(ChannelError::UnsupportedOperation("reactions".into()))
+    }
+
+    /// Read recent messages from a conversation.
+    async fn read_messages(
+        &self,
+        _target: &str,
+        _limit: Option<usize>,
+        _before: Option<&str>,
+        _after: Option<&str>,
+        _around: Option<&str>,
+    ) -> ChannelResult<serde_json::Value> {
+        Err(ChannelError::UnsupportedOperation("read".into()))
+    }
+
+    /// Search messages by query, optionally scoped to a target.
+    async fn search_messages(
+        &self,
+        _target: Option<&str>,
+        _query: &str,
+        _limit: Option<usize>,
+    ) -> ChannelResult<serde_json::Value> {
+        Err(ChannelError::UnsupportedOperation("search".into()))
+    }
+
+    /// Pin a message in a target conversation.
+    async fn pin_message(&self, _target: &str, _message_id: &str) -> ChannelResult<()> {
+        Err(ChannelError::UnsupportedOperation("pins".into()))
+    }
+
+    /// Unpin a message in a target conversation.
+    async fn unpin_message(&self, _target: &str, _message_id: &str) -> ChannelResult<()> {
+        Err(ChannelError::UnsupportedOperation("pins".into()))
+    }
+
+    /// List pinned messages in a target conversation.
+    async fn list_pins(
+        &self,
+        _target: &str,
+        _limit: Option<usize>,
+    ) -> ChannelResult<serde_json::Value> {
+        Err(ChannelError::UnsupportedOperation("pins".into()))
+    }
+
+    /// Fetch permission-related metadata for a target conversation.
+    async fn get_permissions(&self, _target: &str) -> ChannelResult<serde_json::Value> {
+        Err(ChannelError::UnsupportedOperation("permissions".into()))
+    }
+
+    /// Provider-specific advanced action bridge for channel admin operations.
+    async fn custom_action(
+        &self,
+        action: &str,
+        _target: Option<&str>,
+        _payload: &serde_json::Value,
+    ) -> ChannelResult<serde_json::Value> {
+        Err(ChannelError::UnsupportedOperation(format!(
+            "action:{}",
+            action
+        )))
+    }
+
     /// Parse an incoming webhook payload into a `WebhookMessage`.
     /// Each channel should override this to extract text and chat_id
     /// from its own platform-specific JSON format.
     /// Default implementation tries common field names.
     fn parse_webhook(&self, payload: &serde_json::Value) -> Option<WebhookMessage> {
         // Try common text fields
-        let text = payload.get("text").and_then(|v| v.as_str())
+        let text = payload
+            .get("text")
+            .and_then(|v| v.as_str())
             .or_else(|| payload.get("content").and_then(|v| v.as_str()))
             .or_else(|| payload.get("message").and_then(|v| v.as_str()))
             .or_else(|| payload.get("body").and_then(|v| v.as_str()))
@@ -216,7 +309,9 @@ pub trait Channel: Send + Sync {
             .or_else(|| payload.pointer("/data/text").and_then(|v| v.as_str()))?;
 
         // Try common chat_id fields
-        let chat_id = payload.get("chat_id").and_then(|v| v.as_str())
+        let chat_id = payload
+            .get("chat_id")
+            .and_then(|v| v.as_str())
             .or_else(|| payload.get("channel_id").and_then(|v| v.as_str()))
             .or_else(|| payload.get("room_id").and_then(|v| v.as_str()))
             .or_else(|| payload.get("conversation_id").and_then(|v| v.as_str()))
@@ -250,7 +345,11 @@ pub struct WebhookMessage {
 }
 
 pub trait MessageSender: Send + Sync {
-    fn send<'a>(&'a self, content: &'a str, metadata: HashMap<String, String>) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>>;
+    fn send<'a>(
+        &'a self,
+        content: &'a str,
+        metadata: HashMap<String, String>,
+    ) -> Pin<Box<dyn std::future::Future<Output = ChannelResult<String>> + Send + 'a>>;
 }
 
 #[derive(Debug)]

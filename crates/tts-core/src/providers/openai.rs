@@ -60,7 +60,8 @@ impl TtsProviderBackend for OpenAiTts {
             "response_format": "mp3"
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/audio/speech", self.base_url))
             .bearer_auth(&self.api_key)
             .json(&body)

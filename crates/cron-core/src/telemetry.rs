@@ -29,7 +29,8 @@ impl CronMetrics {
 
     pub fn record_run(&self, success: bool, duration_ms: u64) {
         self.total_runs.fetch_add(1, Ordering::Relaxed);
-        self.total_duration_ms.fetch_add(duration_ms, Ordering::Relaxed);
+        self.total_duration_ms
+            .fetch_add(duration_ms, Ordering::Relaxed);
         if success {
             self.successful_runs.fetch_add(1, Ordering::Relaxed);
         } else {
@@ -49,7 +50,11 @@ impl CronMetrics {
         let active = self.active_jobs.load(Ordering::Relaxed);
 
         let avg = if total > 0 { duration / total } else { 0 };
-        let rate = if total > 0 { successful as f64 / total as f64 } else { 0.0 };
+        let rate = if total > 0 {
+            successful as f64 / total as f64
+        } else {
+            0.0
+        };
 
         CronMetricsSnapshot {
             total_runs: total,
