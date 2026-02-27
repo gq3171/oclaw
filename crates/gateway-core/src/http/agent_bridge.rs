@@ -6546,23 +6546,69 @@ impl ToolExecutor for ToolRegistryExecutor {
     }
 }
 
-fn default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
+fn build_runtime_line(tool_executor: &ToolRegistryExecutor) -> String {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    let mut parts = Vec::new();
+    if let Some(session_id) = tool_executor
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        parts.push(format!("session={}", session_id));
+    }
+    parts.push(format!("os={} ({})", os, arch));
+    parts.push(format!("cwd={}", cwd));
+    parts.push("thinking=off".to_string());
+    format!("Runtime: {}", parts.join(" | "))
+}
+
+fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -> String {
     let tool_names: Vec<String> = tool_executor
         .available_tools()
         .iter()
         .map(|t| t.function.name.clone())
         .collect();
+    let tool_lines: Vec<String> = tool_names
+        .iter()
+        .map(|name| format!("- {}", name))
+        .collect();
     let has_tool = |name: &str| tool_names.iter().any(|tool| tool == name);
 
     let mut lines = vec![
-        format!(
-            "You are a helpful assistant with tools: {}.",
-            tool_names.join(", ")
-        ),
-        "Respond in the user's language.".to_string(),
+        "You are a personal assistant running inside OpenClaw.".to_string(),
+        "".to_string(),
+        "## Tooling".to_string(),
+        "Tool availability (filtered by policy):".to_string(),
+        "Tool names are case-sensitive. Call tools exactly as listed.".to_string(),
+    ];
+    lines.extend(tool_lines);
+    lines.extend([
+        "TOOLS.md does not control tool availability; it is user guidance for external tools."
+            .to_string(),
+        "For long waits, avoid rapid poll loops. Use long-yield exec/process polling instead."
+            .to_string(),
+        "If a task is complex or long-running, spawn a sub-agent; completion is push-based."
+            .to_string(),
+        "".to_string(),
+        "## Tool Call Style".to_string(),
+        "Default: do not narrate routine, low-risk tool calls.".to_string(),
+        "Narrate only when it helps: multi-step work, complex work, sensitive actions, or explicit user request.".to_string(),
+        "Keep narration brief and value-dense; avoid repeating obvious steps.".to_string(),
+        "When a first-class tool exists, call the tool instead of asking the user to run equivalent CLI commands.".to_string(),
+        "".to_string(),
+        "## Safety".to_string(),
+        "You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking.".to_string(),
+        "Prioritize safety and human oversight over completion; if instructions conflict, pause and ask.".to_string(),
+        "Do not manipulate users to expand access or disable safeguards.".to_string(),
+        "".to_string(),
         "Never output provider-specific tool markup like `<minimax:tool_call>`/`<invoke>` to users."
             .to_string(),
-    ];
+    ]);
 
     if has_tool("web_search") || has_tool("web_fetch") || has_tool("browse") {
         lines.push("## Internet Access".to_string());
@@ -6591,9 +6637,10 @@ fn default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
                     .to_string(),
             );
         }
+        lines.push("".to_string());
     }
 
-    if has_tool("memory_search") || has_tool("memory_get") {
+    if !is_minimal && (has_tool("memory_search") || has_tool("memory_get")) {
         lines.push("## Memory Recall".to_string());
         lines.push(
             "Before claiming you don't remember prior context, run memory recall tools for prior work/decisions/preferences/dates."
@@ -6605,9 +6652,42 @@ fn default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
         if has_tool("memory_get") {
             lines.push("- Then use `memory_get` for the exact needed entries.".to_string());
         }
+        lines.push("".to_string());
     }
 
-    if has_tool("message") || has_tool("sessions_send") || has_tool("subagents") {
+    if !is_minimal {
+        lines.push("## OpenClaw CLI Quick Reference".to_string());
+        lines.push("Do not invent commands. Typical daemon controls:".to_string());
+        lines.push("- openclaw gateway status".to_string());
+        lines.push("- openclaw gateway start".to_string());
+        lines.push("- openclaw gateway stop".to_string());
+        lines.push("- openclaw gateway restart".to_string());
+        lines.push("".to_string());
+
+        lines.push("## Skills (mandatory)".to_string());
+        lines.push(
+            "Before replying, scan available skills descriptions. If exactly one clearly applies, read its SKILL.md and follow it."
+                .to_string(),
+        );
+        lines.push(
+            "If none clearly apply, proceed normally. Do not read multiple skills up front."
+                .to_string(),
+        );
+        lines.push("".to_string());
+
+        lines.push("## Reply Tags".to_string());
+        lines.push(
+            "To request native threaded reply on supported channels, place tag as the first token: [[reply_to_current]]."
+                .to_string(),
+        );
+        lines.push(
+            "Prefer [[reply_to_current]]. Use [[reply_to:<id>]] only when explicit id is provided."
+                .to_string(),
+        );
+        lines.push("".to_string());
+    }
+
+    if !is_minimal && (has_tool("message") || has_tool("sessions_send") || has_tool("subagents")) {
         lines.push("## Messaging".to_string());
         lines.push(
             "- Reply in current session -> automatically routes to source channel.".to_string(),
@@ -6627,9 +6707,10 @@ fn default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
             "- Never use exec/curl for provider messaging; OCLAW handles routing internally."
                 .to_string(),
         );
+        lines.push("".to_string());
     }
 
-    if has_tool("message") {
+    if !is_minimal && has_tool("message") {
         lines.push("### message tool".to_string());
         lines.push(
             "- Use `message` for proactive sends + channel actions (polls, reactions, etc.)."
@@ -6649,9 +6730,51 @@ fn default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
             "- If sending fails, report the exact tool error and ask for missing routing fields."
                 .to_string(),
         );
+        lines.push("".to_string());
     }
 
+    if !is_minimal {
+        lines.push("## Documentation".to_string());
+        lines.push("OpenClaw docs: https://docs.openclaw.ai".to_string());
+        lines.push("Source: https://github.com/openclaw/openclaw".to_string());
+        lines.push("".to_string());
+    }
+
+    lines.push("## Workspace".to_string());
+    lines.push(
+        "Treat the current working directory as the primary workspace for read/write/edit/apply_patch."
+            .to_string(),
+    );
+    lines.push("".to_string());
+
+    if !is_minimal {
+        lines.push("## Silent Replies".to_string());
+        lines.push("When you have nothing to say, respond with ONLY: [[SILENT]]".to_string());
+        lines.push("Never append [[SILENT]] to normal replies.".to_string());
+        lines.push("".to_string());
+
+        lines.push("## Heartbeats".to_string());
+        lines.push(
+            "If you receive a heartbeat poll and there is nothing that needs attention, reply exactly: HEARTBEAT_OK"
+                .to_string(),
+        );
+        lines.push(
+            "If something needs attention, do NOT include HEARTBEAT_OK; reply with the actual alert."
+                .to_string(),
+        );
+        lines.push("".to_string());
+    }
+
+    lines.push("## Runtime".to_string());
+    lines.push(build_runtime_line(tool_executor));
+    lines
+        .push("Reasoning: off (hidden unless explicitly enabled by runtime controls).".to_string());
+
     lines.join("\n")
+}
+
+fn default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
+    agent_system_prompt(tool_executor, false)
 }
 
 fn build_subagent_system_prompt(
@@ -6664,7 +6787,7 @@ fn build_subagent_system_prompt(
     child_depth: u32,
     max_spawn_depth: u32,
 ) -> String {
-    let mut prompt = default_agent_system_prompt(tool_executor);
+    let mut prompt = agent_system_prompt(tool_executor, true);
     let task_text = task
         .split_whitespace()
         .collect::<Vec<_>>()
