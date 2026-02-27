@@ -187,8 +187,8 @@ impl Tool {
             Tool::Browse(_) => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["navigate", "click", "type", "screenshot", "evaluate", "snapshot", "console", "network", "back", "forward", "reload"], "description": "Browser action to perform (default: navigate)" },
-                    "url": { "type": "string", "description": "URL to navigate to (for navigate action)" },
+                    "action": { "type": "string", "enum": ["open", "navigate", "click", "type", "screenshot", "evaluate", "snapshot", "console", "network", "back", "forward", "reload"], "description": "Browser action to perform (default: navigate). 'open' is an alias of navigate." },
+                    "url": { "type": "string", "description": "URL to open/navigate to (for open/navigate action)" },
                     "selector": { "type": "string", "description": "CSS selector (for click/type actions)" },
                     "text": { "type": "string", "description": "Text to type (for type action)" },
                     "expression": { "type": "string", "description": "JavaScript expression (for evaluate action)" },
@@ -1617,6 +1617,26 @@ impl BrowseTool {
 
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| crate::ToolError::InvalidInput(e.to_string()))?;
+        let action = match args.action.trim().to_ascii_lowercase().as_str() {
+            "open" | "goto" | "go_to" | "open_url" | "url" => "navigate",
+            "navigate" => "navigate",
+            "click" => "click",
+            "type" => "type",
+            "screenshot" => "screenshot",
+            "evaluate" => "evaluate",
+            "snapshot" => "snapshot",
+            "console" => "console",
+            "network" => "network",
+            "back" => "back",
+            "forward" => "forward",
+            "reload" => "reload",
+            other => {
+                return Err(crate::ToolError::InvalidInput(format!(
+                    "Unknown action: {}",
+                    other
+                )));
+            }
+        };
 
         let mut manager = self.ensure_browser().await?;
         let mut page = manager.create_page().await.map_err(|e| {
@@ -1626,7 +1646,7 @@ impl BrowseTool {
         let wait = args.wait_ms.unwrap_or(1000);
         let mut state = self.state.lock().unwrap().clone();
 
-        let result = match args.action.as_str() {
+        let result: ToolResult<serde_json::Value> = match action {
             "navigate" => {
                 let url = args.url.as_deref().ok_or_else(|| {
                     crate::ToolError::InvalidInput("url required for navigate".into())
@@ -1642,7 +1662,9 @@ impl BrowseTool {
                 let max_len = 8000;
                 let truncated = text.len() > max_len;
                 let content = if truncated { &text[..max_len] } else { &text };
-                serde_json::json!({ "action": "navigate", "url": url, "title": title, "content": content, "truncated": truncated })
+                Ok(
+                    serde_json::json!({ "action": "navigate", "url": url, "title": title, "content": content, "truncated": truncated }),
+                )
             }
             "click" => {
                 let sel = args.selector.as_deref().ok_or_else(|| {
@@ -1652,7 +1674,7 @@ impl BrowseTool {
                     crate::ToolError::ExecutionFailed(format!("Click failed: {}", e))
                 })?;
                 tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
-                serde_json::json!({ "action": "click", "selector": sel, "ok": true })
+                Ok(serde_json::json!({ "action": "click", "selector": sel, "ok": true }))
             }
             "type" => {
                 let sel = args.selector.as_deref().ok_or_else(|| {
@@ -1664,7 +1686,7 @@ impl BrowseTool {
                 page.type_text(sel, text).await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Type failed: {}", e))
                 })?;
-                serde_json::json!({ "action": "type", "selector": sel, "ok": true })
+                Ok(serde_json::json!({ "action": "type", "selector": sel, "ok": true }))
             }
             "screenshot" => {
                 let bytes = page.take_screenshot().await.map_err(|e| {
@@ -1672,7 +1694,9 @@ impl BrowseTool {
                 })?;
                 use base64::Engine;
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                serde_json::json!({ "action": "screenshot", "base64": b64, "size_bytes": bytes.len() })
+                Ok(
+                    serde_json::json!({ "action": "screenshot", "base64": b64, "size_bytes": bytes.len() }),
+                )
             }
             "evaluate" => {
                 let expr = args.expression.as_deref().ok_or_else(|| {
@@ -1681,7 +1705,7 @@ impl BrowseTool {
                 let result = page.evaluate(expr).await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Evaluate failed: {}", e))
                 })?;
-                serde_json::json!({ "action": "evaluate", "result": result.value })
+                Ok(serde_json::json!({ "action": "evaluate", "result": result.value }))
             }
             "snapshot" => {
                 let html = page.get_html().await.unwrap_or_default();
@@ -1690,50 +1714,53 @@ impl BrowseTool {
                 let max_len = 12000;
                 let truncated = html.len() > max_len;
                 let content = if truncated { &html[..max_len] } else { &html };
-                serde_json::json!({ "action": "snapshot", "url": url, "title": title, "html": content, "html_length": html.len(), "truncated": truncated })
+                Ok(
+                    serde_json::json!({ "action": "snapshot", "url": url, "title": title, "html": content, "html_length": html.len(), "truncated": truncated }),
+                )
             }
             "console" => {
                 let entries: Vec<_> = state.recent_console(50).into_iter().cloned().collect();
-                serde_json::json!({ "action": "console", "entries": entries, "count": entries.len() })
+                Ok(
+                    serde_json::json!({ "action": "console", "entries": entries, "count": entries.len() }),
+                )
             }
             "network" => {
                 let entries: Vec<_> = state.recent_requests(50).into_iter().cloned().collect();
-                serde_json::json!({ "action": "network", "entries": entries, "count": entries.len() })
+                Ok(
+                    serde_json::json!({ "action": "network", "entries": entries, "count": entries.len() }),
+                )
             }
             "back" => {
                 page.go_back().await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Back failed: {}", e))
                 })?;
                 tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
-                serde_json::json!({ "action": "back", "ok": true })
+                Ok(serde_json::json!({ "action": "back", "ok": true }))
             }
             "forward" => {
                 page.go_forward().await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Forward failed: {}", e))
                 })?;
                 tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
-                serde_json::json!({ "action": "forward", "ok": true })
+                Ok(serde_json::json!({ "action": "forward", "ok": true }))
             }
             "reload" => {
                 page.reload().await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Reload failed: {}", e))
                 })?;
                 tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
-                serde_json::json!({ "action": "reload", "ok": true })
+                Ok(serde_json::json!({ "action": "reload", "ok": true }))
             }
-            other => {
-                return Err(crate::ToolError::InvalidInput(format!(
-                    "Unknown action: {}",
-                    other
-                )));
-            }
+            _ => Err(crate::ToolError::InvalidInput(
+                "Unknown action after normalization".into(),
+            )),
         };
 
         *self.state.lock().unwrap() = state;
         page.close().await.ok();
         manager.disconnect().await.ok();
 
-        Ok(result)
+        result
     }
 }
 
