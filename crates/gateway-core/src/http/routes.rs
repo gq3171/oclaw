@@ -962,7 +962,10 @@ pub async fn config_reload_handler() -> impl IntoResponse {
 
 pub async fn models_list_handler(State(state): State<Arc<HttpState>>) -> impl IntoResponse {
     let models = match &state.llm_provider {
-        Some(p) => p.supported_models(),
+        Some(p) => p
+            .list_models()
+            .await
+            .unwrap_or_else(|_| p.supported_models()),
         None => vec![],
     };
     Json(serde_json::json!({ "models": models }))
@@ -1166,7 +1169,7 @@ exportOk:'Config exported',importOk:'Config imported',importErr:'Invalid config 
 export:'Export',import:'Import',
 nav:{gateway:'Gateway',models:'Models',channels:'Channels',session:'Session',browser:'Browser',cron:'Cron Jobs',memory:'Memory',logging:'Logging',advanced:'Advanced'},
 navDesc:{gateway:'Server, auth, TLS, proxy',models:'LLM providers and fallback',channels:'Messaging integrations',session:'History and compaction',browser:'Browser automation',cron:'Scheduled tasks',memory:'Memory and embeddings',logging:'Log levels and output',advanced:'Diagnostics, voice, plugins'},
-providerTypes:['anthropic','openai','google','cohere','ollama','bedrock','openrouter','together','minimax'],
+providerTypes:['anthropic','openai','google','cohere','ollama','vllm','litellm','bedrock','openrouter','together','minimax'],
 channelNames:{webchat:'Webchat',whatsapp:'WhatsApp',telegram:'Telegram',discord:'Discord',slack:'Slack',signal:'Signal',line:'LINE',matrix:'Matrix',nostr:'Nostr',irc:'IRC',google_chat:'Google Chat',mattermost:'Mattermost',feishu:'Feishu',msteams:'MS Teams',twitch:'Twitch',zalo:'Zalo',nextcloud:'Nextcloud',synology:'Synology',bluebubbles:'BlueBubbles'},
 },zh:{
 title:'OpenClaw 配置管理',save:'保存',saving:'保存中...',saved:'配置已保存',
@@ -1179,7 +1182,7 @@ exportOk:'配置已导出',importOk:'配置已导入',importErr:'无效的配置
 export:'导出',import:'导入',
 nav:{gateway:'网关',models:'模型',channels:'频道',session:'会话',browser:'浏览器',cron:'定时任务',memory:'记忆',logging:'日志',advanced:'高级设置'},
 navDesc:{gateway:'服务器、认证、TLS、代理',models:'LLM 供应商与降级链',channels:'消息平台集成',session:'历史记录与压缩',browser:'浏览器自动化',cron:'定时任务调度',memory:'记忆与向量搜索',logging:'日志级别与输出',advanced:'诊断、语音、插件'},
-providerTypes:['anthropic','openai','google','cohere','ollama','bedrock','openrouter','together','minimax'],
+providerTypes:['anthropic','openai','google','cohere','ollama','vllm','litellm','bedrock','openrouter','together','minimax'],
 channelNames:{webchat:'网页聊天',whatsapp:'WhatsApp',telegram:'Telegram',discord:'Discord',slack:'Slack',signal:'Signal',line:'LINE',matrix:'Matrix',nostr:'Nostr',irc:'IRC',google_chat:'Google Chat',mattermost:'Mattermost',feishu:'飞书',msteams:'MS Teams',twitch:'Twitch',zalo:'Zalo',nextcloud:'Nextcloud',synology:'Synology',bluebubbles:'BlueBubbles'},
 labels:{
 'Server':'服务器','Authentication':'认证','TLS / HTTPS':'TLS / HTTPS','Control UI':'控制面板','Tailscale':'Tailscale',
@@ -1191,7 +1194,7 @@ labels:{
 'Auth Mode':'认证模式','Token':'令牌','Password':'密码','Allow Tailscale':'允许 Tailscale',
 'Enable TLS':'启用 TLS','Auto-generate Certificate':'自动生成证书','Certificate Path':'证书路径','Key Path':'密钥路径','CA Path':'CA 路径',
 'Enable Control UI':'启用控制面板','Base Path':'基础路径','Allowed Origins':'允许的来源','Reset on Exit':'退出时重置',
-'Provider Type':'供应商类型','API Key':'API 密钥','Base URL':'基础 URL','Default Model':'默认模型',
+'Provider Type':'供应商类型','Default Provider':'默认供应商','API Key':'API 密钥','Base URL':'基础 URL','Default Model':'默认模型',
 'Max Tokens':'最大令牌数','Temperature':'温度','Max Concurrency':'最大并发数','Fallback Chain':'降级链',
 'Enable Fallback':'启用降级','Cooldown (seconds)':'冷却时间（秒）','Retry Delay (ms)':'重试延迟（毫秒）',
 'Username':'用户名','Bot Token':'机器人令牌','API URL':'API 地址','Guild ID':'服务器 ID','Channel IDs':'频道 ID',
@@ -1209,7 +1212,7 @@ labels:{
 'Enable Compaction':'启用压缩','Reserve Tokens':'保留令牌数','Keep Recent Tokens':'保留最近令牌数',
 'Enable Pruning':'启用裁剪','Soft Trim Max Chars':'软裁剪最大字符数','Hard Clear Max Chars':'硬清除最大字符数','Keep Last N Assistants':'保留最近 N 条助手消息',
 'Idle Reset (minutes)':'空闲重置（分钟）',
-'Enable Browser':'启用浏览器','Headless Mode':'无头模式','No Sandbox':'无沙箱','Attach Only':'仅附加','Enable Evaluate':'启用执行',
+'Enable Browser':'启用浏览器','Headless Mode':'无头模式','Foreground Window':'前台窗口','No Sandbox':'无沙箱','Attach Only':'仅附加','Enable Evaluate':'启用执行',
 'CDP URL':'CDP 地址','Executable Path':'可执行文件路径','Remote CDP Timeout (ms)':'远程 CDP 超时（毫秒）','Default Profile':'默认配置',
 'Allow Private Network':'允许私有网络','Allowed Hostnames':'允许的主机名',
 'Enable Cron':'启用定时任务','Store Path':'存储路径','Max Concurrent Runs':'最大并发数','Webhook Token':'Webhook 令牌',
@@ -1428,6 +1431,8 @@ pgTitle(pg,'models');
 if(!cfg.models)cfg.models={};
 if(!cfg.models.providers)cfg.models.providers={};
 const providers=cfg.models.providers;
+const providerNames=Object.keys(providers).sort();
+pg.appendChild(mkInput('models.defaultProvider','Default Provider','select',{options:[''].concat(providerNames)}));
 const grid=document.createElement('div');grid.className='provider-grid';
 for(const[name,prov] of Object.entries(providers)){
 const c=document.createElement('div');c.className='card';
@@ -1436,7 +1441,7 @@ const ct2=document.createElement('div');ct2.className='card-title';ct2.textConte
 const badge=document.createElement('span');badge.className='card-badge on';badge.textContent=prov.provider||'unknown';
 const spacer=document.createElement('div');spacer.style.flex='1';
 const delBtn=document.createElement('button');delBtn.className='btn btn-danger';delBtn.textContent=t('removeProvider');delBtn.style.fontSize='11px';delBtn.style.padding='4px 10px';
-delBtn.onclick=()=>{delete providers[name];renderAll()};
+delBtn.onclick=()=>{delete providers[name];if(cfg.models.defaultProvider===name)cfg.models.defaultProvider='';renderAll()};
 ch2.appendChild(ct2);ch2.appendChild(badge);ch2.appendChild(spacer);ch2.appendChild(delBtn);c.appendChild(ch2);
 const base='models.providers.'+name;
 c.appendChild(mkInput(base+'.provider','Provider Type','select',{options:t('providerTypes')}));
@@ -1460,7 +1465,9 @@ addBtn.onclick=()=>showModal(t('addProvider'),[
 ],vals=>{
 if(!vals.name)return false;
 if(providers[vals.name]){toast(t('providerName')+(lang==='zh'?' 已存在':' exists'),false);return false}
-providers[vals.name]={provider:vals.type||'openai'};renderAll();return true;
+providers[vals.name]={provider:vals.type||'openai'};
+if(!cfg.models.defaultProvider)cfg.models.defaultProvider=vals.name;
+renderAll();return true;
 });
 pg.appendChild(addBtn);
 // Fallback settings
@@ -1574,6 +1581,7 @@ const ch=document.createElement('div');ch.className='card-header';
 const ct=document.createElement('div');ct.className='card-title';ct.textContent=tl('Browser Automation');c.appendChild(ch);ch.appendChild(ct);
 c.appendChild(mkInput('browser.enabled','Enable Browser','toggle'));
 c.appendChild(mkInput('browser.headless','Headless Mode','toggle'));
+c.appendChild(mkInput('browser.foreground','Foreground Window','toggle'));
 c.appendChild(mkInput('browser.noSandbox','No Sandbox','toggle'));
 c.appendChild(mkInput('browser.attachOnly','Attach Only','toggle'));
 c.appendChild(mkInput('browser.evaluateEnabled','Enable Evaluate','toggle'));

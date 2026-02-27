@@ -690,6 +690,7 @@ impl ToolRegistry {
         cdp_url: Option<&str>,
         executable_path: Option<&str>,
         headless: Option<bool>,
+        foreground: Option<bool>,
     ) {
         let mut browse = BrowseTool::new();
         if let Some(url) = cdp_url {
@@ -700,6 +701,9 @@ impl ToolRegistry {
         }
         if let Some(h) = headless {
             browse.headless = Some(h);
+        }
+        if let Some(fg) = foreground {
+            browse.foreground = Some(fg);
         }
         self.tools
             .insert("browse".to_string(), Tool::Browse(browse));
@@ -1382,6 +1386,8 @@ pub struct BrowseTool {
     pub cdp_url: Option<String>,
     pub executable_path: Option<String>,
     pub headless: Option<bool>,
+    /// Whether to launch a visible foreground browser window when auto-launching.
+    pub foreground: Option<bool>,
     pub timeout_seconds: u64,
     /// Track a child browser process we launched (PID).
     #[serde(skip)]
@@ -1397,6 +1403,7 @@ impl BrowseTool {
             cdp_url: None,
             executable_path: None,
             headless: None,
+            foreground: None,
             timeout_seconds: 30,
             launched_pid: Default::default(),
             state: Default::default(),
@@ -1415,6 +1422,11 @@ impl BrowseTool {
 
     pub fn with_headless(mut self, headless: bool) -> Self {
         self.headless = Some(headless);
+        self
+    }
+
+    pub fn with_foreground(mut self, foreground: bool) -> Self {
+        self.foreground = Some(foreground);
         self
     }
 
@@ -1481,8 +1493,13 @@ impl BrowseTool {
 
         let mut cmd = tokio::process::Command::new(&exe);
         cmd.arg(format!("--remote-debugging-port={}", port));
-        if self.headless.unwrap_or(false) {
+        let headless = self.headless.unwrap_or(false);
+        let foreground = self.foreground.unwrap_or(!headless);
+        if headless {
             cmd.arg("--headless=new");
+        } else if foreground {
+            // Force a visible window for interactive debugging.
+            cmd.arg("--new-window");
         }
         cmd.arg("--no-first-run");
         cmd.arg("--no-default-browser-check");
@@ -1497,7 +1514,9 @@ impl BrowseTool {
         cmd.arg("about:blank");
 
         #[cfg(windows)]
-        cmd.creation_flags(0x00000008); // DETACHED_PROCESS
+        if !foreground {
+            cmd.creation_flags(0x00000008); // DETACHED_PROCESS
+        }
         let child = cmd
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

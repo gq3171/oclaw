@@ -11,6 +11,7 @@ pub mod google;
 pub mod huggingface;
 pub mod litellm;
 pub(crate) mod media_markdown;
+pub mod minimax;
 pub mod mock;
 pub mod moonshot;
 pub mod ollama;
@@ -31,6 +32,7 @@ pub use copilot::CopilotProvider;
 pub use google::GoogleProvider;
 pub use huggingface::HuggingFaceProvider;
 pub use litellm::LitellmProvider;
+pub use minimax::MinimaxProvider;
 pub use mock::MockLlmProvider;
 pub use moonshot::MoonshotProvider;
 pub use ollama::OllamaProvider;
@@ -77,6 +79,7 @@ pub enum ProviderType {
     Cloudflare,
     Litellm,
     Copilot,
+    Minimax,
 }
 impl FromStr for ProviderType {
     type Err = String;
@@ -100,6 +103,7 @@ impl FromStr for ProviderType {
             "cloudflare" | "cf" => Ok(Self::Cloudflare),
             "litellm" => Ok(Self::Litellm),
             "copilot" | "github-copilot" => Ok(Self::Copilot),
+            "minimax" | "minimax-cn" | "mini-max" => Ok(Self::Minimax),
             other => Err(format!("Unknown provider: {other}")),
         }
     }
@@ -165,6 +169,9 @@ impl LlmFactory {
             ProviderType::Cloudflare => Ok(Box::new(CloudflareProvider::new(api_key, base_url)?)),
             ProviderType::Litellm => Ok(Box::new(LitellmProvider::new(Some(api_key), base_url)?)),
             ProviderType::Copilot => Ok(Box::new(CopilotProvider::new(api_key, defaults)?)),
+            ProviderType::Minimax => {
+                Ok(Box::new(MinimaxProvider::new(api_key, base_url, defaults)?))
+            }
         }
     }
 }

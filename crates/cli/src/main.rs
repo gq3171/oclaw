@@ -427,6 +427,7 @@ async fn main() -> anyhow::Result<()> {
                     browser.cdp_url.as_deref(),
                     browser.executable_path.as_deref(),
                     browser.headless,
+                    browser.foreground,
                 );
             }
             // Configure workspace tool if workspace path is resolvable
@@ -1577,14 +1578,390 @@ fn init_otel_tracing(
     provider
 }
 
-fn create_llm_provider(config: &Config) -> Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>> {
-    let models = config.models.as_ref()?;
-    let providers = models.providers.as_ref()?;
-    let (name, p) = providers.iter().next()?;
-    let provider_type = p
+fn llm_provider_selection_order(
+    models: &oclaw_config::settings::ModelsConfig,
+    env_default_provider: Option<&str>,
+) -> Vec<String> {
+    let Some(providers) = models.providers.as_ref() else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = providers.keys().cloned().collect();
+    names.sort();
+
+    let mut preferred = Vec::new();
+    if let Some(v) = env_default_provider {
+        let name = v.trim();
+        if !name.is_empty() {
+            preferred.push(name.to_string());
+        }
+    }
+    if let Some(default_name) = models
+        .default_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        preferred.push(default_name.to_string());
+    }
+    preferred.push("default".to_string());
+
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for name in preferred.into_iter().chain(names.into_iter()) {
+        if providers.contains_key(&name) && seen.insert(name.clone()) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+fn provider_requires_api_key(
+    provider_type: oclaw_llm_core::providers::ProviderType,
+    base_url: Option<&str>,
+) -> bool {
+    match provider_type {
+        oclaw_llm_core::providers::ProviderType::Ollama
+        | oclaw_llm_core::providers::ProviderType::Vllm
+        | oclaw_llm_core::providers::ProviderType::Litellm => false,
+        oclaw_llm_core::providers::ProviderType::OpenAi => {
+            let Some(url) = base_url.map(str::trim).filter(|s| !s.is_empty()) else {
+                return true;
+            };
+            let lower = url.to_ascii_lowercase();
+            let local_hint = lower.starts_with("http://")
+                || lower.contains("localhost")
+                || lower.contains("127.0.0.1")
+                || lower.contains("0.0.0.0");
+            !local_hint
+        }
+        _ => true,
+    }
+}
+
+#[derive(Clone)]
+struct ResolvedLlmProviderEntry {
+    name: String,
+    provider_kind: String,
+    model_override: Option<String>,
+    provider: Arc<dyn oclaw_llm_core::providers::LlmProvider>,
+}
+
+struct FallbackLlmProvider {
+    primary: ResolvedLlmProviderEntry,
+    fallbacks: Vec<ResolvedLlmProviderEntry>,
+    cooldowns: std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+    cooldown_secs: u64,
+    retry_delay_ms: u64,
+}
+
+impl FallbackLlmProvider {
+    fn new(
+        primary: ResolvedLlmProviderEntry,
+        fallbacks: Vec<ResolvedLlmProviderEntry>,
+        cooldown_secs: u64,
+        retry_delay_ms: u64,
+    ) -> Self {
+        Self {
+            primary,
+            fallbacks,
+            cooldowns: std::sync::Mutex::new(std::collections::HashMap::new()),
+            cooldown_secs,
+            retry_delay_ms,
+        }
+    }
+
+    fn split_targeted_model(model: &str) -> Option<(String, String)> {
+        let trimmed = model.trim();
+        let (target, target_model) = trimmed.split_once('/')?;
+        let target = target.trim();
+        let target_model = target_model.trim();
+        if target.is_empty() || target_model.is_empty() {
+            return None;
+        }
+        Some((target.to_string(), target_model.to_string()))
+    }
+
+    fn matches_target(entry: &ResolvedLlmProviderEntry, target: &str) -> bool {
+        entry.name.eq_ignore_ascii_case(target) || entry.provider_kind.eq_ignore_ascii_case(target)
+    }
+
+    fn is_cooled_down(&self, key: &str) -> bool {
+        let guard = self.cooldowns.lock().unwrap();
+        guard
+            .get(key)
+            .is_none_or(|t| t.elapsed().as_secs() >= self.cooldown_secs)
+    }
+
+    fn mark_failed(&self, key: &str) {
+        self.cooldowns
+            .lock()
+            .unwrap()
+            .insert(key.to_string(), std::time::Instant::now());
+    }
+
+    fn clear_failed(&self, key: &str) {
+        self.cooldowns.lock().unwrap().remove(key);
+    }
+
+    fn model_for_entry(
+        &self,
+        incoming_model: &str,
+        entry: &ResolvedLlmProviderEntry,
+        target: Option<(&str, &str)>,
+    ) -> String {
+        if let Some((target_name, target_model)) = target
+            && Self::matches_target(entry, target_name)
+        {
+            return target_model.to_string();
+        }
+
+        let incoming = incoming_model.trim();
+        let use_entry_default =
+            incoming.is_empty() || incoming.eq_ignore_ascii_case("default") || target.is_some();
+        if use_entry_default {
+            return entry
+                .model_override
+                .clone()
+                .filter(|m| !m.trim().is_empty())
+                .unwrap_or_else(|| entry.provider.default_model().to_string());
+        }
+        incoming.to_string()
+    }
+
+    fn ordered_entries_for_request(&self, incoming_model: &str) -> Vec<&ResolvedLlmProviderEntry> {
+        let mut entries = Vec::with_capacity(1 + self.fallbacks.len());
+        entries.push(&self.primary);
+        for entry in &self.fallbacks {
+            entries.push(entry);
+        }
+
+        if let Some((target, _)) = Self::split_targeted_model(incoming_model)
+            && let Some(pos) = entries
+                .iter()
+                .position(|entry| Self::matches_target(entry, &target))
+            && pos != 0
+        {
+            let target_entry = entries.remove(pos);
+            entries.insert(0, target_entry);
+        }
+        entries
+    }
+}
+
+#[async_trait::async_trait]
+impl oclaw_llm_core::providers::LlmProvider for FallbackLlmProvider {
+    fn provider_type(&self) -> oclaw_llm_core::providers::ProviderType {
+        self.primary.provider.provider_type()
+    }
+
+    async fn chat(
+        &self,
+        request: oclaw_llm_core::chat::ChatRequest,
+    ) -> oclaw_llm_core::error::LlmResult<oclaw_llm_core::chat::ChatCompletion> {
+        let target = Self::split_targeted_model(&request.model);
+        let mut last_err: Option<oclaw_llm_core::error::LlmError> = None;
+
+        let entries = self.ordered_entries_for_request(&request.model);
+        for (idx, entry) in entries.iter().enumerate() {
+            if !self.is_cooled_down(&entry.name) {
+                continue;
+            }
+            let mut req = request.clone();
+            req.model = self.model_for_entry(
+                &request.model,
+                entry,
+                target.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
+            );
+
+            match entry.provider.chat(req).await {
+                Ok(resp) => {
+                    self.clear_failed(&entry.name);
+                    if idx > 0 {
+                        info!("LLM fallback succeeded on provider '{}'", entry.name);
+                    }
+                    return Ok(resp);
+                }
+                Err(err) => {
+                    warn!("LLM provider '{}' failed: {}", entry.name, err);
+                    self.mark_failed(&entry.name);
+                    last_err = Some(err);
+                    if idx + 1 < entries.len() && self.retry_delay_ms > 0 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(self.retry_delay_ms))
+                            .await;
+                    }
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| {
+            oclaw_llm_core::error::LlmError::ApiError("No fallback provider available".to_string())
+        }))
+    }
+
+    async fn chat_stream(
+        &self,
+        request: oclaw_llm_core::chat::ChatRequest,
+    ) -> oclaw_llm_core::error::LlmResult<
+        tokio::sync::mpsc::Receiver<
+            oclaw_llm_core::error::LlmResult<oclaw_llm_core::chat::StreamChunk>,
+        >,
+    > {
+        let target = Self::split_targeted_model(&request.model);
+        let mut last_err: Option<oclaw_llm_core::error::LlmError> = None;
+
+        let entries = self.ordered_entries_for_request(&request.model);
+        for (idx, entry) in entries.iter().enumerate() {
+            if !self.is_cooled_down(&entry.name) {
+                continue;
+            }
+            let mut req = request.clone();
+            req.model = self.model_for_entry(
+                &request.model,
+                entry,
+                target.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
+            );
+
+            match entry.provider.chat_stream(req).await {
+                Ok(resp) => {
+                    self.clear_failed(&entry.name);
+                    if idx > 0 {
+                        info!("LLM stream fallback succeeded on provider '{}'", entry.name);
+                    }
+                    return Ok(resp);
+                }
+                Err(err) => {
+                    warn!("LLM provider '{}' stream failed: {}", entry.name, err);
+                    self.mark_failed(&entry.name);
+                    last_err = Some(err);
+                    if idx + 1 < entries.len() && self.retry_delay_ms > 0 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(self.retry_delay_ms))
+                            .await;
+                    }
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| {
+            oclaw_llm_core::error::LlmError::ApiError("No fallback provider available".to_string())
+        }))
+    }
+
+    async fn embeddings(
+        &self,
+        request: oclaw_llm_core::embedding::EmbeddingRequest,
+    ) -> oclaw_llm_core::error::LlmResult<oclaw_llm_core::embedding::EmbeddingResponse> {
+        let mut last_err: Option<oclaw_llm_core::error::LlmError> = None;
+        let mut entries = Vec::with_capacity(1 + self.fallbacks.len());
+        entries.push(&self.primary);
+        entries.extend(self.fallbacks.iter());
+
+        for (idx, entry) in entries.iter().enumerate() {
+            if !self.is_cooled_down(&entry.name) {
+                continue;
+            }
+            match entry.provider.embeddings(request.clone()).await {
+                Ok(resp) => {
+                    self.clear_failed(&entry.name);
+                    if idx > 0 {
+                        info!(
+                            "LLM embedding fallback succeeded on provider '{}'",
+                            entry.name
+                        );
+                    }
+                    return Ok(resp);
+                }
+                Err(err) => {
+                    warn!("LLM provider '{}' embeddings failed: {}", entry.name, err);
+                    self.mark_failed(&entry.name);
+                    last_err = Some(err);
+                    if idx + 1 < entries.len() && self.retry_delay_ms > 0 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(self.retry_delay_ms))
+                            .await;
+                    }
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| {
+            oclaw_llm_core::error::LlmError::ApiError("No fallback provider available".to_string())
+        }))
+    }
+
+    fn supported_models(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut entries = Vec::with_capacity(1 + self.fallbacks.len());
+        entries.push(&self.primary);
+        entries.extend(self.fallbacks.iter());
+        for entry in entries {
+            for model in entry.provider.supported_models() {
+                if seen.insert(model.clone()) {
+                    out.push(model.clone());
+                }
+                let qualified = format!("{}/{}", entry.name, model);
+                if seen.insert(qualified.clone()) {
+                    out.push(qualified);
+                }
+            }
+        }
+        out
+    }
+
+    fn default_model(&self) -> &str {
+        self.primary.provider.default_model()
+    }
+
+    async fn list_models(&self) -> oclaw_llm_core::error::LlmResult<Vec<String>> {
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut entries = Vec::with_capacity(1 + self.fallbacks.len());
+        entries.push(&self.primary);
+        entries.extend(self.fallbacks.iter());
+        for entry in entries {
+            let models = entry
+                .provider
+                .list_models()
+                .await
+                .unwrap_or_else(|_| entry.provider.supported_models());
+            for model in models {
+                if seen.insert(model.clone()) {
+                    out.push(model.clone());
+                }
+                let qualified = format!("{}/{}", entry.name, model);
+                if seen.insert(qualified.clone()) {
+                    out.push(qualified);
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+fn build_provider_entry(
+    name: &str,
+    p: &oclaw_config::settings::ModelProvider,
+) -> Option<ResolvedLlmProviderEntry> {
+    let provider_type = match p
         .provider
         .parse::<oclaw_llm_core::providers::ProviderType>()
-        .ok()?;
+    {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(
+                "Skip LLM provider '{}' due to unknown provider type '{}': {}",
+                name, p.provider, e
+            );
+            return None;
+        }
+    };
+    let api_key = p.api_key.as_deref().unwrap_or("").trim();
+    if provider_requires_api_key(provider_type, p.base_url.as_deref()) && api_key.is_empty() {
+        warn!(
+            "Skip LLM provider '{}' ({}) because API key is required but missing",
+            name, p.provider
+        );
+        return None;
+    }
     let defaults = oclaw_llm_core::providers::ProviderDefaults {
         model: p.model.clone(),
         max_tokens: p.max_tokens,
@@ -1593,19 +1970,134 @@ fn create_llm_provider(config: &Config) -> Option<Arc<dyn oclaw_llm_core::provid
     };
     match oclaw_llm_core::providers::LlmFactory::create(
         provider_type,
-        p.api_key.as_deref().unwrap_or(""),
+        api_key,
         p.base_url.as_deref(),
         defaults,
     ) {
         Ok(provider) => {
             info!("LLM provider '{}' ({}) initialized", name, p.provider);
-            Some(Arc::from(provider))
+            Some(ResolvedLlmProviderEntry {
+                name: name.to_string(),
+                provider_kind: p.provider.to_string(),
+                model_override: p.model.clone(),
+                provider: Arc::from(provider),
+            })
         }
         Err(e) => {
-            error!("Failed to create LLM provider '{}': {}", name, e);
+            warn!("Failed to create LLM provider '{}': {}", name, e);
             None
         }
     }
+}
+
+fn create_llm_provider(config: &Config) -> Option<Arc<dyn oclaw_llm_core::providers::LlmProvider>> {
+    let models = config.models.as_ref()?;
+    let providers = models.providers.as_ref()?;
+    let env_default_provider = std::env::var("OCLAWS_DEFAULT_PROVIDER").ok();
+    let order = llm_provider_selection_order(models, env_default_provider.as_deref());
+    if order.is_empty() {
+        return None;
+    }
+
+    let mut resolved: std::collections::HashMap<String, ResolvedLlmProviderEntry> =
+        std::collections::HashMap::new();
+    for name in &order {
+        let Some(p) = providers.get(name) else {
+            continue;
+        };
+        if let Some(entry) = build_provider_entry(name, p) {
+            resolved.insert(name.clone(), entry);
+        }
+    }
+    if resolved.is_empty() {
+        error!("No usable LLM provider could be initialized from models.providers");
+        return None;
+    }
+
+    let Some(primary_name) = order
+        .iter()
+        .find(|name| resolved.contains_key(*name))
+        .cloned()
+    else {
+        error!("No ordered provider candidate is usable");
+        return None;
+    };
+    let Some(primary) = resolved.get(&primary_name).cloned() else {
+        error!(
+            "Primary provider '{}' missing from resolved set",
+            primary_name
+        );
+        return None;
+    };
+
+    let fallback_enabled = models
+        .fallback
+        .as_ref()
+        .and_then(|f| f.enabled)
+        .unwrap_or(true);
+    if !fallback_enabled {
+        return Some(primary.provider);
+    }
+
+    let mut fallback_names: Vec<String> = Vec::new();
+    if let Some(primary_cfg) = providers.get(&primary_name)
+        && let Some(chain) = primary_cfg.fallback.as_ref()
+    {
+        fallback_names.extend(
+            chain
+                .iter()
+                .map(|name| name.trim())
+                .filter(|name| !name.is_empty())
+                .map(ToString::to_string),
+        );
+    }
+    fallback_names.extend(
+        order
+            .iter()
+            .filter(|name| **name != primary_name)
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
+
+    let mut seen = std::collections::HashSet::new();
+    let mut fallbacks = Vec::new();
+    for name in fallback_names {
+        if !seen.insert(name.clone()) || name == primary_name {
+            continue;
+        }
+        if let Some(entry) = resolved.get(&name).cloned() {
+            fallbacks.push(entry);
+        }
+    }
+
+    if fallbacks.is_empty() {
+        return Some(primary.provider);
+    }
+
+    let cooldown_secs = models
+        .fallback
+        .as_ref()
+        .and_then(|f| f.cooldown_secs)
+        .unwrap_or(60);
+    let retry_delay_ms = models
+        .fallback
+        .as_ref()
+        .and_then(|f| f.retry_delay_ms)
+        .unwrap_or(1000)
+        .max(0) as u64;
+    info!(
+        "LLM fallback enabled: primary='{}', fallbacks={}, cooldown={}s, retry_delay={}ms",
+        primary_name,
+        fallbacks.len(),
+        cooldown_secs,
+        retry_delay_ms
+    );
+    Some(Arc::new(FallbackLlmProvider::new(
+        primary,
+        fallbacks,
+        cooldown_secs,
+        retry_delay_ms,
+    )))
 }
 
 fn json_string_set(
@@ -2710,4 +3202,73 @@ async fn feishu_on_message_receive(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{llm_provider_selection_order, provider_requires_api_key};
+    use oclaw_config::settings::{ModelProvider, ModelsConfig};
+    use std::collections::HashMap;
+
+    fn mk_provider(kind: &str) -> ModelProvider {
+        ModelProvider {
+            provider: kind.to_string(),
+            api_key: None,
+            base_url: None,
+            model: None,
+            max_tokens: None,
+            temperature: None,
+            max_concurrency: None,
+            headers: None,
+            fallback: None,
+        }
+    }
+
+    #[test]
+    fn selection_prefers_config_default_provider() {
+        let mut providers = HashMap::new();
+        providers.insert("openai-main".to_string(), mk_provider("openai"));
+        providers.insert("ollama-local".to_string(), mk_provider("ollama"));
+        let models = ModelsConfig {
+            providers: Some(providers),
+            default_provider: Some("ollama-local".to_string()),
+            fallback: None,
+        };
+
+        let order = llm_provider_selection_order(&models, None);
+        assert_eq!(order.first().map(String::as_str), Some("ollama-local"));
+    }
+
+    #[test]
+    fn selection_prefers_env_default_provider_over_config_default() {
+        let mut providers = HashMap::new();
+        providers.insert("openai-main".to_string(), mk_provider("openai"));
+        providers.insert("ollama-local".to_string(), mk_provider("ollama"));
+        let models = ModelsConfig {
+            providers: Some(providers),
+            default_provider: Some("openai-main".to_string()),
+            fallback: None,
+        };
+
+        let order = llm_provider_selection_order(&models, Some("ollama-local"));
+        assert_eq!(order.first().map(String::as_str), Some("ollama-local"));
+    }
+
+    #[test]
+    fn local_openai_compatible_can_skip_api_key() {
+        let requires = provider_requires_api_key(
+            oclaw_llm_core::providers::ProviderType::OpenAi,
+            Some("http://127.0.0.1:8000/v1"),
+        );
+        assert!(!requires);
+    }
+
+    #[test]
+    fn remote_openai_requires_api_key() {
+        let requires = provider_requires_api_key(
+            oclaw_llm_core::providers::ProviderType::OpenAi,
+            Some("https://api.openai.com/v1"),
+        );
+        assert!(requires);
+    }
 }

@@ -1,30 +1,34 @@
-//! LiteLLM provider - OpenAI-compatible local proxy
+//! MiniMax provider - Anthropic-compatible endpoint wrapper.
+//!
+//! MiniMax chat endpoints are exposed with Anthropic-compatible message format.
+//! We route through `AnthropicProvider` to keep tool-calling behavior aligned.
 
-use super::{LlmProvider, ProviderType, openai::OpenAiProvider};
+use super::{LlmProvider, ProviderDefaults, ProviderType, anthropic::AnthropicProvider};
 use crate::chat::{ChatCompletion, ChatRequest, StreamChunk};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
 use crate::error::LlmResult;
 use async_trait::async_trait;
 
-pub struct LitellmProvider {
-    inner: OpenAiProvider,
+pub struct MinimaxProvider {
+    inner: AnthropicProvider,
 }
 
-impl LitellmProvider {
-    pub fn new(api_key: Option<&str>, base_url: Option<&str>) -> LlmResult<Self> {
-        let inner = OpenAiProvider::new(
-            api_key.unwrap_or(""),
-            Some(base_url.unwrap_or("http://localhost:4000")),
-            Default::default(),
-        )?;
+impl MinimaxProvider {
+    pub fn new(
+        api_key: &str,
+        base_url: Option<&str>,
+        defaults: ProviderDefaults,
+    ) -> LlmResult<Self> {
+        let base = base_url.unwrap_or("https://api.minimax.io/anthropic");
+        let inner = AnthropicProvider::new(api_key, Some(base), defaults)?;
         Ok(Self { inner })
     }
 }
 
 #[async_trait]
-impl LlmProvider for LitellmProvider {
+impl LlmProvider for MinimaxProvider {
     fn provider_type(&self) -> ProviderType {
-        ProviderType::Litellm
+        ProviderType::Minimax
     }
 
     async fn chat(&self, request: ChatRequest) -> LlmResult<ChatCompletion> {
@@ -43,11 +47,11 @@ impl LlmProvider for LitellmProvider {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        vec!["default".into()]
+        self.inner.supported_models()
     }
 
     fn default_model(&self) -> &str {
-        "default"
+        self.inner.default_model()
     }
 
     async fn list_models(&self) -> LlmResult<Vec<String>> {

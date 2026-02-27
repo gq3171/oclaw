@@ -442,19 +442,54 @@ impl ConfigChecker {
     }
 
     async fn check_env_vars(&self) -> CheckResult {
-        let keys = [
+        let api_keys = [
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "OCLAWS_PROVIDER_ANTHROPIC_API_KEY",
             "OCLAWS_PROVIDER_OPENAI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "COHERE_API_KEY",
+            "OCLAWS_PROVIDER_GOOGLE_API_KEY",
+            "OCLAWS_PROVIDER_COHERE_API_KEY",
         ];
-        let found = keys
+        let found_api_key = api_keys
             .iter()
             .any(|k| std::env::var(k).ok().filter(|v| !v.is_empty()).is_some());
-        if found {
+
+        let local_endpoint_keys = [
+            "OLLAMA_BASE_URL",
+            "OLLAMA_HOST",
+            "VLLM_BASE_URL",
+            "LITELLM_BASE_URL",
+            "OCLAWS_PROVIDER_OLLAMA_BASE_URL",
+            "OCLAWS_PROVIDER_VLLM_BASE_URL",
+            "OCLAWS_PROVIDER_LITELLM_BASE_URL",
+        ];
+        let has_local_endpoint = local_endpoint_keys
+            .iter()
+            .any(|k| std::env::var(k).ok().filter(|v| !v.is_empty()).is_some());
+
+        let ollama_local_alive = matches!(
+            tokio::time::timeout(
+                Duration::from_millis(800),
+                tokio::net::TcpStream::connect(("127.0.0.1", 11434))
+            )
+            .await,
+            Ok(Ok(_))
+        );
+
+        if found_api_key || has_local_endpoint || ollama_local_alive {
+            let source = if found_api_key {
+                "API key environment variables"
+            } else if has_local_endpoint {
+                "local model endpoint environment variables"
+            } else {
+                "local Ollama endpoint (127.0.0.1:11434)"
+            };
             result(
                 "ENV_VARS",
-                "API key environment variables detected",
+                format!("LLM configuration detected via {}", source),
                 CheckStatus::Pass,
                 CheckCategory::Configuration,
                 "",
@@ -462,10 +497,10 @@ impl ConfigChecker {
         } else {
             result(
                 "ENV_VARS",
-                "No common LLM API key environment variables found",
+                "No LLM API keys or local model endpoints detected",
                 CheckStatus::Warning,
                 CheckCategory::Configuration,
-                "Set at least one provider API key (for example OPENAI_API_KEY).",
+                "Set API key vars or local endpoints (e.g. OLLAMA_BASE_URL/VLLM_BASE_URL).",
             )
         }
     }
@@ -574,6 +609,10 @@ impl DependencyChecker {
     async fn check_node(&self) -> CheckResult {
         self.check_binary("node", "--version", false)
     }
+
+    async fn check_ollama(&self) -> CheckResult {
+        self.check_binary("ollama", "--version", false)
+    }
 }
 
 #[async_trait]
@@ -591,6 +630,7 @@ impl DiagnosticChecker for DependencyChecker {
             self.check_docker().await,
             self.check_rust().await,
             self.check_node().await,
+            self.check_ollama().await,
         ]
     }
 }

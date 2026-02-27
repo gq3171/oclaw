@@ -90,6 +90,23 @@ impl Config {
                     errors.push(format!("models.providers.{}.provider is empty", name));
                 }
             }
+            if let Some(default_provider) = models.default_provider.as_deref()
+                && !default_provider.is_empty()
+                && !providers.contains_key(default_provider)
+            {
+                errors.push(format!(
+                    "models.defaultProvider '{}' not found in models.providers",
+                    default_provider
+                ));
+            }
+        } else if let Some(models) = &self.models
+            && let Some(default_provider) = models.default_provider.as_deref()
+            && !default_provider.is_empty()
+        {
+            errors.push(format!(
+                "models.defaultProvider '{}' set but models.providers is empty",
+                default_provider
+            ));
         }
 
         if let Some(logging) = &self.logging
@@ -258,6 +275,15 @@ impl Config {
                     .api_key = Some(value);
             }
         }
+
+        if let Ok(default_provider) = std::env::var("OCLAWS_DEFAULT_PROVIDER") {
+            let default_provider = default_provider.trim();
+            if !default_provider.is_empty() {
+                self.models
+                    .get_or_insert_with(ModelsConfig::default)
+                    .default_provider = Some(default_provider.to_string());
+            }
+        }
     }
 }
 
@@ -402,6 +428,8 @@ pub struct Browser {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headless: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub foreground: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub no_sandbox: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attach_only: Option<bool>,
@@ -495,6 +523,8 @@ pub struct AuthCooldowns {
 pub struct ModelsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub providers: Option<HashMap<String, ModelProvider>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback: Option<FallbackSettings>,
 }
@@ -1376,6 +1406,7 @@ impl AgentBinding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_config_default() {
@@ -1448,6 +1479,68 @@ mod tests {
         let json = serde_json::to_string(&provider).unwrap();
         assert!(json.contains("openai"));
         assert!(json.contains("gpt-4"));
+    }
+
+    #[test]
+    fn test_models_default_provider_validation_missing_target() {
+        let mut providers = HashMap::new();
+        providers.insert(
+            "openai-main".to_string(),
+            ModelProvider {
+                provider: "openai".to_string(),
+                api_key: None,
+                base_url: None,
+                model: None,
+                max_tokens: None,
+                temperature: None,
+                max_concurrency: None,
+                headers: None,
+                fallback: None,
+            },
+        );
+        let config = Config {
+            models: Some(ModelsConfig {
+                providers: Some(providers),
+                default_provider: Some("missing".to_string()),
+                fallback: None,
+            }),
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("models.defaultProvider 'missing' not found"))
+        );
+    }
+
+    #[test]
+    fn test_models_default_provider_validation_ok() {
+        let mut providers = HashMap::new();
+        providers.insert(
+            "openai-main".to_string(),
+            ModelProvider {
+                provider: "openai".to_string(),
+                api_key: None,
+                base_url: None,
+                model: None,
+                max_tokens: None,
+                temperature: None,
+                max_concurrency: None,
+                headers: None,
+                fallback: None,
+            },
+        );
+        let config = Config {
+            models: Some(ModelsConfig {
+                providers: Some(providers),
+                default_provider: Some("openai-main".to_string()),
+                fallback: None,
+            }),
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert!(errors.is_empty());
     }
 
     #[test]

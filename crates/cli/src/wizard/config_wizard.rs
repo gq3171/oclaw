@@ -178,11 +178,34 @@ impl ConfigWizard {
             } else if choice == names.len() + 1 {
                 let name = prompt("Provider name to remove");
                 if providers.remove(&name).is_some() {
+                    if models.default_provider.as_deref() == Some(name.as_str()) {
+                        models.default_provider = None;
+                    }
                     success(&format!("Removed '{}'", name));
                 }
             } else {
                 break;
             }
+        }
+
+        let mut names: Vec<String> = providers.keys().cloned().collect();
+        names.sort();
+        if !names.is_empty() {
+            let mut opts = names.clone();
+            opts.push("Auto (first available)".to_string());
+            let default_idx = models
+                .default_provider
+                .as_ref()
+                .and_then(|name| names.iter().position(|n| n == name))
+                .unwrap_or(opts.len() - 1);
+            let choice = select_option("Default provider:", &opts, default_idx);
+            if choice < names.len() {
+                models.default_provider = Some(names[choice].clone());
+            } else {
+                models.default_provider = None;
+            }
+        } else {
+            models.default_provider = None;
         }
 
         // Fallback settings
@@ -409,6 +432,10 @@ impl ConfigWizard {
         let b = config.browser.get_or_insert_with(Browser::default);
         b.enabled = Some(prompt_yes_no("Enabled?", b.enabled.unwrap_or(false)));
         b.headless = Some(prompt_yes_no("Headless?", b.headless.unwrap_or(true)));
+        b.foreground = Some(prompt_yes_no(
+            "Foreground window?",
+            b.foreground.unwrap_or(!b.headless.unwrap_or(false)),
+        ));
         b.cdp_url = prompt_optional("CDP URL", b.cdp_url.as_deref());
         b.no_sandbox = Some(prompt_yes_no("No sandbox?", b.no_sandbox.unwrap_or(false)));
         b.evaluate_enabled = Some(prompt_yes_no(

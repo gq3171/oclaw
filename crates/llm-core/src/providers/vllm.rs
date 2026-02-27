@@ -13,7 +13,7 @@ pub struct VllmProvider {
 impl VllmProvider {
     pub fn new(api_key: Option<&str>, base_url: Option<&str>) -> LlmResult<Self> {
         let inner = OpenAiProvider::new(
-            api_key.unwrap_or("EMPTY"),
+            api_key.unwrap_or(""),
             Some(base_url.unwrap_or("http://127.0.0.1:8000/v1")),
             Default::default(),
         )?;
@@ -48,5 +48,9 @@ impl LlmProvider for VllmProvider {
 
     fn default_model(&self) -> &str {
         "default"
+    }
+
+    async fn list_models(&self) -> LlmResult<Vec<String>> {
+        self.inner.list_models().await
     }
 }

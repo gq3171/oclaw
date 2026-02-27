@@ -1,5 +1,7 @@
 use async_trait::async_trait;
+use regex::Regex;
 use reqwest::Client;
+use std::sync::OnceLock;
 
 use crate::chat::{ChatCompletion, ChatMessage, ChatRequest, MessageRole};
 use crate::embedding::{EmbeddingRequest, EmbeddingResponse};
@@ -323,6 +325,214 @@ fn anthropic_message(m: &ChatMessage) -> serde_json::Value {
     serde_json::json!({"role": role, "content": m.content})
 }
 
+fn minimax_marker_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)minimax:tool_call").expect("valid minimax marker regex"))
+}
+
+fn xml_invoke_block_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?is)<invoke\b([^>]*)>(.*?)</invoke>").expect("valid invoke block regex")
+    })
+}
+
+fn xml_parameter_block_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?is)<parameter\b([^>]*)>(.*?)</parameter>")
+            .expect("valid parameter block regex")
+    })
+}
+
+fn xml_attr_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"(?is)\b([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))"#,
+        )
+        .expect("valid xml attr regex")
+    })
+}
+
+fn minimax_tool_tag_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?is)</?minimax:tool_call\b[^>]*>").expect("valid minimax tag regex")
+    })
+}
+
+fn downgraded_marker_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)\[Tool (?:Call|Result)|\[Historical context:")
+            .expect("valid downgraded marker regex")
+    })
+}
+
+fn downgraded_tool_call_with_args_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"(?is)\[Tool Call:[^\]]*\]\s*(?:\r?\n)?\s*Arguments:\s*(?:\{[\s\S]*?\}|\[[\s\S]*?\]|"(?:\\.|[^"])*"|[^\r\n]*)"#,
+        )
+        .expect("valid downgraded tool call+args regex")
+    })
+}
+
+fn downgraded_tool_call_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?is)\[Tool Call:[^\]]*\]").expect("valid downgraded tool call regex")
+    })
+}
+
+fn downgraded_tool_result_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?is)\[Tool Result for ID[^\]]*\]")
+            .expect("valid downgraded tool result regex")
+    })
+}
+
+fn downgraded_historical_context_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?is)\[Historical context:[^\]]*\]\s*")
+            .expect("valid downgraded historical context regex")
+    })
+}
+
+fn parse_xml_attr_value(attrs: &str, key: &str) -> Option<String> {
+    xml_attr_re().captures_iter(attrs).find_map(|cap| {
+        let name = cap.get(1)?.as_str();
+        if !name.eq_ignore_ascii_case(key) {
+            return None;
+        }
+        let value = cap
+            .get(2)
+            .or_else(|| cap.get(3))
+            .or_else(|| cap.get(4))
+            .map(|m| m.as_str())
+            .unwrap_or("");
+        Some(value.to_string())
+    })
+}
+
+fn normalize_tool_name_alias(name: &str) -> String {
+    let n = name.trim();
+    if n.eq_ignore_ascii_case("google")
+        || n.eq_ignore_ascii_case("google_search")
+        || n.eq_ignore_ascii_case("search")
+    {
+        return "web_search".to_string();
+    }
+    if n.eq_ignore_ascii_case("exec")
+        || n.eq_ignore_ascii_case("shell")
+        || n.eq_ignore_ascii_case("terminal")
+        || n.eq_ignore_ascii_case("bash")
+    {
+        return "bash".to_string();
+    }
+    if n.eq_ignore_ascii_case("apply-patch") {
+        return "apply_patch".to_string();
+    }
+    if n.eq_ignore_ascii_case("browser") {
+        return "browse".to_string();
+    }
+    if n.eq_ignore_ascii_case("read") {
+        return "read_file".to_string();
+    }
+    if n.eq_ignore_ascii_case("write") {
+        return "write_file".to_string();
+    }
+    if n.eq_ignore_ascii_case("list")
+        || n.eq_ignore_ascii_case("ls")
+        || n.eq_ignore_ascii_case("list_files")
+    {
+        return "list_dir".to_string();
+    }
+    n.to_string()
+}
+
+fn parse_parameter_value(raw: &str) -> serde_json::Value {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return serde_json::Value::String(String::new());
+    }
+    serde_json::from_str(trimmed).unwrap_or_else(|_| serde_json::Value::String(trimmed.to_string()))
+}
+
+fn parse_minimax_xml_tool_calls(content: &str, choice_index: i32) -> Vec<crate::chat::ToolCall> {
+    let mut out = Vec::new();
+    if !minimax_marker_re().is_match(content) {
+        return out;
+    }
+
+    for (invoke_index, cap) in xml_invoke_block_re().captures_iter(content).enumerate() {
+        let attrs = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        let body = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+        let Some(name_raw) = parse_xml_attr_value(attrs, "name") else {
+            continue;
+        };
+        let name = normalize_tool_name_alias(&name_raw);
+        if name.is_empty() {
+            continue;
+        }
+
+        let mut args = serde_json::Map::new();
+        for pc in xml_parameter_block_re().captures_iter(body) {
+            let p_attrs = pc.get(1).map(|m| m.as_str()).unwrap_or("");
+            let p_value_raw = pc.get(2).map(|m| m.as_str()).unwrap_or("");
+            let Some(param_name) = parse_xml_attr_value(p_attrs, "name") else {
+                continue;
+            };
+            if param_name.trim().is_empty() {
+                continue;
+            }
+            args.insert(param_name, parse_parameter_value(p_value_raw));
+        }
+
+        out.push(crate::chat::ToolCall {
+            id: format!("call_minimax_{}_{}", choice_index, invoke_index),
+            type_: "function".to_string(),
+            function: crate::chat::ToolCallFunction {
+                name,
+                arguments: serde_json::Value::Object(args).to_string(),
+            },
+        });
+    }
+    out
+}
+
+fn strip_minimax_tool_call_xml(text: &str) -> String {
+    if text.is_empty() || !minimax_marker_re().is_match(text) {
+        return text.to_string();
+    }
+    let cleaned = xml_invoke_block_re().replace_all(text, "");
+    minimax_tool_tag_re()
+        .replace_all(cleaned.as_ref(), "")
+        .to_string()
+}
+
+fn strip_downgraded_tool_call_text(text: &str) -> String {
+    if text.is_empty() || !downgraded_marker_re().is_match(text) {
+        return text.to_string();
+    }
+    let cleaned = downgraded_tool_call_with_args_re().replace_all(text, "");
+    let cleaned = downgraded_tool_call_re().replace_all(cleaned.as_ref(), "");
+    let cleaned = downgraded_tool_result_re().replace_all(cleaned.as_ref(), "");
+    downgraded_historical_context_re()
+        .replace_all(cleaned.as_ref(), "")
+        .to_string()
+}
+
+fn sanitize_assistant_content(text: &str) -> String {
+    let cleaned = strip_minimax_tool_call_xml(text);
+    let cleaned = strip_downgraded_tool_call_text(&cleaned);
+    cleaned.trim().to_string()
+}
+
 /// Parse Anthropic response JSON into ChatCompletion, extracting tool_use blocks.
 fn parse_anthropic_response(resp: serde_json::Value) -> LlmResult<ChatCompletion> {
     use crate::chat::*;
@@ -352,7 +562,7 @@ fn parse_anthropic_response(resp: serde_json::Value) -> LlmResult<ChatCompletion
                         id: tc_id.to_string(),
                         type_: "function".to_string(),
                         function: ToolCallFunction {
-                            name: name.to_string(),
+                            name: normalize_tool_name_alias(name),
                             arguments: args,
                         },
                     });
@@ -362,7 +572,11 @@ fn parse_anthropic_response(resp: serde_json::Value) -> LlmResult<ChatCompletion
         }
     }
 
-    let finish = if stop_reason == "tool_use" {
+    let raw_text = text_parts.join("");
+    if tool_calls.is_empty() {
+        tool_calls = parse_minimax_xml_tool_calls(&raw_text, 0);
+    }
+    let finish = if stop_reason == "tool_use" || !tool_calls.is_empty() {
         "tool_calls"
     } else {
         "stop"
@@ -377,7 +591,7 @@ fn parse_anthropic_response(resp: serde_json::Value) -> LlmResult<ChatCompletion
             index: 0,
             message: ChatMessage {
                 role: MessageRole::Assistant,
-                content: text_parts.join(""),
+                content: sanitize_assistant_content(&raw_text),
                 name: None,
                 tool_calls: if tool_calls.is_empty() {
                     None
@@ -391,4 +605,68 @@ fn parse_anthropic_response(resp: serde_json::Value) -> LlmResult<ChatCompletion
         usage: None,
         system_fingerprint: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_anthropic_response;
+
+    #[test]
+    fn parses_minimax_xml_fallback_in_text_block() {
+        let resp = serde_json::json!({
+            "id": "msg_1",
+            "model": "test",
+            "stop_reason": "end_turn",
+            "content": [{
+                "type": "text",
+                "text": "先查一下。\n<minimax:tool_call><invoke name=\"google\"><parameter name=\"query\">黄金价格 今日</parameter></invoke></minimax:tool_call>"
+            }]
+        });
+
+        let parsed = parse_anthropic_response(resp).expect("should parse");
+        let message = &parsed.choices[0].message;
+        let calls = message.tool_calls.as_ref().expect("tool calls expected");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "web_search");
+        assert_eq!(message.content, "先查一下。");
+    }
+
+    #[test]
+    fn normalizes_tool_use_alias_name() {
+        let resp = serde_json::json!({
+            "id": "msg_2",
+            "model": "test",
+            "stop_reason": "tool_use",
+            "content": [{
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "exec",
+                "input": {"command":"pwd"}
+            }]
+        });
+
+        let parsed = parse_anthropic_response(resp).expect("should parse");
+        let calls = parsed.choices[0]
+            .message
+            .tool_calls
+            .as_ref()
+            .expect("tool calls expected");
+        assert_eq!(calls[0].function.name, "bash");
+    }
+
+    #[test]
+    fn strips_downgraded_tool_call_text_from_anthropic_content() {
+        let resp = serde_json::json!({
+            "id": "msg_3",
+            "model": "test",
+            "stop_reason": "end_turn",
+            "content": [{
+                "type": "text",
+                "text": "[Tool Call: exec (ID: toolu_1)]\nArguments: {\"command\":\"pwd\"}\nDone"
+            }]
+        });
+
+        let parsed = parse_anthropic_response(resp).expect("should parse");
+        assert_eq!(parsed.choices[0].message.content, "Done");
+    }
 }

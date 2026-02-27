@@ -6538,17 +6538,68 @@ fn default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
         .iter()
         .map(|t| t.function.name.clone())
         .collect();
-    let mut prompt = format!(
-        "You are a helpful assistant with tools: {}. You CAN access the internet. \
-         Use web_fetch for APIs/simple pages, browse for JS-heavy sites. Respond in the user's language.",
-        tool_names.join(", ")
-    );
-    if tool_names.iter().any(|name| name == "message") {
-        prompt.push_str(
-            " When users ask you to proactively contact someone (Feishu/Telegram/Slack/etc), use the message tool instead of claiming integration is unavailable. If sending fails, report the exact tool error and ask for missing routing fields.",
+    let has_tool = |name: &str| tool_names.iter().any(|tool| tool == name);
+
+    let mut lines = vec![
+        format!(
+            "You are a helpful assistant with tools: {}.",
+            tool_names.join(", ")
+        ),
+        "Respond in the user's language.".to_string(),
+        "Never output provider-specific tool markup like `<minimax:tool_call>`/`<invoke>` to users."
+            .to_string(),
+    ];
+
+    if has_tool("web_search") || has_tool("web_fetch") || has_tool("browse") {
+        lines.push("## Internet Access".to_string());
+        lines.push(
+            "You CAN access the internet. Do not claim browsing/network is unavailable when tools exist."
+                .to_string(),
+        );
+        if has_tool("web_search") {
+            lines.push("- Use `web_search` for real-time prices/news/facts lookup.".to_string());
+        }
+        if has_tool("web_fetch") {
+            lines.push("- Use `web_fetch` for direct pages/APIs/simple HTML.".to_string());
+        }
+        if has_tool("browse") {
+            lines.push(
+                "- Use `browse` for JS-heavy pages that static fetch cannot read.".to_string(),
+            );
+        }
+        lines.push(
+            "- When users ask for latest/live information, run tools first, then answer with findings."
+                .to_string(),
         );
     }
-    prompt
+
+    if has_tool("memory_search") || has_tool("memory_get") {
+        lines.push("## Memory Recall".to_string());
+        lines.push(
+            "Before claiming you don't remember prior context, run memory recall tools for prior work/decisions/preferences/dates."
+                .to_string(),
+        );
+        if has_tool("memory_search") {
+            lines.push("- Start with `memory_search` to find relevant memories.".to_string());
+        }
+        if has_tool("memory_get") {
+            lines.push("- Then use `memory_get` for the exact needed entries.".to_string());
+        }
+    }
+
+    if has_tool("message") {
+        lines.push("## Proactive Messaging".to_string());
+        lines.push(
+            "When users ask you to proactively contact someone (Feishu/Telegram/Slack/etc), use the message tool instead of claiming integration is unavailable."
+                .to_string(),
+        );
+        lines.push(
+            "If sending fails, report the exact tool error and ask for missing routing fields."
+                .to_string(),
+        );
+    }
+
+    lines.join("\n")
 }
 
 fn build_subagent_system_prompt(
