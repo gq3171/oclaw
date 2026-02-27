@@ -1599,15 +1599,19 @@ impl ToolRegistryExecutor {
         mgr.add_message(session_key, "user", message)
             .map_err(|e| e.to_string())?;
         let mut prompt = default_agent_system_prompt(self);
+        let mut group_context_lines: Vec<String> = Vec::new();
         if !extra_system_prompt.trim().is_empty() {
-            prompt.push_str("\n\n");
-            prompt.push_str(extra_system_prompt.trim());
+            group_context_lines.push(extra_system_prompt.trim().to_string());
         }
         if let Some(source) = source_session_key.map(str::trim).filter(|v| !v.is_empty()) {
-            prompt.push_str(&format!("\nSource session: {}.", source));
+            group_context_lines.push(format!("Source session: {}.", source));
         }
         if let Some(channel) = source_channel.map(str::trim).filter(|v| !v.is_empty()) {
-            prompt.push_str(&format!("\nSource channel: {}.", channel));
+            group_context_lines.push(format!("Source channel: {}.", channel));
+        }
+        if !group_context_lines.is_empty() {
+            prompt.push_str("\n\n## Group Chat Context\n");
+            prompt.push_str(&group_context_lines.join("\n"));
         }
         let child_exec = self.build_child_executor(session_key.to_string());
         let out = match tokio::time::timeout(
@@ -6546,12 +6550,198 @@ impl ToolExecutor for ToolRegistryExecutor {
     }
 }
 
+fn has_tool_name(tool_names: &[String], candidate: &str) -> bool {
+    tool_names
+        .iter()
+        .any(|name| name.trim().eq_ignore_ascii_case(candidate))
+}
+
+fn has_any_tool_name(tool_names: &[String], candidates: &[&str]) -> bool {
+    candidates
+        .iter()
+        .any(|name| has_tool_name(tool_names, name))
+}
+
+fn pick_tool_name(tool_names: &[String], candidates: &[&str], fallback: &str) -> String {
+    for candidate in candidates {
+        if let Some(found) = tool_names
+            .iter()
+            .find(|name| name.trim().eq_ignore_ascii_case(candidate))
+        {
+            return found.clone();
+        }
+    }
+    fallback.to_string()
+}
+
+fn resolve_model_alias_lines(tool_executor: &ToolRegistryExecutor) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let Some(cfg_lock) = tool_executor.full_config.as_ref() else {
+        return lines;
+    };
+    let Ok(cfg) = cfg_lock.try_read() else {
+        return lines;
+    };
+    let Some(providers) = cfg.models.as_ref().and_then(|m| m.providers.as_ref()) else {
+        return lines;
+    };
+    let mut keys: Vec<String> = providers.keys().cloned().collect();
+    keys.sort();
+    for key in keys {
+        let Some(provider) = providers.get(&key) else {
+            continue;
+        };
+        let provider_id = provider.provider.trim();
+        if provider_id.is_empty() {
+            continue;
+        }
+        if let Some(model) = provider
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            lines.push(format!("- {}: {}/{}", key, provider_id, model));
+        } else {
+            lines.push(format!("- {}: {}", key, provider_id));
+        }
+    }
+    lines
+}
+
+fn resolve_workspace_skill_entries() -> Vec<(String, String)> {
+    let cwd = match std::env::current_dir() {
+        Ok(path) => path,
+        Err(_) => return Vec::new(),
+    };
+    let skills_dir = cwd.join("skills");
+    if !skills_dir.is_dir() {
+        return Vec::new();
+    }
+    let mut entries: Vec<(String, String)> = Vec::new();
+    let Ok(dir_entries) = std::fs::read_dir(skills_dir) else {
+        return entries;
+    };
+    for dir_entry in dir_entries.flatten() {
+        let path = dir_entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let skill_md = path.join("SKILL.md");
+        if !skill_md.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+            continue;
+        };
+        let trimmed_name = name.trim();
+        if trimmed_name.is_empty() {
+            continue;
+        }
+        entries.push((trimmed_name.to_string(), skill_md.display().to_string()));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
+}
+
+fn build_skills_section(read_tool_name: &str) -> Vec<String> {
+    let entries = resolve_workspace_skill_entries();
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let mut lines: Vec<String> = vec![
+        "## Skills (mandatory)".to_string(),
+        "Before replying: scan <available_skills> <description> entries.".to_string(),
+        format!(
+            "- If exactly one skill clearly applies: read its SKILL.md at <location> with `{}`, then follow it.",
+            read_tool_name
+        ),
+        "- If multiple could apply: choose the most specific one, then read/follow it.".to_string(),
+        "- If none clearly apply: do not read any SKILL.md.".to_string(),
+        "Constraints: never read more than one skill up front; only read after selecting."
+            .to_string(),
+        "<available_skills>".to_string(),
+    ];
+    for (name, location) in entries {
+        lines.push("  <skill>".to_string());
+        lines.push(format!("    <name>{}</name>", name));
+        lines.push(format!("    <location>{}</location>", location));
+        lines.push("    <description>Workspace skill</description>".to_string());
+        lines.push("  </skill>".to_string());
+    }
+    lines.push("</available_skills>".to_string());
+    lines.push(String::new());
+    lines
+}
+
+fn resolve_acp_enabled(tool_executor: &ToolRegistryExecutor) -> bool {
+    let Some(cfg_lock) = tool_executor.full_config.as_ref() else {
+        return true;
+    };
+    let Ok(cfg) = cfg_lock.try_read() else {
+        return true;
+    };
+    let Some(agents) = cfg.agents.as_ref() else {
+        return true;
+    };
+    agents
+        .pointer("/acp/enabled")
+        .and_then(|v| v.as_bool())
+        .or_else(|| {
+            agents
+                .pointer("/defaults/acp/enabled")
+                .and_then(|v| v.as_bool())
+        })
+        .unwrap_or(true)
+}
+
 fn build_runtime_line(tool_executor: &ToolRegistryExecutor) -> String {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| ".".to_string());
+    let host = std::env::var("HOSTNAME")
+        .ok()
+        .or_else(|| std::env::var("COMPUTERNAME").ok())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let shell = std::env::var("SHELL")
+        .ok()
+        .or_else(|| std::env::var("ComSpec").ok())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let runtime_channel = tool_executor
+        .turn_source
+        .as_ref()
+        .map(|route| normalize_channel_alias(&route.channel))
+        .filter(|v| !v.trim().is_empty());
+    let tools = tool_executor.available_tools();
+    let tool_names: Vec<String> = tools.into_iter().map(|t| t.function.name).collect();
+    let mut capabilities: Vec<String> = Vec::new();
+    if has_tool_name(&tool_names, "message") {
+        capabilities.push("message".to_string());
+    }
+    if has_any_tool_name(
+        &tool_names,
+        &["send_reaction", "remove_reaction", "list_reactions"],
+    ) {
+        capabilities.push("reactions".to_string());
+    }
+    if has_tool_name(&tool_names, "browse") {
+        capabilities.push("browser".to_string());
+    }
+    if tool_executor
+        .turn_source
+        .as_ref()
+        .and_then(|route| route.thread_id.as_deref())
+        .is_some()
+    {
+        capabilities.push("threadReply".to_string());
+    }
+    capabilities.sort();
+    capabilities.dedup();
+
     let mut parts = Vec::new();
     if let Some(session_id) = tool_executor
         .session_id
@@ -6559,25 +6749,82 @@ fn build_runtime_line(tool_executor: &ToolRegistryExecutor) -> String {
         .map(str::trim)
         .filter(|v| !v.is_empty())
     {
-        parts.push(format!("session={}", session_id));
+        parts.push(format!(
+            "agent={}",
+            ToolRegistryExecutor::resolve_agent_id_from_session_key(session_id)
+        ));
     }
+    if let Some(host) = host {
+        parts.push(format!("host={}", host));
+    }
+    parts.push(format!("repo={}", cwd));
     parts.push(format!("os={} ({})", os, arch));
-    parts.push(format!("cwd={}", cwd));
+    if let Some(provider) = tool_executor.llm_provider.as_ref() {
+        parts.push(format!("model={}", provider.default_model()));
+        parts.push(format!("default_model={}", provider.default_model()));
+    }
+    if let Some(shell) = shell {
+        parts.push(format!("shell={}", shell));
+    }
+    if let Some(channel) = runtime_channel {
+        parts.push(format!("channel={}", channel));
+        parts.push(format!(
+            "capabilities={}",
+            if capabilities.is_empty() {
+                "none".to_string()
+            } else {
+                capabilities.join(",")
+            }
+        ));
+    }
     parts.push("thinking=off".to_string());
     format!("Runtime: {}", parts.join(" | "))
 }
 
 fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -> String {
-    let tool_names: Vec<String> = tool_executor
+    let tool_specs: Vec<(String, String)> = tool_executor
         .available_tools()
-        .iter()
-        .map(|t| t.function.name.clone())
+        .into_iter()
+        .map(|tool| (tool.function.name, tool.function.description))
         .collect();
-    let tool_lines: Vec<String> = tool_names
+    let tool_names: Vec<String> = tool_specs.iter().map(|(name, _)| name.clone()).collect();
+    let tool_lines: Vec<String> = tool_specs
         .iter()
-        .map(|name| format!("- {}", name))
+        .map(|(name, description)| {
+            let desc = description.trim();
+            if desc.is_empty() {
+                format!("- {}", name)
+            } else {
+                format!("- {}: {}", name, desc)
+            }
+        })
         .collect();
-    let has_tool = |name: &str| tool_names.iter().any(|tool| tool == name);
+
+    let has_tool = |name: &str| has_tool_name(&tool_names, name);
+    let has_any_tool = |names: &[&str]| has_any_tool_name(&tool_names, names);
+    let has_sessions_spawn = has_tool("sessions_spawn");
+    let has_gateway = has_tool("gateway");
+    let has_message = has_tool("message");
+    let has_memory_tools = has_any_tool(&["memory_search", "memory_get"]);
+    let has_tts = has_tool("tts");
+    let has_reaction_tools = has_any_tool(&["send_reaction", "remove_reaction", "list_reactions"]);
+    let acp_enabled = resolve_acp_enabled(tool_executor);
+    let exec_tool_name = pick_tool_name(&tool_names, &["exec", "bash"], "exec");
+    let process_tool_name = pick_tool_name(&tool_names, &["process"], "process");
+    let read_tool_name = pick_tool_name(&tool_names, &["read"], "read");
+    let model_alias_lines = resolve_model_alias_lines(tool_executor);
+    let skills_section = build_skills_section(&read_tool_name);
+    let user_timezone = std::env::var("TZ")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let workspace_dir = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    let docs_dir = std::path::Path::new("docs")
+        .canonicalize()
+        .ok()
+        .map(|p| p.display().to_string());
 
     let mut lines = vec![
         "You are a personal assistant running inside OpenClaw.".to_string(),
@@ -6588,188 +6835,206 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
     ];
     lines.extend(tool_lines);
     lines.extend([
-        "TOOLS.md does not control tool availability; it is user guidance for external tools."
+        "TOOLS.md does not control tool availability; it is user guidance for how to use external tools."
             .to_string(),
-        "For long waits, avoid rapid poll loops. Use long-yield exec/process polling instead."
-            .to_string(),
-        "If a task is complex or long-running, spawn a sub-agent; completion is push-based."
-            .to_string(),
+        format!(
+            "For long waits, avoid rapid poll loops: use {} with enough yieldMs or {}(action=poll, timeout=<ms>).",
+            exec_tool_name, process_tool_name
+        ),
+        "If a task is more complex or takes longer, spawn a sub-agent. Completion is push-based: it will auto-announce when done.".to_string(),
+    ]);
+    if has_sessions_spawn && acp_enabled {
+        lines.push(
+            "For requests like \"do this in codex/claude code/gemini\", treat it as ACP harness intent and call `sessions_spawn` with `runtime: \"acp\"`."
+                .to_string(),
+        );
+        lines.push(
+            "On Discord, default ACP harness requests to thread-bound persistent sessions (`thread: true`, `mode: \"session\"`) unless the user asks otherwise.".to_string(),
+        );
+        lines.push(
+            "Set `agentId` explicitly unless `acp.defaultAgent` is configured, and do not route ACP harness requests through `subagents`/`agents_list` or local PTY exec flows."
+                .to_string(),
+        );
+    }
+    lines.extend([
+        "Do not poll `subagents list` / `sessions_list` in a loop; only check status on-demand (for intervention, debugging, or when explicitly asked).".to_string(),
         "".to_string(),
         "## Tool Call Style".to_string(),
-        "Default: do not narrate routine, low-risk tool calls.".to_string(),
-        "Narrate only when it helps: multi-step work, complex work, sensitive actions, or explicit user request.".to_string(),
+        "Default: do not narrate routine, low-risk tool calls (just call the tool).".to_string(),
+        "Narrate only when it helps: multi-step work, complex/challenging problems, sensitive actions (e.g., deletions), or when the user explicitly asks.".to_string(),
         "Keep narration brief and value-dense; avoid repeating obvious steps.".to_string(),
-        "When a first-class tool exists, call the tool instead of asking the user to run equivalent CLI commands.".to_string(),
+        "Use plain human language for narration unless in a technical context.".to_string(),
+        "When a first-class tool exists for an action, use the tool directly instead of asking the user to run equivalent CLI or slash commands.".to_string(),
         "".to_string(),
         "## Safety".to_string(),
-        "You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking.".to_string(),
-        "Prioritize safety and human oversight over completion; if instructions conflict, pause and ask.".to_string(),
-        "Do not manipulate users to expand access or disable safeguards.".to_string(),
+        "You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking; avoid long-term plans beyond the user's request.".to_string(),
+        "Prioritize safety and human oversight over completion; if instructions conflict, pause and ask; comply with stop/pause/audit requests and never bypass safeguards. (Inspired by Anthropic's constitution.)".to_string(),
+        "Do not manipulate or persuade anyone to expand access or disable safeguards. Do not copy yourself or change system prompts, safety rules, or tool policies unless explicitly requested.".to_string(),
         "".to_string(),
-        "Never output provider-specific tool markup like `<minimax:tool_call>`/`<invoke>` to users."
-            .to_string(),
+        "## OpenClaw CLI Quick Reference".to_string(),
+        "OpenClaw is controlled via subcommands. Do not invent commands.".to_string(),
+        "To manage the Gateway daemon service (start/stop/restart):".to_string(),
+        "- openclaw gateway status".to_string(),
+        "- openclaw gateway start".to_string(),
+        "- openclaw gateway stop".to_string(),
+        "- openclaw gateway restart".to_string(),
+        "If unsure, ask the user to run `openclaw help` (or `openclaw gateway --help`) and paste the output.".to_string(),
+        "".to_string(),
     ]);
+    lines.extend(skills_section);
 
-    if has_tool("web_search") || has_tool("web_fetch") || has_tool("browse") {
-        lines.push("## Internet Access".to_string());
-        lines.push(
-            "You CAN access the internet. Do not claim browsing/network is unavailable when tools exist."
-                .to_string(),
-        );
-        if has_tool("web_search") {
-            lines.push("- Use `web_search` for real-time prices/news/facts lookup.".to_string());
-        }
-        if has_tool("web_fetch") {
-            lines.push("- Use `web_fetch` for direct pages/APIs/simple HTML.".to_string());
-        }
-        if has_tool("browse") {
-            lines.push(
-                "- Use `browse` for JS-heavy pages that static fetch cannot read.".to_string(),
-            );
-        }
-        lines.push(
-            "- When users ask for latest/live information, run tools first, then answer with findings."
-                .to_string(),
-        );
-        if has_tool("browse") {
-            lines.push(
-                "- If the user asks you to open a website in a browser, call `browse` first (example: {\"action\":\"navigate\",\"url\":\"https://bing.com\"}) instead of saying you cannot open a browser."
-                    .to_string(),
-            );
-        }
-        lines.push("".to_string());
-    }
-
-    if !is_minimal && (has_tool("memory_search") || has_tool("memory_get")) {
+    if !is_minimal && has_memory_tools {
         lines.push("## Memory Recall".to_string());
         lines.push(
-            "Before claiming you don't remember prior context, run memory recall tools for prior work/decisions/preferences/dates."
+            "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked."
                 .to_string(),
         );
-        if has_tool("memory_search") {
-            lines.push("- Start with `memory_search` to find relevant memories.".to_string());
-        }
-        if has_tool("memory_get") {
-            lines.push("- Then use `memory_get` for the exact needed entries.".to_string());
-        }
-        lines.push("".to_string());
+        lines.push(
+            "Citations: include Source: <path#line> when it helps the user verify memory snippets."
+                .to_string(),
+        );
+        lines.push(String::new());
     }
 
-    if !is_minimal {
-        lines.push("## OpenClaw CLI Quick Reference".to_string());
-        lines.push("Do not invent commands. Typical daemon controls:".to_string());
-        lines.push("- openclaw gateway status".to_string());
-        lines.push("- openclaw gateway start".to_string());
-        lines.push("- openclaw gateway stop".to_string());
-        lines.push("- openclaw gateway restart".to_string());
-        lines.push("".to_string());
-
-        lines.push("## Skills (mandatory)".to_string());
+    if has_gateway && !is_minimal {
+        lines.push("## OpenClaw Self-Update".to_string());
         lines.push(
-            "Before replying, scan available skills descriptions. If exactly one clearly applies, read its SKILL.md and follow it."
+            "Get Updates (self-update) is ONLY allowed when the user explicitly asks for it."
                 .to_string(),
         );
+        lines.push("Do not run config.apply or update.run unless the user explicitly requests an update or config change; if it's not explicit, ask first.".to_string());
+        lines.push("Use config.schema to fetch the current JSON Schema (includes plugins/channels) before making config changes or answering config-field questions; avoid guessing field names/types.".to_string());
+        lines.push("Actions: config.get, config.schema, config.apply (validate + write full config, then restart), update.run (update deps or git, then restart).".to_string());
         lines.push(
-            "If none clearly apply, proceed normally. Do not read multiple skills up front."
-                .to_string(),
+            "After restart, OpenClaw pings the last active session automatically.".to_string(),
         );
-        lines.push("".to_string());
-
-        lines.push("## Reply Tags".to_string());
-        lines.push(
-            "To request native threaded reply on supported channels, place tag as the first token: [[reply_to_current]]."
-                .to_string(),
-        );
-        lines.push(
-            "Prefer [[reply_to_current]]. Use [[reply_to:<id>]] only when explicit id is provided."
-                .to_string(),
-        );
-        lines.push("".to_string());
+        lines.push(String::new());
     }
 
-    if !is_minimal && (has_tool("message") || has_tool("sessions_send") || has_tool("subagents")) {
-        lines.push("## Messaging".to_string());
+    if !is_minimal && !model_alias_lines.is_empty() {
+        lines.push("## Model Aliases".to_string());
         lines.push(
-            "- Reply in current session -> automatically routes to source channel.".to_string(),
-        );
-        if has_tool("sessions_send") {
-            lines.push(
-                "- Cross-session messaging -> use sessions_send(sessionKey, message).".to_string(),
-            );
-        }
-        if has_tool("subagents") {
-            lines.push(
-                "- Sub-agent orchestration -> use subagents(action=list|steer|kill|spawn|focus|unfocus)."
-                    .to_string(),
-            );
-        }
-        lines.push(
-            "- Never use exec/curl for provider messaging; OCLAW handles routing internally."
+            "Prefer aliases when specifying model overrides; full provider/model is also accepted."
                 .to_string(),
         );
-        lines.push("".to_string());
+        lines.extend(model_alias_lines);
+        lines.push(String::new());
     }
 
-    if !is_minimal && has_tool("message") {
-        lines.push("### message tool".to_string());
+    if user_timezone.is_some() {
         lines.push(
-            "- Use `message` for proactive sends + channel actions (polls, reactions, etc.)."
-                .to_string(),
+            "If you need the current date, time, or day of week, run session_status.".to_string(),
         );
-        lines.push("- For `action=send`, include `to` and `message`.".to_string());
-        lines.push("- If multiple channels are configured, pass `channel` explicitly.".to_string());
-        lines.push(
-            "- If you already delivered the user-visible reply via `message` (`action=send`), respond with ONLY: [[SILENT]]."
-                .to_string(),
-        );
-        lines.push(
-            "- When users ask to proactively contact someone (Feishu/Telegram/Slack/etc), use `message` instead of claiming integration is unavailable."
-                .to_string(),
-        );
-        lines.push(
-            "- If sending fails, report the exact tool error and ask for missing routing fields."
-                .to_string(),
-        );
-        lines.push("".to_string());
-    }
-
-    if !is_minimal {
-        lines.push("## Documentation".to_string());
-        lines.push("OpenClaw docs: https://docs.openclaw.ai".to_string());
-        lines.push("Source: https://github.com/openclaw/openclaw".to_string());
-        lines.push("".to_string());
     }
 
     lines.push("## Workspace".to_string());
-    lines.push(
-        "Treat the current working directory as the primary workspace for read/write/edit/apply_patch."
-            .to_string(),
-    );
-    lines.push("".to_string());
+    lines.push(format!("Your working directory is: {}", workspace_dir));
+    lines.push("Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.".to_string());
+    lines.push(String::new());
+
+    if !is_minimal {
+        if let Some(docs_dir) = docs_dir {
+            lines.push("## Documentation".to_string());
+            lines.push(format!("OpenClaw docs: {}", docs_dir));
+            lines.push("Mirror: https://docs.openclaw.ai".to_string());
+            lines.push("Source: https://github.com/openclaw/openclaw".to_string());
+            lines.push("Community: https://discord.com/invite/clawd".to_string());
+            lines.push("Find new skills: https://clawhub.com".to_string());
+            lines.push("For OpenClaw behavior, commands, config, or architecture: consult local docs first.".to_string());
+            lines.push("When diagnosing issues, run `openclaw status` yourself when possible; only ask the user if you lack access (e.g., sandboxed).".to_string());
+            lines.push(String::new());
+        }
+        if let Some(timezone) = user_timezone {
+            lines.push("## Current Date & Time".to_string());
+            lines.push(format!("Time zone: {}", timezone));
+            lines.push(String::new());
+        }
+        lines.push("## Workspace Files (injected)".to_string());
+        lines.push("These user-editable files are loaded by OpenClaw and included below in Project Context.".to_string());
+        lines.push(String::new());
+        lines.push("## Reply Tags".to_string());
+        lines.push(
+            "To request a native reply/quote on supported surfaces, include one tag in your reply:"
+                .to_string(),
+        );
+        lines.push("- Reply tags must be the very first token in the message (no leading text/newlines): [[reply_to_current]] your reply.".to_string());
+        lines.push("- [[reply_to_current]] replies to the triggering message.".to_string());
+        lines.push("- Prefer [[reply_to_current]]. Use [[reply_to:<id>]] only when an id was explicitly provided (e.g. by the user or a tool).".to_string());
+        lines.push("Whitespace inside the tag is allowed (e.g. [[ reply_to_current ]] / [[ reply_to: 123 ]]).".to_string());
+        lines.push(
+            "Tags are stripped before sending; support depends on the current channel config."
+                .to_string(),
+        );
+        lines.push(String::new());
+        lines.push("## Messaging".to_string());
+        lines.push("- Reply in current session -> automatically routes to the source channel (Signal, Telegram, etc.)".to_string());
+        lines.push(
+            "- Cross-session messaging -> use sessions_send(sessionKey, message)".to_string(),
+        );
+        lines
+            .push("- Sub-agent orchestration -> use subagents(action=list|steer|kill)".to_string());
+        lines.push("- `[System Message] ...` blocks are internal context and are not user-visible by default.".to_string());
+        lines.push("- If a `[System Message]` reports completed cron/subagent work and asks for a user update, rewrite it in your normal assistant voice and send that update (do not forward raw system text or default to [[SILENT]]).".to_string());
+        lines.push("- Never use exec/curl for provider messaging; OpenClaw handles all routing internally.".to_string());
+        if has_message {
+            lines.push(String::new());
+            lines.push("### message tool".to_string());
+            lines.push(
+                "- Use `message` for proactive sends + channel actions (polls, reactions, etc.)."
+                    .to_string(),
+            );
+            lines.push("- For `action=send`, include `to` and `message`.".to_string());
+            lines.push("- If multiple channels are configured, pass `channel`.".to_string());
+            lines.push("- If you use `message` (`action=send`) to deliver your user-visible reply, respond with ONLY: [[SILENT]] (avoid duplicate replies).".to_string());
+            lines.push("- Inline buttons are supported when the current channel provides them. Use `action=send` with `buttons=[[{text,callback_data,style?}]]`; `style` can be `primary`, `success`, or `danger`.".to_string());
+        }
+        lines.push(String::new());
+        if has_tts {
+            lines.push("## Voice (TTS)".to_string());
+            lines.push(
+                "When the user wants a voice reply, use the TTS pipeline/tooling configured for this runtime."
+                    .to_string(),
+            );
+            lines.push(String::new());
+        }
+        if has_reaction_tools {
+            lines.push("## Reactions".to_string());
+            lines.push(
+                "Reactions are enabled in this runtime. React only when relevant and avoid spam."
+                    .to_string(),
+            );
+            lines.push(String::new());
+        }
+    }
 
     if !is_minimal {
         lines.push("## Silent Replies".to_string());
         lines.push("When you have nothing to say, respond with ONLY: [[SILENT]]".to_string());
-        lines.push("Never append [[SILENT]] to normal replies.".to_string());
-        lines.push("".to_string());
-
+        lines.push(String::new());
+        lines.push("Rules:".to_string());
+        lines.push("- It must be your ENTIRE message - nothing else".to_string());
+        lines.push("- Never append it to an actual response (never include \"[[SILENT]]\" in real replies)".to_string());
+        lines.push("- Never wrap it in markdown or code blocks".to_string());
+        lines.push(String::new());
+        lines.push("Wrong: \"Here's help... [[SILENT]]\"".to_string());
+        lines.push("Wrong: \"[[SILENT]]\"".to_string());
+        lines.push("Right: [[SILENT]]".to_string());
+        lines.push(String::new());
         lines.push("## Heartbeats".to_string());
-        lines.push(
-            "If you receive a heartbeat poll and there is nothing that needs attention, reply exactly: HEARTBEAT_OK"
-                .to_string(),
-        );
-        lines.push(
-            "If something needs attention, do NOT include HEARTBEAT_OK; reply with the actual alert."
-                .to_string(),
-        );
-        lines.push("".to_string());
+        lines.push("Heartbeat prompt: (configured)".to_string());
+        lines.push("If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:".to_string());
+        lines.push("HEARTBEAT_OK".to_string());
+        lines.push("OpenClaw treats a leading/trailing \"HEARTBEAT_OK\" as a heartbeat ack (and may discard it).".to_string());
+        lines.push("If something needs attention, do NOT include \"HEARTBEAT_OK\"; reply with the alert text instead.".to_string());
+        lines.push(String::new());
     }
 
     lines.push("## Runtime".to_string());
     lines.push(build_runtime_line(tool_executor));
-    lines
-        .push("Reasoning: off (hidden unless explicitly enabled by runtime controls).".to_string());
-
+    lines.push(
+        "Reasoning: off (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled."
+            .to_string(),
+    );
     lines.join("\n")
 }
 
@@ -6799,74 +7064,106 @@ fn build_subagent_system_prompt(
     } else {
         task_text
     };
+    let child_depth = child_depth.max(1);
+    let max_spawn_depth = max_spawn_depth.max(1);
+    let can_spawn = child_depth < max_spawn_depth;
     let parent_label = if child_depth >= 2 {
         "parent orchestrator"
     } else {
         "main agent"
     };
-    let can_spawn = child_depth < max_spawn_depth.max(1);
+    let acp_enabled = resolve_acp_enabled(tool_executor);
     let mut lines: Vec<String> = vec![
         "# Subagent Context".to_string(),
-        "".to_string(),
+        String::new(),
         format!(
-            "You are a subagent spawned by the {} for a specific task.",
+            "You are a **subagent** spawned by the {} for a specific task.",
             parent_label
         ),
-        "".to_string(),
+        String::new(),
         "## Your Role".to_string(),
         format!("- You were created to handle: {}", task_text),
         "- Complete this task. That's your entire purpose.".to_string(),
         format!("- You are NOT the {}. Don't try to be.", parent_label),
-        "".to_string(),
+        String::new(),
         "## Rules".to_string(),
-        "1. Stay focused - Do your assigned task, nothing else.".to_string(),
+        "1. **Stay focused** - Do your assigned task, nothing else".to_string(),
         format!(
-            "2. Complete the task - Your final message will be automatically reported to the {}.",
+            "2. **Complete the task** - Your final message will be automatically reported to the {}",
             parent_label
         ),
-        "3. Don't initiate - No heartbeats, no proactive actions, no side quests.".to_string(),
-        "4. Be ephemeral - You may be terminated after task completion. That's fine.".to_string(),
-        "5. Trust push-based completion - Descendant results are auto-announced back to you; do not busy-poll for status.".to_string(),
-        "6. Recover from compacted/truncated tool output - If you see compacted or truncated markers, re-read only what you need using smaller chunks (read offset/limit or targeted rg/head/tail), not full-file dumps.".to_string(),
-        "".to_string(),
+        "3. **Don't initiate** - No heartbeats, no proactive actions, no side quests"
+            .to_string(),
+        "4. **Be ephemeral** - You may be terminated after task completion. That's fine."
+            .to_string(),
+        "5. **Trust push-based completion** - Descendant results are auto-announced back to you; do not busy-poll for status.".to_string(),
+        "6. **Recover from compacted/truncated tool output** - If you see `[compacted: tool output removed to free context]` or `[truncated: output exceeded context limit]`, assume prior output was reduced. Re-read only what you need using smaller chunks (`read` with offset/limit, or targeted `rg`/`head`/`tail`) instead of full-file `cat`.".to_string(),
+        String::new(),
         "## Output Format".to_string(),
         "When complete, your final response should include:".to_string(),
-        "- What you accomplished or found.".to_string(),
-        format!("- Any relevant details the {} should know.", parent_label),
-        "- Keep it concise but informative.".to_string(),
-        "".to_string(),
+        "- What you accomplished or found".to_string(),
+        format!("- Any relevant details the {} should know", parent_label),
+        "- Keep it concise but informative".to_string(),
+        String::new(),
         "## What You DON'T Do".to_string(),
-        format!("- NO user conversations (that's {}'s job).", parent_label),
-        "- NO external messages unless explicitly tasked with a specific recipient/channel."
-            .to_string(),
-        "- NO cron jobs or persistent state.".to_string(),
-        format!("- NO pretending to be the {}.", parent_label),
-        "- Only use the message tool when explicitly instructed to contact a specific external recipient; otherwise return plain text and let the orchestrator deliver it.".to_string(),
-        "".to_string(),
+        format!("- NO user conversations (that's {}'s job)", parent_label),
+        "- NO external messages (email, tweets, etc.) unless explicitly tasked with a specific recipient/channel".to_string(),
+        "- NO cron jobs or persistent state".to_string(),
+        format!("- NO pretending to be the {}", parent_label),
+        format!("- Only use the `message` tool when explicitly instructed to contact a specific external recipient; otherwise return plain text and let the {} deliver it", parent_label),
+        String::new(),
     ];
+
     if can_spawn {
-        lines.extend([
-            "## Sub-Agent Spawning".to_string(),
-            "You CAN spawn your own sub-agents for parallel or complex work using sessions_spawn."
+        lines.push("## Sub-Agent Spawning".to_string());
+        lines.push(
+            "You CAN spawn your own sub-agents for parallel or complex work using `sessions_spawn`."
                 .to_string(),
-            "Use the subagents tool to steer, kill, or do an on-demand status check for your spawned sub-agents.".to_string(),
-            "Your sub-agents will announce their results back to you automatically (not to the main agent).".to_string(),
-            "Default workflow: spawn work, continue orchestrating, and wait for auto-announced completions.".to_string(),
-            "Do NOT repeatedly poll subagents list in a loop unless you are actively debugging or intervening.".to_string(),
-            "Coordinate child work and synthesize results before reporting back.".to_string(),
-            "".to_string(),
-        ]);
+        );
+        lines.push(
+            "Use the `subagents` tool to steer, kill, or do an on-demand status check for your spawned sub-agents.".to_string(),
+        );
+        lines.push("Your sub-agents will announce their results back to you automatically (not to the main agent).".to_string());
+        lines.push("Default workflow: spawn work, continue orchestrating, and wait for auto-announced completions.".to_string());
+        lines.push(
+            "Do NOT repeatedly poll `subagents list` in a loop unless you are actively debugging or intervening.".to_string(),
+        );
+        lines.push(
+            "Coordinate their work and synthesize results before reporting back.".to_string(),
+        );
+        if acp_enabled {
+            lines.push(
+                "For ACP harness sessions (codex/claudecode/gemini), use `sessions_spawn` with `runtime: \"acp\"` (set `agentId` unless `acp.defaultAgent` is configured).".to_string(),
+            );
+            lines.push(
+                "`agents_list` and `subagents` apply to OpenClaw sub-agents (`runtime: \"subagent\"`); ACP harness ids are controlled by `acp.allowedAgents`.".to_string(),
+            );
+            lines.push("Do not ask users to run slash commands or CLI when `sessions_spawn` can do it directly.".to_string());
+            lines.push(
+                "Do not use `exec` (`openclaw ...`, `acpx ...`) to spawn ACP sessions.".to_string(),
+            );
+            lines.push(
+                "Use `subagents` only for OpenClaw subagents (`runtime: \"subagent\"`)."
+                    .to_string(),
+            );
+            lines.push("Subagent results auto-announce back to you; ACP sessions continue in their bound thread.".to_string());
+            lines.push(
+                "Avoid polling loops; spawn, orchestrate, and synthesize results.".to_string(),
+            );
+        }
+        lines.push(String::new());
     } else if child_depth >= 2 {
-        lines.extend([
-            "## Sub-Agent Spawning".to_string(),
+        lines.push("## Sub-Agent Spawning".to_string());
+        lines.push(
             "You are a leaf worker and CANNOT spawn further sub-agents. Focus on your assigned task."
                 .to_string(),
-            "".to_string(),
-        ]);
+        );
+        lines.push(String::new());
     }
+
     lines.push("## Session Context".to_string());
     if let Some(trimmed) = label.map(str::trim).filter(|v| !v.is_empty()) {
-        lines.push(format!("- Label: {}.", trimmed));
+        lines.push(format!("- Label: {}", trimmed));
     }
     if !requester_session_key.trim().is_empty() {
         lines.push(format!(
@@ -8070,15 +8367,16 @@ mod tests {
             2,
         );
         assert!(prompt.contains("You are a leaf worker and CANNOT spawn further sub-agents."));
-        assert!(prompt.contains("Only use the message tool when explicitly instructed"));
+        assert!(prompt.contains("Only use the `message` tool when explicitly instructed"));
     }
 
     #[test]
-    fn default_prompt_includes_browser_open_guidance() {
+    fn default_prompt_includes_node_style_tooling_guidance() {
         let exec = ToolRegistryExecutor::new(std::sync::Arc::new(ToolRegistry::default()));
         let prompt = default_agent_system_prompt(&exec);
-        assert!(prompt.contains("Do not claim browsing/network is unavailable"));
-        assert!(prompt.contains("open a website in a browser"));
+        assert!(prompt.contains("Tool names are case-sensitive. Call tools exactly as listed."));
+        assert!(prompt.contains("For long waits, avoid rapid poll loops"));
+        assert!(prompt.contains("Do not poll `subagents list` / `sessions_list` in a loop"));
         assert!(prompt.contains("### message tool"));
     }
 
