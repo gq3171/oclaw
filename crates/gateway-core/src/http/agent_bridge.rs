@@ -7,14 +7,14 @@ use oclaw_channel_core::{
     types::{ChannelMedia, MediaData, MediaType, PollRequest},
 };
 use oclaw_llm_core::chat::{Tool, ToolFunction};
-use oclaw_llm_core::providers::LlmProvider;
+use oclaw_llm_core::providers::{LlmProvider, ProviderType};
 use oclaw_plugin_core::HookPipeline;
 use oclaw_plugin_core::PluginRegistrations;
 use oclaw_tools_core::tool::ToolRegistry;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -763,6 +763,7 @@ pub struct ToolRegistryExecutor {
     llm_provider: Option<Arc<dyn LlmProvider>>,
     session_id: Option<String>,
     turn_source: Option<TurnSourceRoute>,
+    workspace_root: Option<PathBuf>,
 }
 
 impl ToolRegistryExecutor {
@@ -779,6 +780,7 @@ impl ToolRegistryExecutor {
             llm_provider: None,
             session_id: None,
             turn_source: None,
+            workspace_root: None,
         }
     }
 
@@ -857,6 +859,12 @@ impl ToolRegistryExecutor {
         self
     }
 
+    pub fn with_workspace_root(mut self, root: impl Into<PathBuf>) -> Self {
+        let path = root.into();
+        self.workspace_root = Some(path);
+        self
+    }
+
     fn build_child_executor(&self, session_id: impl Into<String>) -> Self {
         let mut exec = Self::new(self.registry.clone()).with_session_id(session_id);
         if let Some(ref regs) = self.plugin_regs {
@@ -886,7 +894,35 @@ impl ToolRegistryExecutor {
         if let Some(ref turn_source) = self.turn_source {
             exec.turn_source = Some(turn_source.clone());
         }
+        if let Some(ref workspace_root) = self.workspace_root {
+            exec = exec.with_workspace_root(workspace_root.clone());
+        }
         exec
+    }
+
+    fn resolve_workspace_root(&self) -> PathBuf {
+        if let Some(root) = self.workspace_root.as_ref() {
+            return root.clone();
+        }
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    }
+
+    fn resolve_session_metadata(&self) -> HashMap<String, String> {
+        let Some(session_id) = self
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        else {
+            return HashMap::new();
+        };
+        let Some(mgr_lock) = self.session_manager.as_ref() else {
+            return HashMap::new();
+        };
+        let Ok(mgr) = mgr_lock.try_read() else {
+            return HashMap::new();
+        };
+        mgr.get_session_metadata(session_id).unwrap_or_default()
     }
 
     async fn resolve_session_visibility(&self) -> SessionVisibility {
@@ -6609,12 +6645,378 @@ fn resolve_model_alias_lines(tool_executor: &ToolRegistryExecutor) -> Vec<String
     lines
 }
 
-fn resolve_workspace_skill_entries() -> Vec<(String, String)> {
-    let cwd = match std::env::current_dir() {
-        Ok(path) => path,
-        Err(_) => return Vec::new(),
+fn push_unique(items: &mut Vec<String>, value: impl Into<String>) {
+    let v = value.into();
+    let trimmed = v.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if !items.iter().any(|item| item.eq_ignore_ascii_case(trimmed)) {
+        items.push(trimmed.to_string());
+    }
+}
+
+fn split_csv_like(raw: &str) -> Vec<String> {
+    raw.split([',', ';', '\n', '\r', '\t', ' '])
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn extract_string_list(value: &serde_json::Value) -> Vec<String> {
+    if let Some(arr) = value.as_array() {
+        return arr
+            .iter()
+            .filter_map(|item| item.as_str().map(str::trim))
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string)
+            .collect();
+    }
+    if let Some(raw) = value.as_str() {
+        return split_csv_like(raw);
+    }
+    Vec::new()
+}
+
+fn resolve_authorized_senders(
+    tool_executor: &ToolRegistryExecutor,
+    session_meta: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut senders: Vec<String> = Vec::new();
+    for key in [
+        "owner",
+        "ownerId",
+        "owner_id",
+        "authorizedSender",
+        "authorized_sender",
+        "authorizedSenders",
+        "authorized_senders",
+        "ownerNumbers",
+        "owner_numbers",
+        "ownerList",
+        "owner_list",
+        "sender_id",
+        "sender",
+        "from",
+        "from_id",
+    ] {
+        if let Some(raw) = session_meta.get(key) {
+            for item in split_csv_like(raw) {
+                push_unique(&mut senders, item);
+            }
+        }
+    }
+    if let Some(cfg_lock) = tool_executor.full_config.as_ref()
+        && let Ok(cfg) = cfg_lock.try_read()
+    {
+        let mut candidate_lists: Vec<Vec<String>> = Vec::new();
+        if let Some(commands) = cfg.commands.as_ref() {
+            for path in [
+                "/ownerList",
+                "/ownerNumbers",
+                "/authorizedSenders",
+                "/owner/list",
+                "/owner/numbers",
+                "/owners",
+            ] {
+                if let Some(value) = commands.pointer(path) {
+                    candidate_lists.push(extract_string_list(value));
+                }
+            }
+        }
+        if let Some(auth) = cfg.auth.as_ref()
+            && let Ok(value) = serde_json::to_value(auth)
+        {
+            for path in [
+                "/ownerList",
+                "/ownerNumbers",
+                "/authorizedSenders",
+                "/trustedSenders",
+            ] {
+                if let Some(node) = value.pointer(path) {
+                    candidate_lists.push(extract_string_list(node));
+                }
+            }
+        }
+        for list in candidate_lists {
+            for item in list {
+                push_unique(&mut senders, item);
+            }
+        }
+    }
+    senders
+}
+
+fn parse_timezone_from_user_md(workspace_root: &Path) -> Option<String> {
+    let user_path = workspace_root.join("USER.md");
+    let content = std::fs::read_to_string(user_path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if !(lower.starts_with("timezone:")
+            || lower.starts_with("- timezone:")
+            || lower.starts_with("time zone:")
+            || lower.starts_with("- time zone:"))
+        {
+            continue;
+        }
+        if let Some((_, value)) = trimmed.split_once(':') {
+            let timezone = value.trim();
+            if !timezone.is_empty() {
+                return Some(timezone.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn resolve_timezone(
+    session_meta: &HashMap<String, String>,
+    workspace_root: &Path,
+) -> Option<String> {
+    for key in [
+        "userTimezone",
+        "user_timezone",
+        "timezone",
+        "time_zone",
+        "tz",
+    ] {
+        if let Some(value) = session_meta.get(key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    std::env::var("TZ")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| parse_timezone_from_user_md(workspace_root))
+}
+
+fn resolve_reasoning_level(session_meta: &HashMap<String, String>) -> String {
+    for key in [
+        "reasoningLevel",
+        "reasoning_level",
+        "reasoning",
+        "reasoning.mode",
+        "reasoningMode",
+    ] {
+        if let Some(value) = session_meta.get(key) {
+            let normalized = value.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "on" | "stream" | "off" => return normalized,
+                _ => {}
+            }
+        }
+    }
+    "off".to_string()
+}
+
+fn resolve_runtime_channel(
+    session_meta: &HashMap<String, String>,
+    turn_source: Option<&TurnSourceRoute>,
+) -> Option<String> {
+    if let Some(channel) = turn_source
+        .map(|route| normalize_channel_alias(&route.channel))
+        .filter(|v| !v.trim().is_empty())
+    {
+        return Some(channel);
+    }
+    for key in ["channel", "sourceChannel", "source_channel"] {
+        if let Some(raw) = session_meta.get(key) {
+            let normalized = normalize_channel_alias(raw);
+            if !normalized.trim().is_empty() {
+                return Some(normalized);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_runtime_capabilities(
+    tool_names: &[String],
+    session_meta: &HashMap<String, String>,
+    turn_source: Option<&TurnSourceRoute>,
+) -> Vec<String> {
+    let mut capabilities: Vec<String> = Vec::new();
+    if has_tool_name(tool_names, "message") {
+        capabilities.push("message".to_string());
+    }
+    if has_any_tool_name(
+        tool_names,
+        &["send_reaction", "remove_reaction", "list_reactions"],
+    ) {
+        capabilities.push("reactions".to_string());
+    }
+    if has_any_tool_name(tool_names, &["browse", "browser"]) {
+        capabilities.push("browser".to_string());
+    }
+    if turn_source
+        .and_then(|route| route.thread_id.as_deref())
+        .is_some()
+    {
+        capabilities.push("threadReply".to_string());
+    }
+    for key in [
+        "capabilities",
+        "channelCapabilities",
+        "channel_capabilities",
+        "runtimeCapabilities",
+        "runtime_capabilities",
+    ] {
+        if let Some(raw) = session_meta.get(key) {
+            for item in split_csv_like(raw) {
+                let normalized = item.trim().to_ascii_lowercase();
+                if normalized.is_empty() {
+                    continue;
+                }
+                if normalized == "inlinebuttons" || normalized == "inline_buttons" {
+                    capabilities.push("inlineButtons".to_string());
+                } else {
+                    capabilities.push(item.trim().to_string());
+                }
+            }
+        }
+    }
+    capabilities.sort();
+    capabilities.dedup();
+    capabilities
+}
+
+fn list_deliverable_message_channels() -> Vec<String> {
+    vec![
+        "telegram".to_string(),
+        "whatsapp".to_string(),
+        "discord".to_string(),
+        "irc".to_string(),
+        "googlechat".to_string(),
+        "slack".to_string(),
+        "signal".to_string(),
+        "imessage".to_string(),
+    ]
+}
+
+#[derive(Debug, Clone, Default)]
+struct SandboxPromptInfo {
+    enabled: bool,
+    workspace_dir: Option<String>,
+    container_workspace_dir: Option<String>,
+    workspace_access: Option<String>,
+    agent_workspace_mount: Option<String>,
+    browser_bridge_url: Option<String>,
+    browser_novnc_url: Option<String>,
+    host_browser_allowed: Option<bool>,
+    elevated_allowed: Option<bool>,
+    elevated_default_level: Option<String>,
+}
+
+fn env_bool(name: &str) -> Option<bool> {
+    std::env::var(name).ok().and_then(|raw| {
+        let normalized = raw.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        }
+    })
+}
+
+fn env_text(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn resolve_sandbox_info(tool_executor: &ToolRegistryExecutor) -> SandboxPromptInfo {
+    let mut info = SandboxPromptInfo {
+        enabled: env_bool("OCLAW_SANDBOX_ENABLED")
+            .or_else(|| env_bool("OCLAWS_SANDBOX_ENABLED"))
+            .unwrap_or(false),
+        workspace_dir: env_text("OCLAW_SANDBOX_WORKSPACE_DIR")
+            .or_else(|| env_text("OCLAWS_SANDBOX_WORKSPACE_DIR")),
+        container_workspace_dir: env_text("OCLAW_SANDBOX_CONTAINER_WORKSPACE_DIR")
+            .or_else(|| env_text("OCLAWS_SANDBOX_CONTAINER_WORKSPACE_DIR")),
+        workspace_access: env_text("OCLAW_SANDBOX_WORKSPACE_ACCESS")
+            .or_else(|| env_text("OCLAWS_SANDBOX_WORKSPACE_ACCESS")),
+        agent_workspace_mount: env_text("OCLAW_SANDBOX_AGENT_WORKSPACE_MOUNT")
+            .or_else(|| env_text("OCLAWS_SANDBOX_AGENT_WORKSPACE_MOUNT")),
+        browser_bridge_url: env_text("OCLAW_SANDBOX_BROWSER_BRIDGE_URL")
+            .or_else(|| env_text("OCLAWS_SANDBOX_BROWSER_BRIDGE_URL")),
+        browser_novnc_url: env_text("OCLAW_SANDBOX_BROWSER_NOVNC_URL")
+            .or_else(|| env_text("OCLAWS_SANDBOX_BROWSER_NOVNC_URL")),
+        host_browser_allowed: env_bool("OCLAW_SANDBOX_HOST_BROWSER_ALLOWED")
+            .or_else(|| env_bool("OCLAWS_SANDBOX_HOST_BROWSER_ALLOWED")),
+        elevated_allowed: env_bool("OCLAW_SANDBOX_ELEVATED_ALLOWED")
+            .or_else(|| env_bool("OCLAWS_SANDBOX_ELEVATED_ALLOWED")),
+        elevated_default_level: env_text("OCLAW_SANDBOX_ELEVATED_DEFAULT_LEVEL")
+            .or_else(|| env_text("OCLAWS_SANDBOX_ELEVATED_DEFAULT_LEVEL")),
     };
-    let skills_dir = cwd.join("skills");
+    if let Some(cfg_lock) = tool_executor.full_config.as_ref()
+        && let Ok(cfg) = cfg_lock.try_read()
+    {
+        if let Some(browser) = cfg.browser.as_ref()
+            && browser.no_sandbox == Some(false)
+        {
+            info.enabled = true;
+        }
+    }
+    info
+}
+
+fn provider_requires_reasoning_tags(tool_executor: &ToolRegistryExecutor) -> bool {
+    let Some(provider) = tool_executor.llm_provider.as_ref() else {
+        return false;
+    };
+    match provider.provider_type() {
+        ProviderType::Google | ProviderType::Minimax => true,
+        _ => false,
+    }
+}
+
+fn read_context_file(path: &Path, max_chars: usize) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    if raw.len() <= max_chars {
+        return Some(raw);
+    }
+    let mut out: String = raw.chars().take(max_chars).collect();
+    out.push_str("\n\n[truncated: context file exceeded prompt budget]");
+    Some(out)
+}
+
+fn resolve_project_context_files(workspace_root: &Path) -> Vec<(String, String)> {
+    let mut files: Vec<(String, String)> = Vec::new();
+    for name in [
+        "AGENTS.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "MEMORY.md",
+    ] {
+        let path = workspace_root.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        if let Some(content) = read_context_file(&path, 24_000) {
+            let label = path
+                .strip_prefix(workspace_root)
+                .ok()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| path.display().to_string());
+            files.push((label, content));
+        }
+    }
+    files
+}
+
+fn resolve_workspace_skill_entries(workspace_root: &Path) -> Vec<(String, String)> {
+    let skills_dir = workspace_root.join("skills");
     if !skills_dir.is_dir() {
         return Vec::new();
     }
@@ -6644,8 +7046,8 @@ fn resolve_workspace_skill_entries() -> Vec<(String, String)> {
     entries
 }
 
-fn build_skills_section(read_tool_name: &str) -> Vec<String> {
-    let entries = resolve_workspace_skill_entries();
+fn build_skills_section(read_tool_name: &str, workspace_root: &Path) -> Vec<String> {
+    let entries = resolve_workspace_skill_entries(workspace_root);
     if entries.is_empty() {
         return Vec::new();
     }
@@ -6698,9 +7100,8 @@ fn resolve_acp_enabled(tool_executor: &ToolRegistryExecutor) -> bool {
 fn build_runtime_line(tool_executor: &ToolRegistryExecutor) -> String {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
-    let cwd = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| ".".to_string());
+    let cwd = tool_executor.resolve_workspace_root().display().to_string();
+    let session_meta = tool_executor.resolve_session_metadata();
     let host = std::env::var("HOSTNAME")
         .ok()
         .or_else(|| std::env::var("COMPUTERNAME").ok())
@@ -6711,36 +7112,15 @@ fn build_runtime_line(tool_executor: &ToolRegistryExecutor) -> String {
         .or_else(|| std::env::var("ComSpec").ok())
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
-    let runtime_channel = tool_executor
-        .turn_source
-        .as_ref()
-        .map(|route| normalize_channel_alias(&route.channel))
-        .filter(|v| !v.trim().is_empty());
+    let runtime_channel =
+        resolve_runtime_channel(&session_meta, tool_executor.turn_source.as_ref());
     let tools = tool_executor.available_tools();
     let tool_names: Vec<String> = tools.into_iter().map(|t| t.function.name).collect();
-    let mut capabilities: Vec<String> = Vec::new();
-    if has_tool_name(&tool_names, "message") {
-        capabilities.push("message".to_string());
-    }
-    if has_any_tool_name(
+    let capabilities = resolve_runtime_capabilities(
         &tool_names,
-        &["send_reaction", "remove_reaction", "list_reactions"],
-    ) {
-        capabilities.push("reactions".to_string());
-    }
-    if has_tool_name(&tool_names, "browse") {
-        capabilities.push("browser".to_string());
-    }
-    if tool_executor
-        .turn_source
-        .as_ref()
-        .and_then(|route| route.thread_id.as_deref())
-        .is_some()
-    {
-        capabilities.push("threadReply".to_string());
-    }
-    capabilities.sort();
-    capabilities.dedup();
+        &session_meta,
+        tool_executor.turn_source.as_ref(),
+    );
 
     let mut parts = Vec::new();
     if let Some(session_id) = tool_executor
@@ -6802,6 +7182,8 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
 
     let has_tool = |name: &str| has_tool_name(&tool_names, name);
     let has_any_tool = |names: &[&str]| has_any_tool_name(&tool_names, names);
+    let session_meta = tool_executor.resolve_session_metadata();
+    let workspace_root = tool_executor.resolve_workspace_root();
     let has_sessions_spawn = has_tool("sessions_spawn");
     let has_gateway = has_tool("gateway");
     let has_message = has_tool("message");
@@ -6813,18 +7195,89 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
     let process_tool_name = pick_tool_name(&tool_names, &["process"], "process");
     let read_tool_name = pick_tool_name(&tool_names, &["read"], "read");
     let model_alias_lines = resolve_model_alias_lines(tool_executor);
-    let skills_section = build_skills_section(&read_tool_name);
-    let user_timezone = std::env::var("TZ")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-    let workspace_dir = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| ".".to_string());
-    let docs_dir = std::path::Path::new("docs")
+    let skills_section = build_skills_section(&read_tool_name, &workspace_root);
+    let authorized_senders = resolve_authorized_senders(tool_executor, &session_meta);
+    let sandbox_info = resolve_sandbox_info(tool_executor);
+    let reasoning_tag_hint = provider_requires_reasoning_tags(tool_executor);
+    let context_files = resolve_project_context_files(&workspace_root);
+    let user_timezone = resolve_timezone(&session_meta, &workspace_root);
+    let reasoning_level = resolve_reasoning_level(&session_meta);
+    let runtime_channel =
+        resolve_runtime_channel(&session_meta, tool_executor.turn_source.as_ref());
+    let runtime_capabilities = resolve_runtime_capabilities(
+        &tool_names,
+        &session_meta,
+        tool_executor.turn_source.as_ref(),
+    );
+    let inline_buttons_enabled = runtime_capabilities
+        .iter()
+        .any(|cap| cap.eq_ignore_ascii_case("inlineButtons"));
+    let message_channel_options = list_deliverable_message_channels().join("|");
+    let workspace_dir = workspace_root.display().to_string();
+    let display_workspace_dir = if sandbox_info.enabled {
+        sandbox_info
+            .container_workspace_dir
+            .clone()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| workspace_dir.clone())
+    } else {
+        workspace_dir.clone()
+    };
+    let workspace_guidance = if sandbox_info.enabled
+        && sandbox_info
+            .container_workspace_dir
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|v| !v.is_empty())
+    {
+        format!(
+            "For read/write/edit/apply_patch, file paths resolve against host workspace: {}. For bash/exec commands, use sandbox container paths under {} (or relative paths from that workdir), not host paths. Prefer relative paths so both sandboxed exec and file tools work consistently.",
+            workspace_dir,
+            sandbox_info
+                .container_workspace_dir
+                .as_deref()
+                .unwrap_or("")
+        )
+    } else {
+        "Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.".to_string()
+    };
+    let docs_dir = workspace_root
+        .join("docs")
         .canonicalize()
         .ok()
+        .or_else(|| std::path::Path::new("docs").canonicalize().ok())
         .map(|p| p.display().to_string());
+    let heartbeat_prompt_line = session_metadata_pick(
+        &session_meta,
+        &[
+            "heartbeatPrompt",
+            "heartbeat_prompt",
+            "heartbeat.prompt",
+            "heartbeat",
+        ],
+    )
+    .or_else(|| env_text("OCLAW_HEARTBEAT_PROMPT"))
+    .or_else(|| env_text("OCLAWS_HEARTBEAT_PROMPT"))
+    .map(|v| format!("Heartbeat prompt: {}", v))
+    .unwrap_or_else(|| "Heartbeat prompt: (configured)".to_string());
+    let mut workspace_notes: Vec<String> = Vec::new();
+    for key in [
+        "workspaceNote",
+        "workspaceNotes",
+        "workspace_note",
+        "workspace_notes",
+    ] {
+        if let Some(raw) = session_meta.get(key) {
+            for line in raw.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    workspace_notes.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+    workspace_notes.sort();
+    workspace_notes.dedup();
 
     let mut lines = vec![
         "You are a personal assistant running inside OpenClaw.".to_string(),
@@ -6921,15 +7374,28 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
         lines.push(String::new());
     }
 
+    if !is_minimal && !authorized_senders.is_empty() {
+        lines.push("## Authorized Senders".to_string());
+        lines.push(format!(
+            "Authorized senders: {}. These senders are allowlisted; do not assume they are the owner.",
+            authorized_senders.join(", ")
+        ));
+        lines.push(String::new());
+    }
+
     if user_timezone.is_some() {
         lines.push(
-            "If you need the current date, time, or day of week, run session_status.".to_string(),
+            "If you need the current date, time, or day of week, run session_status (📊 session_status).".to_string(),
         );
     }
 
     lines.push("## Workspace".to_string());
-    lines.push(format!("Your working directory is: {}", workspace_dir));
-    lines.push("Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.".to_string());
+    lines.push(format!(
+        "Your working directory is: {}",
+        display_workspace_dir
+    ));
+    lines.push(workspace_guidance);
+    lines.extend(workspace_notes);
     lines.push(String::new());
 
     if !is_minimal {
@@ -6949,6 +7415,56 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
             lines.push(format!("Time zone: {}", timezone));
             lines.push(String::new());
         }
+    }
+    if sandbox_info.enabled {
+        lines.push("## Sandbox".to_string());
+        lines.push("You are running in a sandboxed runtime (tools execute in Docker).".to_string());
+        lines.push("Some tools may be unavailable due to sandbox policy.".to_string());
+        lines.push("Sub-agents stay sandboxed (no elevated/host access). Need outside-sandbox read/write? Don't spawn; ask first.".to_string());
+        if let Some(container_workspace_dir) = sandbox_info.container_workspace_dir.as_deref() {
+            lines.push(format!(
+                "Sandbox container workdir: {}",
+                container_workspace_dir
+            ));
+        }
+        if let Some(workspace_dir) = sandbox_info.workspace_dir.as_deref() {
+            lines.push(format!("Sandbox host mount source (file tools bridge only; not valid inside sandbox exec): {}", workspace_dir));
+        }
+        if let Some(workspace_access) = sandbox_info.workspace_access.as_deref() {
+            if let Some(mount) = sandbox_info.agent_workspace_mount.as_deref() {
+                lines.push(format!(
+                    "Agent workspace access: {} (mounted at {})",
+                    workspace_access, mount
+                ));
+            } else {
+                lines.push(format!("Agent workspace access: {}", workspace_access));
+            }
+        }
+        if sandbox_info.browser_bridge_url.is_some() {
+            lines.push("Sandbox browser: enabled.".to_string());
+        }
+        if let Some(vnc) = sandbox_info.browser_novnc_url.as_deref() {
+            lines.push(format!("Sandbox browser observer (noVNC): {}", vnc));
+        }
+        match sandbox_info.host_browser_allowed {
+            Some(true) => lines.push("Host browser control: allowed.".to_string()),
+            Some(false) => lines.push("Host browser control: blocked.".to_string()),
+            None => {}
+        }
+        if sandbox_info.elevated_allowed == Some(true) {
+            lines.push("Elevated exec is available for this session.".to_string());
+            lines.push("User can toggle with /elevated on|off|ask|full.".to_string());
+            lines.push("You may also send /elevated on|off|ask|full when needed.".to_string());
+            if let Some(level) = sandbox_info.elevated_default_level.as_deref() {
+                lines.push(format!(
+                    "Current elevated level: {} (ask runs exec on host with approvals; full auto-approves).",
+                    level
+                ));
+            }
+        }
+        lines.push(String::new());
+    }
+    if !is_minimal {
         lines.push("## Workspace Files (injected)".to_string());
         lines.push("These user-editable files are loaded by OpenClaw and included below in Project Context.".to_string());
         lines.push(String::new());
@@ -6967,12 +7483,10 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
         );
         lines.push(String::new());
         lines.push("## Messaging".to_string());
-        lines.push("- Reply in current session -> automatically routes to the source channel (Signal, Telegram, etc.)".to_string());
-        lines.push(
-            "- Cross-session messaging -> use sessions_send(sessionKey, message)".to_string(),
-        );
+        lines.push("- Reply in current session → automatically routes to the source channel (Signal, Telegram, etc.)".to_string());
         lines
-            .push("- Sub-agent orchestration -> use subagents(action=list|steer|kill)".to_string());
+            .push("- Cross-session messaging → use sessions_send(sessionKey, message)".to_string());
+        lines.push("- Sub-agent orchestration → use subagents(action=list|steer|kill)".to_string());
         lines.push("- `[System Message] ...` blocks are internal context and are not user-visible by default.".to_string());
         lines.push("- If a `[System Message]` reports completed cron/subagent work and asks for a user update, rewrite it in your normal assistant voice and send that update (do not forward raw system text or default to [[SILENT]]).".to_string());
         lines.push("- Never use exec/curl for provider messaging; OpenClaw handles all routing internally.".to_string());
@@ -6984,9 +7498,16 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
                     .to_string(),
             );
             lines.push("- For `action=send`, include `to` and `message`.".to_string());
-            lines.push("- If multiple channels are configured, pass `channel`.".to_string());
+            lines.push(format!(
+                "- If multiple channels are configured, pass `channel` ({}).",
+                message_channel_options
+            ));
             lines.push("- If you use `message` (`action=send`) to deliver your user-visible reply, respond with ONLY: [[SILENT]] (avoid duplicate replies).".to_string());
-            lines.push("- Inline buttons are supported when the current channel provides them. Use `action=send` with `buttons=[[{text,callback_data,style?}]]`; `style` can be `primary`, `success`, or `danger`.".to_string());
+            if inline_buttons_enabled {
+                lines.push("- Inline buttons supported. Use `action=send` with `buttons=[[{text,callback_data,style?}]]`; `style` can be `primary`, `success`, or `danger`.".to_string());
+            } else if let Some(channel) = runtime_channel.as_deref() {
+                lines.push(format!("- Inline buttons not enabled for {}. If you need them, ask to set {}.capabilities.inlineButtons (\"dm\"|\"group\"|\"all\"|\"allowlist\").", channel, channel));
+            }
         }
         lines.push(String::new());
         if has_tts {
@@ -6997,12 +7518,91 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
             );
             lines.push(String::new());
         }
-        if has_reaction_tools {
-            lines.push("## Reactions".to_string());
+    }
+    if has_reaction_tools {
+        let reaction_level = session_metadata_pick(
+            &session_meta,
+            &[
+                "reactionLevel",
+                "reaction_level",
+                "reactionsLevel",
+                "reactions.level",
+            ],
+        )
+        .map(|v| v.to_ascii_lowercase());
+        let reaction_channel = tool_executor
+            .turn_source
+            .as_ref()
+            .map(|route| normalize_channel_alias(&route.channel))
+            .unwrap_or_else(|| "current channel".to_string());
+        lines.push("## Reactions".to_string());
+        match reaction_level.as_deref() {
+            Some("extensive") => {
+                lines.push(format!(
+                    "Reactions are enabled for {} in EXTENSIVE mode.",
+                    reaction_channel
+                ));
+                lines.push("Feel free to react liberally:".to_string());
+                lines.push("- Acknowledge messages with appropriate emojis".to_string());
+                lines.push("- Express sentiment and personality through reactions".to_string());
+                lines.push("- React to interesting content, humor, or notable events".to_string());
+                lines.push("- Use reactions to confirm understanding or agreement".to_string());
+                lines.push("Guideline: react whenever it feels natural.".to_string());
+            }
+            _ => {
+                lines.push(format!(
+                    "Reactions are enabled for {} in MINIMAL mode.",
+                    reaction_channel
+                ));
+                lines.push("React ONLY when truly relevant:".to_string());
+                lines.push("- Acknowledge important user requests or confirmations".to_string());
+                lines.push(
+                    "- Express genuine sentiment (humor, appreciation) sparingly".to_string(),
+                );
+                lines.push("- Avoid reacting to routine messages or your own replies".to_string());
+                lines.push("Guideline: at most 1 reaction per 5-10 exchanges.".to_string());
+            }
+        }
+        lines.push(String::new());
+    }
+
+    if reasoning_tag_hint {
+        lines.push("## Reasoning Format".to_string());
+        lines.push("ALL internal reasoning MUST be inside <think>...</think>.".to_string());
+        lines.push("Do not output any analysis outside <think>.".to_string());
+        lines.push(
+            "Format every reply as <think>...</think> then <final>...</final>, with no other text."
+                .to_string(),
+        );
+        lines.push("Only the final user-visible reply may appear inside <final>.".to_string());
+        lines.push("Only text inside <final> is shown to the user; everything else is discarded and never seen by the user.".to_string());
+        lines.push("Example:".to_string());
+        lines.push("<think>Short internal reasoning.</think>".to_string());
+        lines.push("<final>Hey there! What would you like to do next?</final>".to_string());
+        lines.push(String::new());
+    }
+
+    if !context_files.is_empty() {
+        let has_soul = context_files.iter().any(|(path, _)| {
+            path.rsplit('/')
+                .next()
+                .map(|name| name.eq_ignore_ascii_case("SOUL.md"))
+                .unwrap_or(false)
+        });
+        lines.push("# Project Context".to_string());
+        lines.push(String::new());
+        lines.push("The following project context files have been loaded:".to_string());
+        if has_soul {
             lines.push(
-                "Reactions are enabled in this runtime. React only when relevant and avoid spam."
+                "If SOUL.md is present, embody its persona and tone. Avoid stiff, generic replies; follow its guidance unless higher-priority instructions override it."
                     .to_string(),
             );
+        }
+        lines.push(String::new());
+        for (path, content) in context_files {
+            lines.push(format!("## {}", path));
+            lines.push(String::new());
+            lines.push(content);
             lines.push(String::new());
         }
     }
@@ -7011,17 +7611,17 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
         lines.push("## Silent Replies".to_string());
         lines.push("When you have nothing to say, respond with ONLY: [[SILENT]]".to_string());
         lines.push(String::new());
-        lines.push("Rules:".to_string());
-        lines.push("- It must be your ENTIRE message - nothing else".to_string());
+        lines.push("⚠️ Rules:".to_string());
+        lines.push("- It must be your ENTIRE message — nothing else".to_string());
         lines.push("- Never append it to an actual response (never include \"[[SILENT]]\" in real replies)".to_string());
         lines.push("- Never wrap it in markdown or code blocks".to_string());
         lines.push(String::new());
-        lines.push("Wrong: \"Here's help... [[SILENT]]\"".to_string());
-        lines.push("Wrong: \"[[SILENT]]\"".to_string());
-        lines.push("Right: [[SILENT]]".to_string());
+        lines.push("❌ Wrong: \"Here's help... [[SILENT]]\"".to_string());
+        lines.push("❌ Wrong: \"[[SILENT]]\"".to_string());
+        lines.push("✅ Right: [[SILENT]]".to_string());
         lines.push(String::new());
         lines.push("## Heartbeats".to_string());
-        lines.push("Heartbeat prompt: (configured)".to_string());
+        lines.push(heartbeat_prompt_line);
         lines.push("If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:".to_string());
         lines.push("HEARTBEAT_OK".to_string());
         lines.push("OpenClaw treats a leading/trailing \"HEARTBEAT_OK\" as a heartbeat ack (and may discard it).".to_string());
@@ -7031,15 +7631,19 @@ fn agent_system_prompt(tool_executor: &ToolRegistryExecutor, is_minimal: bool) -
 
     lines.push("## Runtime".to_string());
     lines.push(build_runtime_line(tool_executor));
-    lines.push(
-        "Reasoning: off (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled."
-            .to_string(),
-    );
+    lines.push(format!(
+        "Reasoning: {} (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled.",
+        reasoning_level
+    ));
     lines.join("\n")
 }
 
 fn default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
     agent_system_prompt(tool_executor, false)
+}
+
+pub fn build_default_agent_system_prompt(tool_executor: &ToolRegistryExecutor) -> String {
+    default_agent_system_prompt(tool_executor)
 }
 
 fn build_subagent_system_prompt(
@@ -8378,6 +8982,10 @@ mod tests {
         assert!(prompt.contains("For long waits, avoid rapid poll loops"));
         assert!(prompt.contains("Do not poll `subagents list` / `sessions_list` in a loop"));
         assert!(prompt.contains("### message tool"));
+        assert!(prompt.contains(
+            "If multiple channels are configured, pass `channel` (telegram|whatsapp|discord|irc|googlechat|slack|signal|imessage)."
+        ));
+        assert!(prompt.contains("⚠️ Rules:"));
     }
 
     #[test]

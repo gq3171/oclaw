@@ -2126,6 +2126,7 @@ async fn generate_chat_reply(
     channel_manager: Option<Arc<RwLock<ChannelManager>>>,
     session_manager: Option<Arc<RwLock<SessionManager>>>,
     full_config: Option<Arc<RwLock<oclaw_config::settings::Config>>>,
+    workspace: Option<Arc<oclaw_workspace_core::files::Workspace>>,
     session_usage_tokens: Option<Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>>,
     usage_snapshot: Option<Arc<RwLock<GatewayUsageSnapshot>>>,
     message: &str,
@@ -2148,6 +2149,9 @@ async fn generate_chat_reply(
         }
         if let Some(cfg) = full_config {
             executor = executor.with_full_config(cfg);
+        }
+        if let Some(ws) = workspace {
+            executor = executor.with_workspace_root(ws.root().to_path_buf());
         }
         if let Some(usage_tokens) = session_usage_tokens {
             executor = executor.with_session_usage_tokens(usage_tokens);
@@ -3412,6 +3416,7 @@ async fn rpc_chat_send(p: &serde_json::Value, state: &HttpState) -> RpcResult {
     let usage_snapshot = state.usage_snapshot.clone();
     let session_manager = state.gateway_server.session_manager.clone();
     let channel_manager = state.channel_manager.clone();
+    let workspace = state.workspace.clone();
     let event_tx = state.event_tx.clone();
     let media_debug_task_for_task = media_debug_task;
 
@@ -3430,6 +3435,7 @@ async fn rpc_chat_send(p: &serde_json::Value, state: &HttpState) -> RpcResult {
                 channel_manager,
                 Some(run_session_manager),
                 full_config,
+                workspace,
                 Some(session_usage_tokens),
                 Some(usage_snapshot_for_run),
                 &model_message,
@@ -4327,6 +4333,9 @@ async fn rpc_taskgraph_run(p: &serde_json::Value, state: &HttpState) -> RpcResul
             if let Some(ref cfg) = state.full_config {
                 executor = executor.with_full_config(cfg.clone());
             }
+            if let Some(ref ws) = state.workspace {
+                executor = executor.with_workspace_root(ws.root().to_path_buf());
+            }
             if let Some(ref hooks) = state.hook_pipeline {
                 executor = executor.with_hook_pipeline(hooks.clone());
             }
@@ -4561,6 +4570,7 @@ async fn rpc_agent(p: &serde_json::Value, state: &HttpState) -> RpcResult {
     let media_debug_task_for_task = media_debug_task;
     let runs_map = state.agent_runs.clone();
     let usage_snapshot = state.usage_snapshot.clone();
+    let workspace = state.workspace.clone();
     let session_key_for_delivery = session_id.clone();
     let validated_channel = if deliver {
         let channel_name = if let Some(channel_name) = channel_hint.clone() {
@@ -4595,6 +4605,7 @@ async fn rpc_agent(p: &serde_json::Value, state: &HttpState) -> RpcResult {
                 channel_manager.clone(),
                 Some(session_manager.clone()),
                 full_config.clone(),
+                workspace.clone(),
                 Some(session_usage_tokens.clone()),
                 Some(usage_snapshot.clone()),
                 &model_message,
