@@ -4,6 +4,7 @@ use crate::error::{BrowserError, BrowserResult};
 use crate::page::Page;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::debug;
 
@@ -31,25 +32,45 @@ pub struct BrowserManager {
 }
 
 impl BrowserManager {
+    fn cdp_http_base_from(raw: &str) -> String {
+        let trimmed = raw.trim().trim_end_matches('/');
+        if let Ok(u) = url::Url::parse(trimmed) {
+            let scheme = match u.scheme() {
+                "ws" => "http",
+                "wss" => "https",
+                other => other,
+            };
+            if let Some(host) = u.host_str() {
+                let mut origin = format!("{}://{}", scheme, host);
+                if let Some(port) = u.port() {
+                    origin.push(':');
+                    origin.push_str(&port.to_string());
+                }
+                return origin;
+            }
+        }
+        trimmed
+            .replace("ws://", "http://")
+            .replace("wss://", "https://")
+    }
+
     /// Discover the browser WebSocket debugger URL from the CDP HTTP endpoint.
     async fn discover_ws_url(cdp_url: &str) -> BrowserResult<String> {
         // If already a full devtools WS path, use as-is
-        if cdp_url.starts_with("ws://") && cdp_url.contains("/devtools/") {
+        if (cdp_url.starts_with("ws://") || cdp_url.starts_with("wss://"))
+            && cdp_url.contains("/devtools/")
+        {
             return Ok(cdp_url.to_string());
         }
 
         // Derive HTTP base from whatever URL form was given
-        let base = cdp_url
-            .replace("ws://", "http://")
-            .replace("wss://", "https://")
-            .trim_end_matches('/')
-            .to_string();
+        let base = Self::cdp_http_base_from(cdp_url);
 
         let version_url = format!("{}/json/version", base);
         debug!("Discovering CDP WebSocket URL from {}", version_url);
 
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(3))
+            .timeout(Duration::from_secs(3))
             .build()
             .map_err(|e| BrowserError::ConnectionError(e.to_string()))?;
 
@@ -57,6 +78,12 @@ impl BrowserManager {
             client.get(&version_url).send().await.map_err(|e| {
                 BrowserError::ConnectionError(format!("CDP discovery failed: {}", e))
             })?;
+        if !resp.status().is_success() {
+            return Err(BrowserError::ConnectionError(format!(
+                "CDP discovery endpoint returned {}",
+                resp.status()
+            )));
+        }
 
         let json: serde_json::Value = resp.json().await.map_err(|e| {
             BrowserError::ConnectionError(format!("CDP discovery parse error: {}", e))
@@ -166,42 +193,156 @@ impl BrowserManager {
     }
 
     pub async fn create_page(&mut self) -> BrowserResult<Page> {
-        let conn = self
-            .connection
-            .as_ref()
-            .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
-
         let params = serde_json::json!({
             "url": "about:blank"
         });
 
-        let response = conn
-            .send_command(
-                &build_method(CdpDomain::Target, "createTarget"),
-                Some(params),
-            )
-            .await?;
+        let mut target_id: Option<String> = None;
+        let mut create_target_error: Option<BrowserError> = None;
+        for attempt in 0..3 {
+            if self.connection.is_none() {
+                self.reconnect_browser_ws().await?;
+            }
+            let conn = self
+                .connection
+                .as_ref()
+                .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
 
-        let target_id = response
-            .result
-            .as_ref()
-            .and_then(|r| r.get("targetId"))
-            .and_then(|id| id.as_str())
-            .ok_or_else(|| BrowserError::TargetNotFound("Failed to create target".to_string()))?
-            .to_string();
+            match conn
+                .send_command(
+                    &build_method(CdpDomain::Target, "createTarget"),
+                    Some(params.clone()),
+                )
+                .await
+            {
+                Ok(response) => {
+                    if let Some(err) = response.error {
+                        create_target_error = Some(BrowserError::ProtocolError(format!(
+                            "Target.createTarget failed (code={}): {}",
+                            err.code, err.message
+                        )));
+                    } else if let Some(id) = response
+                        .result
+                        .as_ref()
+                        .and_then(|r| r.get("targetId"))
+                        .and_then(|id| id.as_str())
+                        .map(str::to_string)
+                    {
+                        target_id = Some(id);
+                        break;
+                    } else {
+                        create_target_error = Some(BrowserError::TargetNotFound(
+                            "Failed to create target".to_string(),
+                        ));
+                    }
+                }
+                Err(err) => {
+                    create_target_error = Some(err);
+                }
+            }
 
-        let host = self
-            .cdp_url
-            .replace("ws://", "")
-            .replace("/DevToolsBrowser", "");
-        let page_url = format!("ws://{}/devtools/page/{}", host, target_id);
+            if attempt < 2 {
+                let _ = self.reconnect_browser_ws().await;
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
+        }
+        let target_id = target_id.ok_or_else(|| {
+            create_target_error.unwrap_or_else(|| {
+                BrowserError::ConnectionError("Target.createTarget failed".to_string())
+            })
+        })?;
 
-        let page = Page::new(&page_url, target_id.clone(), Arc::clone(&self.pages)).await?;
+        let mut last_error: Option<BrowserError> = None;
+        let mut last_page_ws = String::new();
+        let mut page: Option<Page> = None;
+        for _ in 0..12 {
+            let page_url = self
+                .resolve_target_ws_url(&target_id)
+                .await
+                .unwrap_or_else(|| self.default_target_ws_url(&target_id));
+            last_page_ws = page_url.clone();
+            match Page::new(&page_url, target_id.clone(), Arc::clone(&self.pages)).await {
+                Ok(p) => {
+                    page = Some(p);
+                    break;
+                }
+                Err(err) => {
+                    last_error = Some(err);
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                }
+            }
+        }
+        let page = page.ok_or_else(|| {
+            let detail = last_error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "unknown error".to_string());
+            BrowserError::ConnectionError(format!(
+                "Failed to connect target {} websocket {}: {}",
+                target_id, last_page_ws, detail
+            ))
+        })?;
+
+        if let Some(conn) = &self.connection {
+            let _ = conn
+                .send_command(
+                    &build_method(CdpDomain::Target, "activateTarget"),
+                    Some(serde_json::json!({ "targetId": target_id })),
+                )
+                .await;
+        }
 
         let mut pages = self.pages.write().await;
         pages.insert(target_id, page.clone());
 
         Ok(page)
+    }
+
+    async fn reconnect_browser_ws(&mut self) -> BrowserResult<()> {
+        let ws_url = Self::discover_ws_url(&self.cdp_url).await?;
+        let conn = CdpConnection::connect(&ws_url).await?;
+        self.connection = Some(conn);
+        Ok(())
+    }
+
+    fn cdp_http_base(&self) -> String {
+        Self::cdp_http_base_from(&self.cdp_url)
+    }
+
+    fn default_target_ws_url(&self, target_id: &str) -> String {
+        let base = self
+            .cdp_http_base()
+            .replace("http://", "ws://")
+            .replace("https://", "wss://");
+        format!("{}/devtools/page/{}", base.trim_end_matches('/'), target_id)
+    }
+
+    async fn resolve_target_ws_url(&self, target_id: &str) -> Option<String> {
+        let base = self.cdp_http_base();
+        let list_url = format!("{}/json/list", base);
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .ok()?;
+        let list = client.get(&list_url).send().await.ok()?;
+        if !list.status().is_success() {
+            return None;
+        }
+        let json = list.json::<serde_json::Value>().await.ok()?;
+        let arr = json.as_array()?;
+        for item in arr {
+            let id = item
+                .get("id")
+                .or_else(|| item.get("targetId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if id != target_id {
+                continue;
+            }
+            if let Some(ws) = item.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) {
+                return Some(ws.to_string());
+            }
+        }
+        None
     }
 
     pub async fn get_page(&self, target_id: &str) -> Option<Page> {

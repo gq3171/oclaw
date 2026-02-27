@@ -1482,7 +1482,9 @@ impl BrowseTool {
         let foreground = self.foreground.unwrap_or(!headless);
 
         // Try connecting first
-        if let Ok(mgr) = oclaw_browser_core::BrowserManager::new(cdp_url).await {
+        if let Ok(mut mgr) = oclaw_browser_core::BrowserManager::new(cdp_url).await
+            && mgr.connect().await.is_ok()
+        {
             return Ok(mgr);
         }
 
@@ -1536,7 +1538,9 @@ impl BrowseTool {
         // Wait for CDP to become available
         for _ in 0..20 {
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            if let Ok(mgr) = oclaw_browser_core::BrowserManager::new(cdp_url).await {
+            if let Ok(mut mgr) = oclaw_browser_core::BrowserManager::new(cdp_url).await
+                && mgr.connect().await.is_ok()
+            {
                 return Ok(mgr);
             }
         }
