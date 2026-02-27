@@ -1392,6 +1392,9 @@ pub struct BrowseTool {
     /// Track a child browser process we launched (PID).
     #[serde(skip)]
     launched_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
+    /// Ensure we only force-open a visible foreground window once per tool instance.
+    #[serde(skip)]
+    foreground_window_ensured: std::sync::Arc<std::sync::Mutex<bool>>,
     /// Page state tracking (console, errors, network).
     #[serde(skip)]
     state: std::sync::Arc<std::sync::Mutex<oclaw_browser_core::PageState>>,
@@ -1406,6 +1409,7 @@ impl BrowseTool {
             foreground: None,
             timeout_seconds: 30,
             launched_pid: Default::default(),
+            foreground_window_ensured: Default::default(),
             state: Default::default(),
         }
     }
@@ -1467,12 +1471,66 @@ impl BrowseTool {
             .map(|s| s.to_string())
     }
 
+    fn cdp_port(&self, cdp_url: &str) -> u16 {
+        cdp_url
+            .split(':')
+            .next_back()
+            .and_then(|s| s.trim_matches('/').parse::<u16>().ok())
+            .unwrap_or(9222)
+    }
+
+    async fn ensure_foreground_window(&self, cdp_url: &str) -> Result<(), crate::ToolError> {
+        if *self.foreground_window_ensured.lock().unwrap() {
+            return Ok(());
+        }
+        let exe = self.detect_browser().ok_or_else(|| {
+            crate::ToolError::ExecutionFailed(
+                "No browser found. Install Edge or Chrome, or set browser.executablePath in config."
+                    .into(),
+            )
+        })?;
+        let port = self.cdp_port(cdp_url);
+        tracing::info!("Ensuring foreground browser window: {}", exe);
+        let mut cmd = tokio::process::Command::new(&exe);
+        cmd.arg(format!("--remote-debugging-port={}", port));
+        cmd.arg("--new-window");
+        cmd.arg("--no-first-run");
+        cmd.arg("--no-default-browser-check");
+        cmd.arg("--disable-session-crashed-bubble");
+        cmd.arg("--hide-crash-restore-bubble");
+        let user_data_dir = std::env::temp_dir().join("oclaw-browser-profile");
+        cmd.arg(format!("--user-data-dir={}", user_data_dir.display()));
+        cmd.arg("about:blank");
+        let child = cmd
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                crate::ToolError::ExecutionFailed(format!(
+                    "Failed to open foreground browser window: {}",
+                    e
+                ))
+            })?;
+        if let Some(pid) = child.id() {
+            *self.launched_pid.lock().unwrap() = Some(pid);
+        }
+        *self.foreground_window_ensured.lock().unwrap() = true;
+        Ok(())
+    }
+
     /// Try connecting to CDP; if fails, auto-launch browser then retry.
     async fn ensure_browser(&self) -> Result<oclaw_browser_core::BrowserManager, crate::ToolError> {
         let cdp_url = self.cdp_url.as_deref().unwrap_or("http://127.0.0.1:9222");
+        let headless = self.headless.unwrap_or(false);
+        let foreground = self.foreground.unwrap_or(!headless);
 
         // Try connecting first
         if let Ok(mgr) = oclaw_browser_core::BrowserManager::new(cdp_url).await {
+            if foreground && !headless {
+                if let Err(err) = self.ensure_foreground_window(cdp_url).await {
+                    tracing::warn!("Could not ensure foreground browser window: {}", err);
+                }
+            }
             return Ok(mgr);
         }
 
@@ -1485,16 +1543,10 @@ impl BrowseTool {
 
         tracing::info!("Auto-launching browser: {}", exe);
 
-        let port = cdp_url
-            .split(':')
-            .next_back()
-            .and_then(|s| s.trim_matches('/').parse::<u16>().ok())
-            .unwrap_or(9222);
+        let port = self.cdp_port(cdp_url);
 
         let mut cmd = tokio::process::Command::new(&exe);
         cmd.arg(format!("--remote-debugging-port={}", port));
-        let headless = self.headless.unwrap_or(false);
-        let foreground = self.foreground.unwrap_or(!headless);
         if headless {
             cmd.arg("--headless=new");
         } else if foreground {
