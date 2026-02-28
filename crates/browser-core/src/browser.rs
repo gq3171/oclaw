@@ -155,9 +155,21 @@ impl BrowserManager {
     }
 
     pub async fn connect(&mut self) -> BrowserResult<()> {
-        if let Some(conn) = &self.connection {
-            conn.enable_domains(&["Browser", "Target", "Page", "Network", "Runtime", "Console"])
-                .await?;
+        if self.connection.is_none() {
+            self.reconnect_browser_ws().await?;
+        }
+        let conn = self
+            .connection
+            .as_ref()
+            .ok_or_else(|| BrowserError::ConnectionError("Not connected".to_string()))?;
+        let response = conn
+            .send_command(&build_method(CdpDomain::Browser, "getVersion"), None)
+            .await?;
+        if let Some(err) = response.error {
+            return Err(BrowserError::ProtocolError(format!(
+                "Browser.getVersion failed (code={}): {}",
+                err.code, err.message
+            )));
         }
         Ok(())
     }
