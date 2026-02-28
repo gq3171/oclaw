@@ -46,6 +46,7 @@ pub struct PageState {
     pub console: VecDeque<ConsoleEntry>,
     pub errors: VecDeque<PageError>,
     pub requests: VecDeque<NetworkEntry>,
+    pub target_id: Option<String>,
     pub url: Option<String>,
     pub title: Option<String>,
 }

@@ -309,6 +309,38 @@ impl BrowserManager {
         Ok(page)
     }
 
+    pub async fn open_page_by_target_id(&mut self, target_id: &str) -> BrowserResult<Page> {
+        let page_url = self.resolve_target_ws_url(target_id).await.ok_or_else(|| {
+            BrowserError::TargetNotFound(format!("Target {} not found in /json/list", target_id))
+        })?;
+        let page = Page::new(
+            page_url.as_str(),
+            target_id.to_string(),
+            Arc::clone(&self.pages),
+        )
+        .await
+        .map_err(|e| {
+            BrowserError::ConnectionError(format!(
+                "Failed to open target {} websocket {}: {}",
+                target_id, page_url, e
+            ))
+        })?;
+
+        if let Some(conn) = &self.connection {
+            let _ = conn
+                .send_command(
+                    &build_method(CdpDomain::Target, "activateTarget"),
+                    Some(serde_json::json!({ "targetId": target_id })),
+                )
+                .await;
+        }
+
+        let mut pages = self.pages.write().await;
+        pages.insert(target_id.to_string(), page.clone());
+
+        Ok(page)
+    }
+
     async fn reconnect_browser_ws(&mut self) -> BrowserResult<()> {
         let ws_url = Self::discover_ws_url(&self.cdp_url).await?;
         let conn = CdpConnection::connect(&ws_url).await?;

@@ -1584,6 +1584,46 @@ impl BrowseTool {
         format!("https://{}", trimmed)
     }
 
+    fn browser_non_retry_message(message: &str) -> String {
+        format!(
+            "{} Do NOT retry the browser tool — it will keep failing. Use an alternative approach or inform the user that the browser is currently unavailable.",
+            message
+        )
+    }
+
+    fn action_requires_page(action: &str) -> bool {
+        !matches!(action, "console" | "network")
+    }
+
+    async fn open_or_create_page(
+        &self,
+        manager: &mut oclaw_browser_core::BrowserManager,
+        state: &mut oclaw_browser_core::PageState,
+    ) -> ToolResult<oclaw_browser_core::Page> {
+        if let Some(target_id) = state.target_id.clone() {
+            match manager.open_page_by_target_id(&target_id).await {
+                Ok(page) => return Ok(page),
+                Err(err) => {
+                    tracing::warn!(
+                        "Reattach previous browser target failed: target_id={}, error={}",
+                        target_id,
+                        err
+                    );
+                    state.target_id = None;
+                }
+            }
+        }
+
+        let page = manager.create_page().await.map_err(|e| {
+            crate::ToolError::ExecutionFailed(Self::browser_non_retry_message(&format!(
+                "Failed to create page: {}",
+                e
+            )))
+        })?;
+        state.target_id = Some(page.target_id().to_string());
+        Ok(page)
+    }
+
     pub async fn execute(&self, arguments: serde_json::Value) -> ToolResult<serde_json::Value> {
         #[derive(Deserialize)]
         struct Args {
@@ -1627,16 +1667,22 @@ impl BrowseTool {
             }
         };
 
-        let mut manager = self.ensure_browser().await?;
-        let mut page = manager.create_page().await.map_err(|e| {
-            crate::ToolError::ExecutionFailed(format!("Failed to create page: {}", e))
-        })?;
-
         let wait = args.wait_ms.unwrap_or(1000);
+        let mut manager = self.ensure_browser().await.map_err(|e| {
+            crate::ToolError::ExecutionFailed(Self::browser_non_retry_message(&e.to_string()))
+        })?;
         let mut state = self.state.lock().unwrap().clone();
+        let mut page = if Self::action_requires_page(action) {
+            Some(self.open_or_create_page(&mut manager, &mut state).await?)
+        } else {
+            None
+        };
 
         let result: ToolResult<serde_json::Value> = match action {
             "navigate" => {
+                let page = page.as_mut().ok_or_else(|| {
+                    crate::ToolError::ExecutionFailed("page not available".into())
+                })?;
                 let url_raw = args.url.as_deref().ok_or_else(|| {
                     crate::ToolError::InvalidInput("url required for navigate".into())
                 })?;
@@ -1657,6 +1703,9 @@ impl BrowseTool {
                 )
             }
             "click" => {
+                let page = page.as_mut().ok_or_else(|| {
+                    crate::ToolError::ExecutionFailed("page not available".into())
+                })?;
                 let sel = args.selector.as_deref().ok_or_else(|| {
                     crate::ToolError::InvalidInput("selector required for click".into())
                 })?;
@@ -1667,6 +1716,9 @@ impl BrowseTool {
                 Ok(serde_json::json!({ "action": "click", "selector": sel, "ok": true }))
             }
             "type" => {
+                let page = page.as_mut().ok_or_else(|| {
+                    crate::ToolError::ExecutionFailed("page not available".into())
+                })?;
                 let sel = args.selector.as_deref().ok_or_else(|| {
                     crate::ToolError::InvalidInput("selector required for type".into())
                 })?;
@@ -1679,6 +1731,9 @@ impl BrowseTool {
                 Ok(serde_json::json!({ "action": "type", "selector": sel, "ok": true }))
             }
             "screenshot" => {
+                let page = page.as_mut().ok_or_else(|| {
+                    crate::ToolError::ExecutionFailed("page not available".into())
+                })?;
                 let bytes = page.take_screenshot().await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Screenshot failed: {}", e))
                 })?;
@@ -1689,6 +1744,9 @@ impl BrowseTool {
                 )
             }
             "evaluate" => {
+                let page = page.as_mut().ok_or_else(|| {
+                    crate::ToolError::ExecutionFailed("page not available".into())
+                })?;
                 let expr = args.expression.as_deref().ok_or_else(|| {
                     crate::ToolError::InvalidInput("expression required for evaluate".into())
                 })?;
@@ -1698,6 +1756,9 @@ impl BrowseTool {
                 Ok(serde_json::json!({ "action": "evaluate", "result": result.value }))
             }
             "snapshot" => {
+                let page = page.as_mut().ok_or_else(|| {
+                    crate::ToolError::ExecutionFailed("page not available".into())
+                })?;
                 let html = page.get_html().await.unwrap_or_default();
                 let title = eval_string(&page, "document.title").await;
                 let url = eval_string(&page, "window.location.href").await;
@@ -1721,6 +1782,9 @@ impl BrowseTool {
                 )
             }
             "back" => {
+                let page = page.as_mut().ok_or_else(|| {
+                    crate::ToolError::ExecutionFailed("page not available".into())
+                })?;
                 page.go_back().await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Back failed: {}", e))
                 })?;
@@ -1728,6 +1792,9 @@ impl BrowseTool {
                 Ok(serde_json::json!({ "action": "back", "ok": true }))
             }
             "forward" => {
+                let page = page.as_mut().ok_or_else(|| {
+                    crate::ToolError::ExecutionFailed("page not available".into())
+                })?;
                 page.go_forward().await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Forward failed: {}", e))
                 })?;
@@ -1735,6 +1802,9 @@ impl BrowseTool {
                 Ok(serde_json::json!({ "action": "forward", "ok": true }))
             }
             "reload" => {
+                let page = page.as_mut().ok_or_else(|| {
+                    crate::ToolError::ExecutionFailed("page not available".into())
+                })?;
                 page.reload().await.map_err(|e| {
                     crate::ToolError::ExecutionFailed(format!("Reload failed: {}", e))
                 })?;
